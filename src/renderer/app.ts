@@ -12,7 +12,7 @@ import { showContextMenu, hideContextMenu, type ContextMenuItem } from "./ui/con
 import { openTextEditor, closeTextEditor, isEditingText } from "./ui/textEditor.js";
 import { Minimap } from "./ui/minimap.js";
 import type { Point } from "../shared/geometry/viewport.js";
-import { screenToWorld } from "../shared/geometry/viewport.js";
+import { screenToWorld, viewportForRect, type Rect } from "../shared/geometry/viewport.js";
 import { addObjectCommand, resizeObjectsCommand, setPropsCommand, type PropChange } from "./command/commands.js";
 
 /**
@@ -31,6 +31,7 @@ export class App {
   private minimap: Minimap;
 
   private clipboard: CanvasObject[] = [];
+  private isolation: { containerId: string; visibleIds: string[] } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.project.replace(createNewDocument());
@@ -58,6 +59,7 @@ export class App {
     this.refreshProjectRefs();
     this.ui.setTools(false);
     this.ui.onRecentPick = (filePath) => void this.openProjectPath(filePath);
+    this.ui.onExitIsolation = () => this.exitIsolation();
     void this.refreshRecent();
   }
 
@@ -433,6 +435,8 @@ export class App {
       items.push({ label: "Send to back", shortcut: "[", enabled: canEdit, action: () => this.sendToBack() });
     }
     if (hasSelection) {
+      items.push({ separatorBefore: true, label: "Focus selection", shortcut: "F", action: () => this.focusSelection() });
+      items.push({ label: "Isolate container", shortcut: "Shift+I", enabled: single && (obj?.type === "group" || obj?.type === "frame"), action: () => this.isolateSelection() });
       items.push({ separatorBefore: true, label: "Duplicate", shortcut: "Ctrl+D", enabled: canEdit, action: () => this.duplicateSelection() });
       items.push({ label: "Delete", shortcut: "Del", enabled: canEdit, action: () => this.deleteSelection() });
       if (obj && (obj.type === "file" || obj.type === "image")) {
@@ -550,6 +554,67 @@ export class App {
     this.refreshUI();
   }
 
+  // -------- Focus / isolation --------
+
+  private focusSelection(): void {
+    const bounds = this.engine.selectionWorldBounds();
+    if (!bounds) {
+      this.setStatus("Select one or more objects to focus.");
+      return;
+    }
+    const next = viewportForRect(bounds, this.engine.getFrame());
+    if (!next) {
+      this.setStatus("Could not focus this selection.");
+      return;
+    }
+    this.viewport.set(next);
+    this.setStatus(`Focused ${this.selection.size} object${this.selection.size === 1 ? "" : "s"}.`);
+  }
+
+  private isolateSelection(): void {
+    if (this.selection.size !== 1) {
+      this.setStatus("Select one group or frame to isolate.");
+      return;
+    }
+    const container = this.project.getObject(this.selection.get()[0]);
+    if (!container || (container.type !== "group" && container.type !== "frame")) {
+      this.setStatus("Only groups and frames can be isolated.");
+      return;
+    }
+    const visible = this.isolationContents(container);
+    this.isolation = { containerId: container.id, visibleIds: visible };
+    this.engine.setIsolation(visible);
+    this.ui.setIsolation(container.type, container.name || "Untitled");
+    this.focusSelection();
+    this.setStatus(`Isolated ${container.type}. Press Escape to exit.`);
+  }
+
+  private isolationContents(container: Extract<CanvasObject, { type: "group" | "frame" }>): string[] {
+    const ids = new Set<string>([container.id]);
+    if (container.type === "group") {
+      for (const id of container.memberIds) ids.add(id);
+    } else {
+      const bounds: Rect = { x: container.x, y: container.y, width: container.width, height: container.height };
+      for (const obj of this.project.getObjects()) {
+        if (obj.type === "connection" || obj.type === "frame") continue;
+        if (isContainedBy(obj, bounds)) ids.add(obj.id);
+      }
+    }
+    // A connection is useful in isolation only when both of its endpoints are in scope.
+    for (const obj of this.project.getObjects()) {
+      if (obj.type === "connection" && ids.has(obj.from) && ids.has(obj.to)) ids.add(obj.id);
+    }
+    return [...ids];
+  }
+
+  private exitIsolation(): void {
+    if (!this.isolation) return;
+    this.isolation = null;
+    this.engine.setIsolation(null);
+    this.ui.clearIsolation();
+    this.setStatus("Exited isolation.");
+  }
+
   // -------- Undo / redo / view --------
 
   private undo(): void {
@@ -591,6 +656,7 @@ export class App {
   }
 
   private applyDocument(doc: ProjectDocument): void {
+    this.exitIsolation();
     this.project.replace(doc);
     this.viewport.set({ ...doc.viewport });
     this.selection.clear();
@@ -615,7 +681,10 @@ export class App {
 
   private bindEvents(): void {
     this.commands.changed.subscribe(() => this.refreshUI());
-    this.project.changed.subscribe(() => this.refreshUI());
+    this.project.changed.subscribe(() => {
+      if (this.isolation && !this.project.getObject(this.isolation.containerId)) this.exitIsolation();
+      this.refreshUI();
+    });
     this.project.replaced.subscribe(() => this.refreshUI());
     this.viewport.changed.subscribe((vp) => {
       this.ui.setZoom(vp.zoom);
@@ -843,9 +912,20 @@ export class App {
       this.sendToBack();
       return;
     }
+    if (key === "f" && !mod) {
+      e.preventDefault();
+      this.focusSelection();
+      return;
+    }
+    if (key === "i" && e.shiftKey && !mod) {
+      e.preventDefault();
+      this.isolateSelection();
+      return;
+    }
     if (e.key === "Escape") {
       hideContextMenu();
-      this.selection.clear();
+      if (this.isolation) this.exitIsolation();
+      else this.selection.clear();
       return;
     }
   };
@@ -1091,3 +1171,9 @@ function escapeAttr(s: string): string {
 }
 
 export type { AssetMeta };
+
+function isContainedBy(obj: CanvasObject, bounds: Rect): boolean {
+  return obj.x >= bounds.x && obj.y >= bounds.y &&
+    obj.x + obj.width <= bounds.x + bounds.width &&
+    obj.y + obj.height <= bounds.y + bounds.height;
+}

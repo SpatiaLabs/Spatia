@@ -54,17 +54,23 @@ export class AppUI {
   private urlInput = el<HTMLInputElement>("url-input");
   private urlConfirm = el<HTMLButtonElement>("url-confirm");
   private urlCancel = el<HTMLButtonElement>("url-cancel");
+  private isolationBanner = el<HTMLElement>("isolation-banner");
+  private isolationLabel = el<HTMLSpanElement>("isolation-label");
+  private exitIsolationButton = el<HTMLButtonElement>("btn-exit-isolation");
 
   /** The inspector body element, so the app can delegate edit events. */
   readonly inspectorBodyEl = el<HTMLDivElement>("inspector-body");
 
   /** Fired when the user picks a recent project file to reopen. */
   onRecentPick: ((filePath: string) => void) | null = null;
+  /** Fired when the user exits the current group/frame isolation scope. */
+  onExitIsolation: (() => void) | null = null;
 
   private urlResolver: ((value: string | null) => void) | null = null;
 
   constructor() {
     this.canvas.addEventListener("pointermove", this.onPointerMove);
+    this.exitIsolationButton.addEventListener("click", () => this.onExitIsolation?.());
     const initDialog = () => {
       this.urlConfirm.addEventListener("click", () => this.resolveUrl(this.urlInput.value));
       this.urlCancel.addEventListener("click", () => this.resolveUrl(null));
@@ -134,6 +140,15 @@ export class AppUI {
   setInspectorOpen(open: boolean): void {
     this.inspectorEl.classList.toggle("open", open);
     this.inspectorEl.setAttribute("aria-hidden", String(!open));
+  }
+
+  setIsolation(type: "group" | "frame", name: string): void {
+    this.isolationLabel.textContent = `Isolating ${type}: ${name}`;
+    this.isolationBanner.hidden = false;
+  }
+
+  clearIsolation(): void {
+    this.isolationBanner.hidden = true;
   }
 
   setProject(_meta: ProjectMeta): void {

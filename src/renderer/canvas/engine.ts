@@ -82,6 +82,8 @@ export class CanvasEngine implements InteractionHost {
   private draftConn: { from: string; end: Point; valid: boolean } | null = null;
   private draftPen: Point[] | null = null;
   private penActive = false;
+  /** Object ids allowed while a group or frame is isolated; null means full workspace. */
+  private isolationIds: ReadonlySet<string> | null = null;
 
   /** Set by the App to route undoable commands into the history stack. */
   private history: (cmd: Command) => void = () => undefined;
@@ -190,7 +192,7 @@ export class CanvasEngine implements InteractionHost {
     const wp = screenToWorld(screen, this.frame);
     const candidates = this.spatial.queryPoint(wp)
       .map((id) => this.project.getObject(id))
-      .filter((o): o is CanvasObject => o !== undefined);
+      .filter((o): o is CanvasObject => o !== undefined && this.isObjectVisible(o.id));
     if (candidates.length === 0) return null;
     candidates.sort((a, b) => b.zIndex - a.zIndex);
     for (const obj of candidates) {
@@ -631,10 +633,21 @@ export class CanvasEngine implements InteractionHost {
     const ids: string[] = [];
     for (const id of this.spatial.queryRect(rect)) {
       const o = this.project.getObject(id);
-      if (o && rectsIntersect(aabb(o), rect)) ids.push(o.id);
+      if (o && this.isObjectVisible(o.id) && rectsIntersect(aabb(o), rect)) ids.push(o.id);
     }
     if (additive) this.selection.add(ids);
     else this.selection.setIds(ids);
+  }
+
+  /** Restrict rendering and pointer queries to an isolation scope. */
+  setIsolation(ids: readonly string[] | null): void {
+    this.isolationIds = ids === null ? null : new Set(ids);
+    this.marqueeRect = null;
+    this.requestRender();
+  }
+
+  private isObjectVisible(id: string): boolean {
+    return this.isolationIds === null || this.isolationIds.has(id);
   }
 
   // -------- Actions used by the UI --------
@@ -853,7 +866,10 @@ export class CanvasEngine implements InteractionHost {
       assetExtOf: (assetId) => this.project.getAsset(assetId)?.ext,
       objectById: (id) => this.project.getObject(id),
     };
-    drawObjects(ctx, this.frame, this.project.getObjectsSorted(), selected, drawCtx);
+    const objects = this.isolationIds === null
+      ? this.project.getObjectsSorted()
+      : this.project.getObjectsSorted().filter((obj) => this.isObjectVisible(obj.id));
+    drawObjects(ctx, this.frame, objects, selected, drawCtx);
 
     if (this.draftConn) {
       const fromObj = this.project.getObject(this.draftConn.from);

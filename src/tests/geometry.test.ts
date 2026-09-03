@@ -10,6 +10,7 @@ import {
   visibleWorldRect,
   MIN_ZOOM,
   MAX_ZOOM,
+  viewportForRect,
 } from "../shared/geometry/viewport.js";
 import { snapMove, snapResize, unionRect, connectionEndpoints, pointToSegment } from "../shared/geometry/workspace.js";
 
@@ -292,4 +293,21 @@ test("connectionEndpoints follow endpoint objects as they move", () => {
   assert.equal(after.start.x, 100);             // still from's right edge
   assert.equal(after.end.x, 200);               // to's left edge
   assert.ok(Math.abs(after.end.y - (-25)) < 1e-6); // anchored on to's left edge toward from
+});
+
+
+test("viewportForRect centers a distant rect with padding", () => {
+  const result = viewportForRect(
+    { x: -1_000_000, y: 2_000_000, width: 400, height: 200 },
+    { cameraX: 0, cameraY: 0, zoom: 1, originWidth: 1000, originHeight: 800 },
+    100
+  );
+  assert.deepEqual(result, { x: -1_000_050, y: 1_999_900, zoom: 2 });
+});
+
+test("viewportForRect rejects non-finite geometry", () => {
+  assert.equal(
+    viewportForRect({ x: Infinity, y: 0, width: 10, height: 10 }, { cameraX: 0, cameraY: 0, zoom: 1, originWidth: 100, originHeight: 100 }),
+    null
+  );
 });

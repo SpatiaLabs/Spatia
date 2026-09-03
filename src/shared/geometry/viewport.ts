@@ -186,3 +186,35 @@ export function pointInRotatedRect(
   const hh = worldRect.height / 2;
   return Math.abs(lx) <= hw && Math.abs(ly) <= hh;
 }
+
+/**
+ * Calculate a camera that fits a world-space rectangle inside the viewport.
+ * This is intentionally pure so focus navigation works equally well at distant
+ * positive or negative coordinates without depending on renderer state.
+ */
+export function viewportForRect(rect: Rect, frame: ViewportFrame, padding = 80): ViewportState | null {
+  if (
+    !Number.isFinite(rect.x) || !Number.isFinite(rect.y) ||
+    !Number.isFinite(rect.width) || !Number.isFinite(rect.height) ||
+    rect.width < 0 || rect.height < 0 ||
+    !Number.isFinite(frame.originWidth) || !Number.isFinite(frame.originHeight) ||
+    frame.originWidth <= 0 || frame.originHeight <= 0
+  ) {
+    return null;
+  }
+
+  const safePadding = Number.isFinite(padding) ? Math.max(0, padding) : 0;
+  const availableWidth = Math.max(1, frame.originWidth - safePadding * 2);
+  const availableHeight = Math.max(1, frame.originHeight - safePadding * 2);
+  const contentWidth = Math.max(1, rect.width);
+  const contentHeight = Math.max(1, rect.height);
+  const zoom = clampZoom(Math.min(availableWidth / contentWidth, availableHeight / contentHeight));
+  const centerX = rect.x + rect.width / 2;
+  const centerY = rect.y + rect.height / 2;
+
+  return {
+    x: centerX - frame.originWidth / (2 * zoom),
+    y: centerY - frame.originHeight / (2 * zoom),
+    zoom,
+  };
+}
