@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+    />
+    <title>Spatia</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <main id="canvas-container">
+        <canvas id="canvas"></canvas>
+        <div id="hud">
+          <div id="zoom-label" title="Zoom level">100%</div>
+          <div id="cursor-label" title="Cursor position">0, 0</div>
+          <div id="hud-controls">
+            <button id="btn-zoom-out" class="btn btn-icon" title="Zoom out">-</button>
+            <button id="btn-zoom-in" class="btn btn-icon" title="Zoom in">+</button>
+            <button id="btn-zoom-reset" class="btn" title="Reset view">Reset</button>
+            <span class="divider" aria-hidden="true"></span>
+            <button id="btn-pen" class="btn btn-tool" title="Pen tool (draw freely)">&#9997;</button>
+            <button id="btn-menu" class="btn btn-icon" title="Toggle tools panel">&#9776;</button>
+          </div>
+        </div>
+        <canvas id="minimap" title="Workspace overview — click to navigate"></canvas>
+        <aside id="sidebar" aria-hidden="true">
+          <div class="sidebar-section">
+            <span class="sidebar-label">File</span>
+            <button id="btn-new" class="btn sidebar-btn" title="New project">New</button>
+            <button id="btn-open" class="btn sidebar-btn" title="Open project">Open</button>
+            <button id="btn-import" class="btn sidebar-btn" title="Import a .spatia folder">Import</button>
+            <button id="btn-save" class="btn sidebar-btn" title="Save project">Save</button>
+            <button id="btn-save-as" class="btn sidebar-btn" title="Save project as">Save As</button>
+            <button id="btn-export" class="btn sidebar-btn" title="Export a portable .spatia folder">Export</button>
+          </div>
+          <div class="sidebar-section">
+            <span class="sidebar-label">Recent</span>
+            <div id="recent-list" class="recent-list"><span class="recent-empty">No recent projects</span></div>
+          </div>
+          <div class="sidebar-section">
+            <span class="sidebar-label">Edit</span>
+            <button id="btn-undo" class="btn sidebar-btn" title="Undo (Ctrl+Z)" disabled>Undo</button>
+            <button id="btn-redo" class="btn sidebar-btn" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
+          </div>
+          <div class="sidebar-section">
+            <span class="sidebar-label">Tools</span>
+            <button id="btn-select" class="btn sidebar-btn" title="Select / move objects">Select</button>
+            <button id="btn-pen-sidebar" class="btn sidebar-btn" title="Pen tool (draw freely)">Pen</button>
+          </div>
+          <div class="sidebar-section">
+            <span class="sidebar-label">Add</span>
+            <button id="btn-add-test" class="btn sidebar-btn" title="Add a test object">Test</button>
+            <button id="btn-add-text" class="btn sidebar-btn" title="Add a text object">Text</button>
+            <button id="btn-add-note" class="btn sidebar-btn" title="Add a sticky note">Note</button>
+            <button id="btn-add-image" class="btn sidebar-btn" title="Add an image object">Image</button>
+            <button id="btn-add-file" class="btn sidebar-btn" title="Add a file object">File</button>
+            <button id="btn-add-url" class="btn sidebar-btn" title="Add a link / bookmark">Link</button>
+          </div>
+        </aside>
+        <aside id="inspector" aria-hidden="true">
+          <div class="inspector-header">Properties</div>
+          <div id="inspector-body" class="inspector-body"><span class="inspector-empty">Select an object</span></div>
+        </aside>
+      </main>
+      <footer id="statusbar">
+        <span id="status-text">Ready</span>
+      </footer>
+      <div id="url-dialog" class="url-dialog" aria-hidden="true">
+        <div class="url-dialog-box">
+          <div class="inspector-header url-dialog-title">Add link</div>
+          <input
+            id="url-input"
+            class="inspector-input url-input"
+            type="text"
+            placeholder="https://example.com"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <div class="url-dialog-actions">
+            <button id="url-cancel" class="btn inspector-btn" type="button">Cancel</button>
+            <button id="url-confirm" class="btn inspector-btn url-confirm" type="button">Add link</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./renderer/main.js"></script>
+  </body>
+</html>

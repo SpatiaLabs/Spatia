@@ -1,0 +1,24 @@
+{
+  "name": "spatia",
+  "version": "0.1.0",
+  "description": "Spatia — a local-first visual infinite workspace.",
+  "author": "Spatia",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "dist/main/main/main.js",
+  "scripts": {
+    "build": "npm run build:main && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "tsc -p tsconfig.renderer.json && node scripts/copy-renderer-assets.js",
+    "build:test": "tsc -p tsconfig.tests.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build:test && node --test dist/test/tests/*.test.js",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron ."
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "electron": "^30.0.0",
+    "typescript": "^5.4.5"
+  }
+}

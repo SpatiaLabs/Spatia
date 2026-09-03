@@ -1,0 +1,430 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  serialize,
+  deserialize,
+  ProjectFormatError,
+  PROJECT_FORMAT_VERSION,
+} from "../shared/project/serialize.js";
+import type { AssetMeta, CanvasObject } from "../shared/types/object.js";
+
+function sampleObject(): CanvasObject {
+  return {
+    type: "test-object",
+    id: "obj_1",
+    x: 10,
+    y: 20,
+    width: 160,
+    height: 120,
+    rotation: 0.5,
+    zIndex: 1,
+    locked: false,
+    metadata: {},
+  };
+}
+
+function sampleObjects(): CanvasObject[] {
+  return [
+    sampleObject(),
+    {
+      type: "text",
+      id: "obj_t",
+      x: 1,
+      y: 2,
+      width: 200,
+      height: 120,
+      rotation: 0,
+      zIndex: 2,
+      locked: false,
+      metadata: {},
+      text: "Hello",
+      fontSize: 24,
+      bold: true,
+      italic: false,
+      align: "center",
+    },
+    {
+      type: "note",
+      id: "obj_n",
+      x: 0,
+      y: 0,
+      width: 180,
+      height: 140,
+      rotation: 0,
+      zIndex: 3,
+      locked: false,
+      metadata: {},
+      title: "Note",
+      text: "Body",
+      color: "#f0c33c",
+    },
+    {
+      type: "image",
+      id: "obj_i",
+      x: 0,
+      y: 0,
+      width: 240,
+      height: 180,
+      rotation: 0,
+      zIndex: 4,
+      locked: false,
+      metadata: {},
+      assetId: "ast_1",
+    },
+    {
+      type: "file",
+      id: "obj_f",
+      x: 0,
+      y: 0,
+      width: 160,
+      height: 120,
+      rotation: 0,
+      zIndex: 5,
+      locked: false,
+      metadata: {},
+      assetId: "ast_2",
+    },
+  ];
+}
+
+function sampleProject() {
+  return {
+    project: { id: "proj_1", name: "Demo", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    viewport: { x: 100, y: -50, zoom: 2 },
+    objects: sampleObjects(),
+    assets: [{ id: "ast_1", kind: "image" as AssetMeta["kind"], name: "pic.png", size: 100, mime: "image/png", ext: "png" }],
+  };
+}
+
+test("serialize produces stable, parseable JSON with current formatVersion", () => {
+  const p = sampleProject();
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const parsed = JSON.parse(json);
+  assert.equal(parsed.formatVersion, PROJECT_FORMAT_VERSION);
+  assert.equal(parsed.assets.length, 1);
+  assert.equal(parsed.objects.length, 5);
+});
+
+test("deserialize round trips serialize output for all object types", () => {
+  const p = sampleProject();
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  assert.equal(file.formatVersion, PROJECT_FORMAT_VERSION);
+  assert.deepEqual(file.viewport, p.viewport);
+  assert.deepEqual(file.objects, p.objects);
+  assert.deepEqual(file.assets, p.assets);
+});
+
+test("deserialize round trips a connection object and keeps endpoint references", () => {
+  const objects: CanvasObject[] = [
+    {
+      type: "test-object",
+      id: "obj_a",
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 80,
+      rotation: 0,
+      zIndex: 1,
+      locked: false,
+      metadata: {},
+    },
+    {
+      type: "test-object",
+      id: "obj_b",
+      x: 300,
+      y: 0,
+      width: 100,
+      height: 80,
+      rotation: 0,
+      zIndex: 2,
+      locked: false,
+      metadata: {},
+    },
+    {
+      type: "connection",
+      id: "obj_c",
+      from: "obj_a",
+      to: "obj_b",
+      arrowhead: true,
+      color: "#91a3f0",
+      strokeWidth: 2,
+      edgeFrom: "auto",
+      edgeTo: "auto",
+      x: 90,
+      y: 30,
+      width: 220,
+      height: 20,
+      rotation: 0,
+      zIndex: 0,
+      locked: false,
+      metadata: {},
+    },
+  ];
+  const p = {
+    project: { id: "proj_c", name: "Conn", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects,
+    assets: [],
+  };
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  assert.equal(file.objects.length, 3);
+  const conn = file.objects.find((o) => o.type === "connection") as Extract<CanvasObject, { type: "connection" }>;
+  assert.ok(conn);
+  assert.equal(conn.from, "obj_a");
+  assert.equal(conn.to, "obj_b");
+  assert.equal(conn.arrowhead, true);
+  assert.equal(conn.color, "#91a3f0");
+  assert.equal(conn.strokeWidth, 2);
+});
+
+test("deserialize round trips a pen object (freehand stroke)", () => {
+  const pen: CanvasObject = {
+    type: "pen",
+    id: "obj_p",
+    points: [
+      { x: 0, y: 0 },
+      { x: 12.5, y: 30 },
+      { x: 40, y: 42 },
+    ],
+    color: "#e8eaed",
+    strokeWidth: 3,
+    x: 0,
+    y: 0,
+    width: 40,
+    height: 42,
+    rotation: 0,
+    zIndex: 1,
+    locked: false,
+    metadata: {},
+  };
+  const p = {
+    project: { id: "proj_p", name: "Pen", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [pen],
+    assets: [],
+  };
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  const round = file.objects.find((o) => o.id === "obj_p") as Extract<CanvasObject, { type: "pen" }>;
+  assert.ok(round);
+  assert.deepEqual(round.points, pen.points);
+  assert.equal(round.color, "#e8eaed");
+  assert.equal(round.strokeWidth, 3);
+  assert.equal(round.width, 40);
+  assert.equal(round.height, 42);
+});
+
+test("deserialize rejects a pen object with invalid points", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [{ type: "pen", id: "o", points: [{ x: 0, y: NaN }], x: 0, y: 0, width: 1, height: 1, rotation: 0, zIndex: 1, locked: false }],
+  };
+  assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
+});
+
+test("deserialize round trips a free-endpoint connection (to empty space)", () => {
+  const conn: CanvasObject = {
+    type: "connection",
+    id: "obj_c",
+    from: "obj_a",
+    to: "",
+    endX: 500,
+    endY: 320,
+    arrowhead: true,
+    color: "#91a3f0",
+    strokeWidth: 2,
+    edgeFrom: "auto",
+    edgeTo: "auto",
+    x: 400,
+    y: 300,
+    width: 150,
+    height: 40,
+    rotation: 0,
+    zIndex: 0,
+    locked: false,
+    metadata: {},
+  };
+  const objects: CanvasObject[] = [
+    { type: "test-object", id: "obj_a", x: 0, y: 0, width: 100, height: 80, rotation: 0, zIndex: 1, locked: false, metadata: {} },
+    conn,
+  ];
+  const p = {
+    project: { id: "proj_c", name: "Free", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects,
+    assets: [],
+  };
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  const round = file.objects.find((o) => o.id === "obj_c") as Extract<CanvasObject, { type: "connection" }>;
+  assert.ok(round);
+  assert.equal(round.to, "");
+  assert.equal(round.endX, 500);
+  assert.equal(round.endY, 320);
+});
+
+test("deserialize rejects a free-endpoint connection missing end coordinates", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [{ type: "connection", id: "o", from: "a", to: "", x: 0, y: 0, width: 1, height: 1, rotation: 0, zIndex: 0, locked: false }],
+  };
+  assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
+});
+
+test("deserialize round trips a url (bookmark) object", () => {
+  const url: CanvasObject = {
+    type: "url",
+    id: "obj_u",
+    url: "https://example.com",
+    title: "Example",
+    x: 0,
+    y: 0,
+    width: 220,
+    height: 90,
+    rotation: 0,
+    zIndex: 1,
+    locked: false,
+    metadata: {},
+  };
+  const p = {
+    project: { id: "proj_u", name: "Url", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [url],
+    assets: [],
+  };
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  const round = file.objects.find((o) => o.id === "obj_u") as Extract<CanvasObject, { type: "url" }>;
+  assert.ok(round);
+  assert.equal(round.type, "url");
+  assert.equal(round.url, "https://example.com");
+  assert.equal(round.title, "Example");
+});
+
+test("deserialize requires url on a url object", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [{ type: "url", id: "o", x: 0, y: 0, width: 1, height: 1, rotation: 0, zIndex: 1, locked: false }],
+  };
+  assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
+});
+
+test("deserialize round trips richer asset kinds (video, audio, pdf)", () => {
+  const p = sampleProject();
+  p.assets = [
+    { id: "ast_v", kind: "video" as const, name: "clip.mp4", size: 1000, mime: "video/mp4", ext: "mp4" },
+    { id: "ast_a", kind: "audio" as const, name: "song.mp3", size: 500, mime: "audio/mpeg", ext: "mp3" },
+    { id: "ast_p", kind: "pdf" as const, name: "doc.pdf", size: 800, mime: "application/pdf", ext: "pdf" },
+  ];
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  assert.equal(file.assets.length, 3);
+  const kinds = file.assets.map((a) => a.kind).sort();
+  assert.deepEqual(kinds, ["audio", "pdf", "video"]);
+});
+
+test("Phase5 P0a: distant objects and viewport round trip through save/load", () => {
+  const viewport = { x: 2.5e9, y: -1.8e9, zoom: 1.5 };
+  const obj: CanvasObject = {
+    type: "note",
+    id: "obj_far",
+    x: 3e9,
+    y: -2e9,
+    width: 200,
+    height: 140,
+    rotation: 0,
+    zIndex: 1,
+    locked: false,
+    metadata: {},
+    title: "Far",
+    text: "at the edge of the infinite canvas",
+    color: "#f0c33c",
+  };
+  const project = { id: "proj_far", name: "Far", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+  const json = serialize(viewport, [obj], project, []);
+  const file = deserialize(json);
+  assert.deepEqual(file.viewport, viewport);
+  const round = file.objects.find((o) => o.id === obj.id) as Extract<CanvasObject, { type: "note" }>;
+  assert.ok(round);
+  assert.equal(round.x, 3e9);
+  assert.equal(round.y, -2e9);
+  assert.equal(round.title, "Far");
+});
+
+test("deserialize rejects an invalid asset kind", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [],
+    assets: [{ id: "a", kind: "archive", name: "x.zip", size: 1, mime: "application/zip", ext: "zip" }],
+  };
+  assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
+});
+
+test("deserialize fills locked/metadata for a v1 test-object file (migration)", () => {
+  const v1 = {
+    formatVersion: 1,
+    project: { id: "proj_v1", name: "Old" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [{ type: "test-object", id: "o1", x: 0, y: 0, width: 10, height: 10, rotation: 0, zIndex: 1 }],
+  };
+  const file = deserialize(JSON.stringify(v1));
+  assert.equal(file.formatVersion, PROJECT_FORMAT_VERSION);
+  assert.equal(file.objects.length, 1);
+  assert.equal(file.objects[0].locked, false);
+  assert.deepEqual(file.objects[0].metadata, {});
+  assert.deepEqual(file.assets, []);
+  assert.equal(file.project.id, "proj_v1");
+});
+
+test("deserialize rejects invalid JSON", () => {
+  assert.throws(() => deserialize("not json"), ProjectFormatError);
+});
+
+test("deserialize rejects missing formatVersion", () => {
+  assert.throws(() => deserialize('{"project":{}}'), ProjectFormatError);
+});
+
+test("deserialize rejects a future format version", () => {
+  const future = JSON.stringify({ formatVersion: 999, project: {}, viewport: {}, objects: [] });
+  assert.throws(() => deserialize(future), /newer version/);
+});
+
+test("deserialize rejects unknown object types", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [{ type: "video", id: "o" }],
+  };
+  assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
+});
+
+test("deserialize rejects missing required text fields", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [{ type: "text", id: "o", x: 0, y: 0, width: 1, height: 1, rotation: 0, zIndex: 1, locked: false }],
+  };
+  assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
+});
+
+test("deserialize rejects non-finite numbers", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: NaN, y: 0, zoom: 1 },
+    objects: [],
+  };
+  assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
+});
