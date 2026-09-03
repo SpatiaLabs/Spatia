@@ -557,3 +557,30 @@ body {
   background: transparent;
 }
 
+
+.isolation-banner {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 8px 7px 12px;
+  border: 1px solid rgba(116, 147, 255, 0.7);
+  border-radius: 8px;
+  color: #e9edff;
+  background: rgba(27, 35, 66, 0.94);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+}
+
+.isolation-banner[hidden] {
+  display: none;
+}
+
+.isolation-exit {
+  min-height: 24px;
+  padding: 2px 9px;
+}
