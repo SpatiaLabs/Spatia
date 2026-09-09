@@ -35,6 +35,29 @@ export function handleWorld(rect: Rect, handle: Handle): Point {
 }
 
 /**
+ * Rotation handle geometry (shared by hit-testing and the selection overlay so
+ * the drawn knob and the touch target stay in sync). The knob floats above the
+ * box's top-center edge at a *screen*-constant offset that adapts to zoom. It
+ * is only active on coarse-pointer (touch) hosts; desktop selection is
+ * unchanged and never exposes the knob.
+ */
+export const ROTATE_KNOB_SCREEN_RADIUS = 11;
+
+/** Screen-space gap between the selection box and the knob centre. */
+export function rotateKnobScreenRadius(coarse: boolean, zoom: number): number {
+  // Larger on touch so the knob doubles as a comfortable target even when
+  // zoomed far out; clamped so it never detaches unreasonably far at low zoom.
+  const base = coarse ? 13 : ROTATE_KNOB_SCREEN_RADIUS;
+  return Math.min(base, 40 / zoom);
+}
+
+/** World-space position of the rotation knob for a selection bounds. */
+export function rotateKnobWorld(bounds: Rect, zoom: number, coarse = true): Point {
+  const gap = rotateKnobScreenRadius(coarse, zoom) + 8 / zoom;
+  return { x: bounds.x + bounds.width / 2, y: bounds.y - gap };
+}
+
+/**
  * Compute the new rect when resizing from `handle`, keeping the opposite edge
  * fixed. Deliberately pure & absolute: `currentWorld` fully determines the
  * result (with `startWorld` giving the initial drag reference and `original`

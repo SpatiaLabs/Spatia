@@ -1,4 +1,4 @@
-import type { ProjectDocument, ProjectMeta } from "../../shared/types/project.js";
+import type { ProjectDocument, ProjectMeta, ShareInfo } from "../../shared/types/project.js";
 import type { CanvasObject, AssetMeta } from "../../shared/types/object.js";
 import { serialize } from "../../shared/project/serialize.js";
 import { Emitter } from "../state/emitter.js";
@@ -84,6 +84,28 @@ export class ProjectStore {
     this.touch();
   }
 
+  // -------- Project meta (tags / sharing) --------
+
+  getTags(): string[] {
+    return [...(this.doc.meta.tags ?? [])];
+  }
+
+  setTags(tags: readonly string[]): void {
+    const next = [...new Set(tags)].slice(0, 100);
+    if (JSON.stringify(next) === JSON.stringify(this.getTags())) return;
+    this.doc.meta.tags = next;
+    this.touch();
+  }
+
+  getShared(): ShareInfo | undefined {
+    return this.doc.meta.shared ? { ...this.doc.meta.shared } : undefined;
+  }
+
+  setShared(info: ShareInfo | null): void {
+    this.doc.meta.shared = info ? { ...info } : undefined;
+    this.touch();
+  }
+
   // -------- Object mutation primitives (called only via commands) --------
 
   /** Append an object to the end (top) of the stack. */
@@ -138,6 +160,12 @@ export class ProjectStore {
   resizeObject(id: string, x: number, y: number, width: number, height: number): void {
     const o = this.getObject(id);
     if (!o || o.locked) return;
+    if (o.type === "frame") {
+      // Browser frames keep a usable minimum on every resize path (handles,
+      // inspector, plugins, undo/redo) so the page never collapses.
+      width = Math.max(200, width);
+      height = Math.max(150, height);
+    }
     o.x = x;
     o.y = y;
     o.width = width;

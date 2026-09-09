@@ -1,11 +1,12 @@
-import type { CanvasObject, TextObject, PenObject, UrlObject, AssetMeta } from "../../shared/types/object.js";
+import type { CanvasObject, TextObject, PenObject, UrlObject, AssetMeta, ShapeObject, WorldPoint } from "../../shared/types/object.js";
 import type { ViewportFrame, Point, Rect } from "../../shared/geometry/viewport.js";
 import { worldToScreen, isRectVisible, screenToWorld } from "../../shared/geometry/viewport.js";
-import { selectionBounds, HANDLES, handleWorld } from "../../shared/geometry/selection.js";
+import { selectionBounds, HANDLES, handleWorld, rotateKnobWorld } from "../../shared/geometry/selection.js";
 import {
   connectionEndpoints,
   groupBounds,
 } from "../../shared/geometry/workspace.js";
+import { isStrokeOnly } from "../../shared/geometry/shapes.js";
 
 const STROKE = "rgba(91,124,250,0.5)";
 const SELECTION = "#5b7cfa";
@@ -38,7 +39,8 @@ export function drawObjects(
   frame: ViewportFrame,
   objects: readonly CanvasObject[],
   selected: ReadonlySet<string>,
-  drawCtx: ObjectDrawContext
+  drawCtx: ObjectDrawContext,
+  coarse = false
 ): void {
   for (const obj of objects) {
     if (!isRectVisible({ x: obj.x, y: obj.y, width: obj.width, height: obj.height }, frame)) {
@@ -47,7 +49,7 @@ export function drawObjects(
     drawObject(ctx, frame, obj, drawCtx);
   }
   if (selected.size > 0) {
-    drawSelection(ctx, frame, objects, selected, drawCtx);
+    drawSelection(ctx, frame, objects, selected, drawCtx, coarse);
   }
 }
 
@@ -85,6 +87,9 @@ function drawObject(
     case "pen":
       drawPen(ctx, frame, obj);
       break;
+    case "shape":
+      drawShape(ctx, frame, obj);
+      break;
     default:
       drawTestObject(ctx, frame, obj);
       break;
@@ -113,6 +118,74 @@ function drawTestObject(ctx: CanvasRenderingContext2D, frame: ViewportFrame, obj
   ctx.fill();
   ctx.strokeStyle = STROKE;
   ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Draw a diagram shape / line-arrow, accounting for rotation and zoom. */
+function drawShape(ctx: CanvasRenderingContext2D, frame: ViewportFrame, obj: ShapeObject): void {
+  const { p, w, h } = drawObjectFrame(ctx, frame, obj);
+  ctx.save();
+  ctx.translate(p.x + w / 2, p.y + h / 2);
+  ctx.rotate(obj.rotation);
+  ctx.strokeStyle = obj.stroke;
+  ctx.lineWidth = Math.max(1, (obj.strokeWidth || 2) * frame.zoom);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  if (isStrokeOnly(obj.kind)) {
+    // Line / arrow: a horizontal baseline from left-center to right-center.
+    ctx.beginPath();
+    ctx.moveTo(-w / 2, 0);
+    ctx.lineTo(w / 2, 0);
+    ctx.stroke();
+    if (obj.kind === "arrow") {
+      const arrowLen = Math.max(10, Math.min(w * 0.25, 14 * frame.zoom));
+      const spread = Math.PI / 6;
+      ctx.fillStyle = obj.stroke;
+      ctx.beginPath();
+      ctx.moveTo(w / 2, 0);
+      ctx.lineTo(w / 2 - arrowLen * Math.cos(spread), -arrowLen * Math.sin(spread));
+      ctx.lineTo(w / 2 - arrowLen * Math.cos(spread), arrowLen * Math.sin(spread));
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+    return;
+  }
+
+  ctx.beginPath();
+  switch (obj.kind) {
+    case "rectangle":
+      roundRect(ctx, -w / 2, -h / 2, w, h, corner(w, h));
+      break;
+    case "rounded-rectangle":
+      roundRect(ctx, -w / 2, -h / 2, w, h, Math.min(w, h) * 0.22);
+      break;
+    case "ellipse":
+      ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+      break;
+    case "diamond":
+      ctx.moveTo(0, -h / 2);
+      ctx.lineTo(w / 2, 0);
+      ctx.lineTo(0, h / 2);
+      ctx.lineTo(-w / 2, 0);
+      ctx.closePath();
+      break;
+    case "triangle":
+      ctx.moveTo(0, -h / 2);
+      ctx.lineTo(w / 2, h / 2);
+      ctx.lineTo(-w / 2, h / 2);
+      ctx.closePath();
+      break;
+    case "line":
+    case "arrow":
+      break;
+  }
+  if (obj.fill) {
+    ctx.fillStyle = obj.fill;
+    ctx.fill();
+  }
   ctx.stroke();
   ctx.restore();
 }
@@ -441,17 +514,56 @@ function drawPen(
   pen: PenObject
 ): void {
   if (!pen.points || pen.points.length === 0) return;
-  const pts = pen.points.map((p) => worldToScreen(p, frame));
   ctx.save();
   ctx.strokeStyle = pen.color || "#e8eaed";
-  ctx.lineWidth = Math.max(1, (pen.strokeWidth || 3) * frame.zoom);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-  ctx.stroke();
+  strokeWorldPath(ctx, pen.points, frame, Math.max(1, (pen.strokeWidth || 3) * frame.zoom));
   ctx.restore();
+}
+
+/** Stroke a polyline whose per-vertex `width` (world units) may vary. */
+function strokeWorldPath(
+  ctx: CanvasRenderingContext2D,
+  pts: WorldPoint[],
+  frame: ViewportFrame,
+  uniformScreenWidth: number
+): void {
+  const n = pts.length;
+  if (n < 2) return;
+  let variable = false;
+  for (const p of pts) {
+    if (p.width !== undefined) {
+      variable = true;
+      break;
+    }
+  }
+  if (!variable) {
+    ctx.lineWidth = uniformScreenWidth;
+    ctx.beginPath();
+    const s0 = worldToScreen(pts[0], frame);
+    ctx.moveTo(s0.x, s0.y);
+    for (let i = 1; i < n; i++) {
+      const s = worldToScreen(pts[i], frame);
+      ctx.lineTo(s.x, s.y);
+    }
+    ctx.stroke();
+    return;
+  }
+  for (let i = 1; i < n; i++) {
+    const prev = pts[i - 1];
+    const cur = pts[i];
+    if (!prev || !cur) continue;
+    const a = worldToScreen(prev, frame);
+    const b = worldToScreen(cur, frame);
+    const wa = prev.width === undefined ? uniformScreenWidth : Math.max(1, prev.width * frame.zoom);
+    const wb = cur.width === undefined ? uniformScreenWidth : Math.max(1, cur.width * frame.zoom);
+    ctx.lineWidth = (wa + wb) / 2;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
 }
 
 function drawGroup(
@@ -517,7 +629,8 @@ function drawSelection(
   frame: ViewportFrame,
   _objects: readonly CanvasObject[],
   selected: ReadonlySet<string>,
-  drawCtx: ObjectDrawContext
+  drawCtx: ObjectDrawContext,
+  coarse: boolean
 ): void {
   const rects: Rect[] = [];
   // Iterate the (small) selected set and resolve each object by id rather than
@@ -538,14 +651,35 @@ function drawSelection(
   ctx.lineWidth = 1.5 / zoomLine(frame.zoom);
   ctx.strokeRect(topLeft.x, topLeft.y, bw, bh);
 
-  // Handles.
-  const handleSize = 7;
+  // Handles. Touch hosts get larger targets so the corners are easy to grab the
+  // edges are far apart — desktop keeps the original 7px squares.
+  const handleSize = coarse ? 12 : 7;
   ctx.fillStyle = HANDLE;
   for (const h of HANDLES) {
     const hw = handleWorld(bounds, h);
     const hp = worldToScreen(hw, frame);
     ctx.beginPath();
     ctx.fillRect(hp.x - handleSize / 2, hp.y - handleSize / 2, handleSize, handleSize);
+  }
+
+  // Rotation knob: only on touch hosts, drawn above the selection box.
+  if (coarse) {
+    const knob = rotateKnobWorld(bounds, frame.zoom);
+    const kp = worldToScreen(knob, frame);
+    const r = 13 / zoomLine(frame.zoom) + 4;
+    ctx.beginPath();
+    ctx.strokeStyle = SELECTION;
+    ctx.lineWidth = 1.5 / zoomLine(frame.zoom);
+    ctx.moveTo(kp.x, kp.y + Math.max(10, 8 / frame.zoom));
+    ctx.lineTo(kp.x, kp.y - r);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(kp.x, kp.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = HANDLE;
+    ctx.fill();
+    ctx.strokeStyle = "#0f1113";
+    ctx.lineWidth = 1;
+    ctx.stroke();
   }
   ctx.restore();
 }

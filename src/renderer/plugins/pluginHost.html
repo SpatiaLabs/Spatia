@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      Plugin sandbox page. Spatia loads each enabled plugin into an iframe with
+      sandbox="allow-scripts" (opaque origin) pointed at this page. This
+      document's OWN strict CSP keeps plugin code away from the network, the
+      app DOM, storage and every other platform surface; the plugin can only
+      talk to Spatia through the postMessage api object defined below.
+
+      'unsafe-eval' is safe here: it applies only inside this sandboxed,
+      network-less, opaque-origin page and lets the host catch plugin errors
+      cleanly instead of leaking uncaught exceptions into the app console.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'"
+    />
+    <title>spatia plugin sandbox</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #121417; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <script>
+      "use strict";
+
+      // ------------------------------------------------------------------
+      // RPC channel to the Spatia parent page.
+      // The parent validates message.source, so nothing outside our host can
+      // spoof commands into the app.
+      // ------------------------------------------------------------------
+
+      var nextSeq = 1;
+      var pending = Object.create(null);
+
+      function send(type, payload) {
+        var msg = { __plugin: true, type: type };
+        if (payload !== undefined) msg.payload = payload;
+        parent.postMessage(msg, "*");
+      }
+
+      function respond(seq, value, error) {
+        send(error ? "api-error" : "api-result", { seq: seq, value: value, error: error });
+      }
+
+      function makeApi() {
+        var channels = {
+          notify: 1, addCommand: 1,
+          getSelection: 0, getProject: 0, getViewport: 0, viewportCenter: 0,
+          getObjects: 0, getObject: 1, createObject: 3, updateObject: 2,
+          deleteObjects: 1, select: 1, selectAdd: 1, clearSelection: 0,
+          focusSelection: 0, zoom: 1, undo: 0, redo: 0,
+        };
+        var allowExtra = { createObject: 4, updateObject: 2 };
+        var api = {};
+        Object.keys(channels).forEach(function (method) {
+          var fixed = channels[method];
+          if (method === "notify" || method === "addCommand") {
+            api[method] = function () {
+              var args = Array.prototype.slice.call(arguments);
+              send("api-call", { method: method, args: args });
+              return method === "notify" ? Promise.resolve() : Promise.resolve();
+            };
+            return;
+          }
+          api[method] = function () {
+            var args = Array.prototype.slice.call(arguments);
+            var extra = allowExtra[method] || 0;
+            args = args.slice(0, Math.max(fixed, extra));
+            var seq = nextSeq++;
+            send("api-call", { seq: seq, method: method, args: args });
+            return new Promise(function (resolve, reject) {
+              pending[seq] = { resolve: resolve, reject: reject };
+            });
+          };
+        });
+        return api;
+      }
+
+      // The api every plugin script reaches as the global `api`.
+      var api = makeApi();
+      // addCommand runs locally (the run() function must stay in this realm).
+      var commands = Object.create(null);
+      api.addCommand = function (def) {
+        if (!def || typeof def.id !== "string" || !def.id || typeof def.label !== "string" || typeof def.run !== "function") {
+          send("error", { message: "addCommand() needs { id, label, run }." });
+          return Promise.resolve();
+        }
+        if (commands[def.id]) return Promise.resolve();
+        commands[def.id] = def;
+        send("command-registered", { commandId: def.id, label: def.label });
+        return Promise.resolve();
+      };
+
+      // API v2: app events. Subscriptions are mirrored to the host so the app
+      // only pushes events to plugins that asked for them.
+      var EVENT_TYPES = ["selection", "document", "viewport"];
+      var listeners = Object.create(null);
+      EVENT_TYPES.forEach(function (t) { listeners[t] = new Set(); });
+      api.on = function (type, handler) {
+        if (EVENT_TYPES.indexOf(type) === -1 || typeof handler !== "function") {
+          reportError("api.on(type, handler) needs an event in [" + EVENT_TYPES.join(", ") + "] and a function.");
+          return function () {};
+        }
+        listeners[type].add(handler);
+        send("event-subscribe", { event: type });
+        return function () {
+          listeners[type].delete(handler);
+          send("event-unsubscribe", { event: type });
+        };
+      };
+      api.off = function (type, handler) {
+        if (listeners[type]) listeners[type].delete(handler);
+        send("event-unsubscribe", { event: type });
+      };
+
+      function reportError(message) {
+        send("error", { message: String(message) });
+      }
+
+      // Catch load-time and runtime errors so a broken plugin cannot escape.
+      window.addEventListener("error", function (event) {
+        reportError(event.message || "Plugin threw an error.");
+      });
+
+      window.addEventListener("message", function (event) {
+        var msg = event.data;
+        if (!msg || msg.__plugin !== true) return;
+        var payload = msg.payload && typeof msg.payload === "object" ? msg.payload : {};
+        if (msg.type === "run-command") {
+          var def = commands[String(payload.commandId || "")];
+          if (!def) {
+            reportError("Unknown plugin command: " + payload.commandId);
+            return;
+          }
+          Promise.resolve()
+            .then(function () { return def.run(); })
+            .catch(function (err) { reportError("Command failed: " + (err && err.message ? err.message : err)); });
+          return;
+        }
+        if (msg.type === "api-result") {
+          var entry = pending[payload.seq];
+          if (!entry) return;
+          delete pending[payload.seq];
+          entry.resolve(payload.value);
+          return;
+        }
+        if (msg.type === "api-error") {
+          var failed = pending[payload.seq];
+          if (!failed) return;
+          delete pending[payload.seq];
+          failed.reject(new Error(String(payload.error || "Plugin API call failed.")));
+          return;
+        }
+        if (msg.type === "event") {
+          var fns = listeners[String(payload.type || "")];
+          if (!fns || fns.size === 0) return;
+          var data = payload.data && typeof payload.data === "object" ? payload.data : {};
+          fns.forEach(function (handler) {
+            try {
+              handler(data);
+            } catch (err) {
+              reportError("Event handler failed: " + (err && err.message ? err.message : err));
+            }
+          });
+          return;
+        }
+        if (msg.type === "init") {
+          try {
+            // The plugin script is user code that expects the shared `api` in
+            // scope. new Function lets us run those statements with api bound
+            // and catch errors instead of leaking an uncaught script error.
+            new Function("api", String(payload.main || ""))(api);
+            send("ready", {});
+          } catch (err) {
+            reportError(err && err.message ? err.message : String(err));
+          }
+        }
+      });
+
+      send("ready", {});
+    </script>
+  </body>
+</html>

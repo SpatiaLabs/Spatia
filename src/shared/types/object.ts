@@ -16,9 +16,26 @@ export type ObjectKind =
   | "group"
   | "frame"
   | "pen"
-  | "url";
+  | "url"
+  | "shape";
 
 export type TextAlign = "left" | "center" | "right";
+
+/**
+ * Concrete diagram shape kind carried by `ShapeObject`. Lines and arrows are
+ * drawn horizontally from the box left-center to the box right-center in local
+ * space; the arrowhead sits at the end. All shapes (including lines/arrows)
+ * share the BaseObject bounding box, so move/resize/rotate/snap/connect all
+ * work through the common `x/y/width/height/rotation` fields.
+ */
+export type ShapeKind =
+  | "rectangle"
+  | "rounded-rectangle"
+  | "ellipse"
+  | "diamond"
+  | "triangle"
+  | "line"
+  | "arrow";
 
 /** Shared geometry/common fields present on every object. */
 export interface BaseObject {
@@ -127,7 +144,8 @@ export interface FrameObject extends BaseObject {
  * stroke stays glued to the world while panning/zooming. Its stored x/y/width/
  * height is the derived bounding box of all points (kept for culling and
  * persistence); the live geometry comes from `points`. Pen strokes are
- * decorative: they are drawn but not hit-testable or selectable.
+ * selectable so their color / stroke width can be edited, but moving, resizing
+ * and rotating them is intentionally not supported.
  */
 export interface PenObject extends BaseObject {
   type: "pen";
@@ -139,6 +157,24 @@ export interface PenObject extends BaseObject {
 export interface WorldPoint {
   x: number;
   y: number;
+  /** Optional stroke width at this vertex (world units). Absent = uniform pen. */
+  width?: number;
+}
+
+/**
+ * A diagram shape / annotations element (rectangle, ellipse, diamond, triangle,
+ * line or arrow). `kind` distinguishes the drawing primitive while every shape
+ * shares the same property schema so persistence, the inspector and selection
+ * handle them uniformly.
+ */
+export interface ShapeObject extends BaseObject {
+  type: "shape";
+  kind: ShapeKind;
+  /** Interior fill color ("" draws no fill, e.g. for lines). */
+  fill: string;
+  /** Outline / stroke color. */
+  stroke: string;
+  strokeWidth: number;
 }
 
 export type CanvasObject =
@@ -151,7 +187,8 @@ export type CanvasObject =
   | ConnectionObject
   | GroupObject
   | FrameObject
-  | PenObject;
+  | PenObject
+  | ShapeObject;
 
 /** Metadata about a project local asset (never stores binary data). */
 export interface AssetMeta {
@@ -161,6 +198,12 @@ export interface AssetMeta {
   size: number;
   mime: string;
   ext: string;
+  /**
+   * Optional compact thumbnail (small data URL) captured at import time.
+   * Generated for image assets so galleries/asset chips render instantly
+   * without decoding the full binary. Additive: may be absent in older documents.
+   */
+  thumbnail?: string;
 }
 
 /**
@@ -174,4 +217,18 @@ export function isAssetKind(kind: AssetMeta["kind"]): boolean {
 
 export function isLocked(o: CanvasObject): boolean {
   return o.locked;
+}
+
+/** Read the tags stored on an object via its reserved metadata field. */
+export function objectTags(o: Pick<BaseObject, "metadata">): string[] {
+  const raw = o.metadata?.tags;
+  return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string") : [];
+}
+
+/** Compare tags for equality (order-insensitive). */
+export function sameTags(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const setA = new Set(a);
+  for (const t of b) if (!setA.has(t)) return false;
+  return true;
 }

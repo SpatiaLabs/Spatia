@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
-import { app, dialog } from "electron";
+import { app, dialog, nativeImage } from "electron";
 import type { AssetMeta } from "../shared/types/object.js";
 
 /**
@@ -78,6 +78,23 @@ function mimeFor(ext: string): string {
   return MIME_BY_EXT[lower] ?? "application/octet-stream";
 }
 
+/**
+ * Capture a compact thumbnail (256px wide PNG data URL) for an image file.
+ * Uses Electron's nativeImage so no canvas is needed in the main process.
+ * Returns null when the file isn't a decodable image (e.g. SVG).
+ */
+function thumbnailForImage(filePath: string): string | null {
+  try {
+    const image = nativeImage.createFromPath(filePath);
+    if (image.isEmpty()) return null;
+    const resized = image.getSize().width <= 288 ? image : image.resize({ width: 256 });
+    const dataUrl = resized.toDataURL();
+    return dataUrl && dataUrl.length > 0 ? dataUrl : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface ImportResult {
   canceled: boolean;
   asset: AssetMeta | null;
@@ -99,14 +116,17 @@ export async function importFromPath(
     const dest = path.join(dir, id + ext);
     await fs.copyFile(sourcePath, dest);
     const mime = mimeFor(ext);
+    const kind = kindFor(mime, ext);
     const name = sourceName ?? path.basename(sourcePath);
+    const thumbnail = kind === "image" ? thumbnailForImage(dest) : undefined;
     const asset: AssetMeta = {
       id,
-      kind: kindFor(mime, ext),
+      kind,
       name,
       size: stat.size,
       mime,
       ext: ext.replace(".", ""),
+      ...(thumbnail ? { thumbnail } : {}),
     };
     return { canceled: false, asset };
   } catch {
@@ -218,17 +238,32 @@ export async function relinkAsset(
     const dest = path.join(dir, assetId + ext);
     await fs.copyFile(sourcePath, dest);
     const mime = mimeFor(ext);
+    const kind = kindFor(mime, ext);
+    const thumbnail = kind === "image" ? thumbnailForImage(dest) : undefined;
     const meta: AssetMeta = {
       id: assetId,
-      kind: kindFor(mime, ext),
+      kind,
       name: path.basename(sourcePath),
       size: stat.size,
       mime,
       ext: ext.replace(".", ""),
+      ...(thumbnail ? { thumbnail } : {}),
     };
     return meta;
   } catch {
     return null;
+  }
+}
+
+/** Permanently delete an asset binary from the project-local store. */
+export async function deleteAsset(projectId: string, assetId: string): Promise<boolean> {
+  try {
+    const currentFile = await assetFilePath(projectId, assetId);
+    if (!currentFile) return false;
+    await fs.rm(currentFile, { force: true });
+    return true;
+  } catch {
+    return false;
   }
 }
 

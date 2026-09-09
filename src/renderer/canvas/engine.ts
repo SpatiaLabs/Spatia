@@ -6,7 +6,7 @@ import {
   anchoredZoom,
   panByScreenDelta,
 } from "../../shared/geometry/viewport.js";
-import type { CanvasObject, ObjectKind } from "../../shared/types/object.js";
+import type { CanvasObject, ObjectKind, ShapeKind } from "../../shared/types/object.js";
 import type { ViewportStore } from "../state/viewportStore.js";
 import type { ProjectStore } from "../project/projectStore.js";
 import type { SelectionStore } from "../state/selectionStore.js";
@@ -16,15 +16,17 @@ import {
   deleteObjectsCommand,
   moveObjectsCommand,
   resizeObjectsCommand,
+  rotateObjectsCommand,
 } from "../command/commands.js";
 import { drawGrid } from "./grid.js";
 import { drawObjects, screenPointInObj, type ObjectDrawContext } from "./objects.js";
 import { CanvasInput } from "./input.js";
 import { ImageCache } from "./imageCache.js";
-import { resizeRect, type Handle } from "../../shared/geometry/selection.js";
+import { resizeRect, rotateKnobWorld, type Handle } from "../../shared/geometry/selection.js";
 import { SpatialGrid } from "../../shared/geometry/spatialIndex.js";
 import type { InteractionHost } from "./interactionHost.js";
 import { connectionEndpoints, connectionHit, expandMembers, unionRect, snapMove, snapResize, edgeAnchor, pointToSegment, type SnapGuide } from "../../shared/geometry/workspace.js";
+import { SHAPE_DEFAULTS, pointInShape } from "../../shared/geometry/shapes.js";
 
 const DEFAULT_SIZES: Record<"test-object" | "text" | "note", { width: number; height: number }> = {
   "test-object": { width: 160, height: 160 },
@@ -37,6 +39,10 @@ const FILE_DEFAULT = { width: 160, height: 120 };
 
 /** World-space snap distance, scaled so snapping feels consistent at any zoom. */
 const SNAP_PX = 6;
+
+/** Browser frames keep a usable minimum so the embedded page never collapses. */
+const FRAME_MIN_WIDTH = 200;
+const FRAME_MIN_HEIGHT = 150;
 
 /** Handles a single move/resize gesture's before/after snapshots. */
 interface GrabState {
@@ -54,6 +60,14 @@ interface ResizeState {
   beforeRects: { id: string; x: number; y: number; width: number; height: number }[];
   /** Snap targets (all non-selected, non-decorative AABBs) captured once per gesture. */
   others: Rect[];
+}
+
+interface RotateState {
+  before: { id: string; rotation: number }[];
+  /** Selection-box center in world space (the angular reference point). */
+  center: Point;
+  /** Pointer angle when the knob drag began. */
+  refAngle: number;
 }
 
 /**
@@ -77,11 +91,17 @@ export class CanvasEngine implements InteractionHost {
 
   private grab: GrabState | null = null;
   private resizeState: ResizeState | null = null;
+  private rotateState: RotateState | null = null;
   private marqueeRect: Rect | null = null;
   private guides: SnapGuide[] = [];
   private draftConn: { from: string; end: Point; valid: boolean } | null = null;
-  private draftPen: Point[] | null = null;
+  private draftPen: PenDraftPoint[] | null = null;
   private penActive = false;
+  private penColor = "#e8eaed";
+  private penSize = 3;
+  private penEraser = false;
+  /** Touch hosts get larger selection handles + a rotation knob; desktop is unchanged. */
+  private coarse = false;
   /** Object ids allowed while a group or frame is isolated; null means full workspace. */
   private isolationIds: ReadonlySet<string> | null = null;
 
@@ -225,6 +245,11 @@ export class CanvasEngine implements InteractionHost {
         }
         continue;
       }
+      if (obj.type === "shape") {
+        const shape = obj as Extract<CanvasObject, { type: "shape" }>;
+        if (pointInShape(shape.kind, aabb(shape), shape.rotation, wp)) return obj.id;
+        continue;
+      }
       if (screenPointInObj(screen, obj, this.frame)) return obj.id;
     }
     return null;
@@ -234,7 +259,7 @@ export class CanvasEngine implements InteractionHost {
     const bounds = this.selectionWorldBounds();
     if (!bounds) return null;
     const handles: Handle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
-    const hitRadius = Math.max(8, 4 / this.frame.zoom);
+    const hitRadius = this.coarse ? Math.max(14, 6 / this.frame.zoom) : Math.max(8, 4 / this.frame.zoom);
     for (const h of handles) {
       const hw = handleWorldRect(bounds, h);
       const p = worldToScreen(hw, this.frame);
@@ -243,6 +268,16 @@ export class CanvasEngine implements InteractionHost {
       }
     }
     return null;
+  }
+
+  /** Whether the rotation knob (touch hosts only) is under the pointer. */
+  hitRotateHandle(screen: Point): boolean {
+    if (!this.coarse) return false;
+    const bounds = this.selectionWorldBounds();
+    if (!bounds) return false;
+    const knob = rotateKnobWorld(bounds, this.frame.zoom);
+    const p = worldToScreen(knob, this.frame);
+    return Math.abs(screen.x - p.x) <= 28 && Math.abs(screen.y - p.y) <= 28;
   }
 
   // Connection gesture (Ctrl + drag)
@@ -295,6 +330,14 @@ export class CanvasEngine implements InteractionHost {
     return this.createFreeConnection(fromId, screenToWorld(screen, this.frame));
   }
 
+  /** Drop an in-progress connection draft without creating anything. */
+  cancelConnectionDraft(): void {
+    if (this.draftConn) {
+      this.draftConn = null;
+      this.requestRender();
+    }
+  }
+
   // Pen tool (freehand drawing) — a completely separate tool from connections.
 
   isPenTool(): boolean {
@@ -311,29 +354,100 @@ export class CanvasEngine implements InteractionHost {
     }
   }
 
-  startPenStroke(screen: Point): void {
-    this.draftPen = [screenToWorld(screen, this.frame)];
+  /** Toggle touch-sized selection handles + the rotation knob. */
+  setCoarseHandles(on: boolean): void {
+    if (this.coarse === on) return;
+    this.coarse = on;
     this.requestRender();
   }
 
-  penStrokeTo(screen: Point): void {
+  isCoarseHandles(): boolean {
+    return this.coarse;
+  }
+
+  /** Current pen style (stroke color + base width in world units). */
+  getPenStyle(): { color: string; size: number } {
+    return { color: this.penColor, size: this.penSize };
+  }
+
+  setPenStyle(style: { color?: string; size?: number }): void {
+    if (style.color !== undefined && typeof style.color === "string" && style.color !== this.penColor) {
+      this.penColor = style.color;
+    }
+    if (style.size !== undefined && Number.isFinite(style.size)) {
+      this.penSize = Math.min(24, Math.max(1, style.size));
+    }
+    this.requestRender();
+  }
+
+  /** Put the pen into eraser mode (strokes delete objects instead of drawing). */
+  setPenEraser(on: boolean): void {
+    if (this.penEraser === on) return;
+    this.penEraser = on;
+    this.requestRender();
+  }
+
+  isPenEraser(): boolean {
+    return this.penEraser;
+  }
+
+  startPenStroke(screen: Point, pressure?: number): void {
+    const w = screenToWorld(screen, this.frame);
+    this.draftPen = [{ x: w.x, y: w.y, width: this.pressureWidth(pressure) }];
+    this.requestRender();
+  }
+
+  penStrokeTo(screen: Point, pressure?: number): void {
     if (!this.draftPen) return;
     const w = screenToWorld(screen, this.frame);
     const last = this.draftPen[this.draftPen.length - 1];
     if (last && Math.hypot(w.x - last.x, w.y - last.y) < 1e-4) return;
-    this.draftPen.push(w);
+    this.draftPen.push({ x: w.x, y: w.y, width: this.pressureWidth(pressure) });
     this.requestRender();
   }
 
+  /** Per-vertex stroke width for a stylus pressure (or fixed size otherwise). */
+  private pressureWidth(pressure?: number): number | undefined {
+    if (pressure === undefined || !(pressure > 0)) return undefined;
+    const p = Math.min(1, Math.max(0, pressure));
+    return this.penSize * (0.5 + p);
+  }
+
   endPenStroke(): void {
-    if (!this.draftPen || this.draftPen.length < 2) {
-      this.draftPen = null;
-      return;
-    }
     const stroke = this.draftPen;
     this.draftPen = null;
-    this.commitCommand(addObjectCommand(this.project, buildPenObject(stroke, this.project.nextZIndex())));
+    if (!stroke || stroke.length < 2) {
+      this.requestRender();
+      return;
+    }
+    if (this.penEraser) {
+      this.commitCommand(deleteObjectsCommand(this.project, this.hitByEraser(stroke)));
+      this.requestRender();
+      return;
+    }
+    this.commitCommand(addObjectCommand(this.project, buildPenObject(stroke, this.project.nextZIndex(), this.penColor, this.penSize)));
     this.requestRender();
+  }
+
+  /**
+   * Collect object ids the eraser stroke touches, approximating the eraser as a
+   * thick polyline over the swept path. Connections are skipped: they are
+   * derived from their endpoints and would be surprising to delete with a
+   * quick sweep.
+   */
+  private hitByEraser(stroke: PenDraftPoint[]): string[] {
+    const radius = this.penSize * 2.4;
+    const pts: Point[] = stroke.map((s) => ({ x: s.x, y: s.y }));
+    const ids: string[] = [];
+    for (const o of this.project.getObjects()) {
+      if (o.type === "connection" || o.locked) continue;
+      if (o.type === "pen") {
+        if (polylineDistance(pts, o.points.map((p) => ({ x: p.x, y: p.y })), radius + (o.strokeWidth || 3) / 2)) ids.push(o.id);
+        continue;
+      }
+      if (distanceRectPath(aabb(o), pts) <= radius) ids.push(o.id);
+    }
+    return ids;
   }
 
   /** Create a free-endpoint connection from `fromId` ending at `end` (world). */
@@ -481,14 +595,29 @@ export class CanvasEngine implements InteractionHost {
       if (s.handle.includes("n")) next = { ...next, y: next.y + snap.dy, height: next.height - snap.dy };
       else if (s.handle.includes("s")) next = { ...next, height: next.height + snap.dy };
     }
+    // Browser frames keep a usable minimum so the embedded page never collapses
+    // to a dot; the anchored edge stays fixed while the min is enforced.
+    if (s.beforeRects.some((r) => this.project.getObject(r.id)?.type === "frame")) {
+      if (next.width < FRAME_MIN_WIDTH) {
+        if (s.handle.includes("w")) next = { ...next, x: next.x + next.width - FRAME_MIN_WIDTH };
+        next = { ...next, width: FRAME_MIN_WIDTH };
+      }
+      if (next.height < FRAME_MIN_HEIGHT) {
+        if (s.handle.includes("n")) next = { ...next, y: next.y + next.height - FRAME_MIN_HEIGHT };
+        next = { ...next, height: FRAME_MIN_HEIGHT };
+      }
+    }
     const scaleX = s.beforeBounds.width > 0 ? next.width / s.beforeBounds.width : 1;
     const scaleY = s.beforeBounds.height > 0 ? next.height / s.beforeBounds.height : 1;
     const minSize = 8;
     for (const r of s.beforeRects) {
+      const obj = this.project.getObject(r.id);
+      const minW = obj && obj.type === "frame" ? FRAME_MIN_WIDTH : minSize;
+      const minH = obj && obj.type === "frame" ? FRAME_MIN_HEIGHT : minSize;
       const nx = next.x + (r.x - s.beforeBounds.x) * scaleX;
       const ny = next.y + (r.y - s.beforeBounds.y) * scaleY;
-      const nw = Math.max(minSize, r.width * scaleX);
-      const nh = Math.max(minSize, r.height * scaleY);
+      const nw = Math.max(minW, r.width * scaleX);
+      const nh = Math.max(minH, r.height * scaleY);
       this.project.resizeObject(r.id, nx, ny, nw, nh);
     }
   }
@@ -507,6 +636,72 @@ export class CanvasEngine implements InteractionHost {
     this.commitCommand(resizeObjectsCommand(this.project, before, after));
     this.resizeState = null;
     this.guides = [];
+  }
+
+  // Rotate gesture (touch hosts only). The knob sits above the selection box;
+  // dragging it rotates every selected object about its own center by the same
+  // angular delta, so relative placement is preserved and undo/redo is exact.
+  beginRotate(screen: Point): void {
+    const bounds = this.selectionWorldBounds();
+    if (!bounds) return;
+    const expanded = expandMembers(this.selection.get(), this.project.getObjects(), (o) => o.type === "group");
+    const before: { id: string; rotation: number }[] = [];
+    for (const o of this.project.getObjects()) {
+      if (expanded.has(o.id) && !o.locked && o.type !== "connection" && o.type !== "pen") {
+        before.push({ id: o.id, rotation: o.rotation });
+      }
+    }
+    if (before.length === 0) return;
+    const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    const world = screenToWorld(screen, this.frame);
+    this.rotateState = {
+      before,
+      center,
+      refAngle: Math.atan2(world.y - center.y, world.x - center.x),
+    };
+  }
+
+  rotateTo(screen: Point): void {
+    if (!this.rotateState) return;
+    const world = screenToWorld(screen, this.frame);
+    const delta =
+      Math.atan2(world.y - this.rotateState.center.y, world.x - this.rotateState.center.x) -
+      this.rotateState.refAngle;
+    for (const b of this.rotateState.before) {
+      this.project.setObjectProp(b.id, "rotation", normalizeAngle(b.rotation + delta));
+    }
+    this.requestRender();
+  }
+
+  endRotate(): void {
+    if (!this.rotateState) return;
+    const before = this.rotateState.before;
+    const after = before
+      .map((b) => {
+        const o = this.project.getObject(b.id);
+        return o ? { id: o.id, rotation: o.rotation } : null;
+      })
+      .filter((p): p is { id: string; rotation: number } => p !== null);
+    if (after.length > 0) {
+      this.commitCommand(rotateObjectsCommand(this.project, before, after));
+    }
+    this.rotateState = null;
+  }
+
+  /** Rotate the current selection by `deg` degrees (undoable). */
+  rotateSelection(deg: number): void {
+    const expanded = expandMembers(this.selection.get(), this.project.getObjects(), (o) => o.type === "group");
+    const before: { id: string; rotation: number }[] = [];
+    for (const o of this.project.getObjects()) {
+      if (expanded.has(o.id) && !o.locked && o.type !== "connection" && o.type !== "pen") {
+        before.push({ id: o.id, rotation: o.rotation });
+      }
+    }
+    if (before.length === 0) return;
+    const rad = (deg * Math.PI) / 180;
+    const after = before.map((b) => ({ id: b.id, rotation: normalizeAngle(b.rotation + rad) }));
+    this.commitCommand(rotateObjectsCommand(this.project, before, after));
+    this.requestRender();
   }
 
   // Viewport
@@ -532,7 +727,7 @@ export class CanvasEngine implements InteractionHost {
 
   // Document mutations
   createObject(kind: ObjectKind, worldCenter: Point): string | null {
-    if (kind === "image" || kind === "file" || kind === "url" || kind === "connection" || kind === "group" || kind === "frame" || kind === "pen") {
+    if (kind === "image" || kind === "file" || kind === "url" || kind === "connection" || kind === "group" || kind === "frame" || kind === "pen" || kind === "shape") {
       return null;
     }
     const size = DEFAULT_SIZES[kind];
@@ -648,6 +843,11 @@ export class CanvasEngine implements InteractionHost {
 
   private isObjectVisible(id: string): boolean {
     return this.isolationIds === null || this.isolationIds.has(id);
+  }
+
+  /** Whether an object participates in the current (possibly isolated) scope. */
+  isObjectInScope(id: string): boolean {
+    return this.isObjectVisible(id);
   }
 
   // -------- Actions used by the UI --------
@@ -820,6 +1020,29 @@ export class CanvasEngine implements InteractionHost {
     return obj.id;
   }
 
+  /** Create a diagram shape of the given kind centered on `worldCenter`. */
+  addShapeObject(kind: ShapeKind, worldCenter: Point): string {
+    const d = SHAPE_DEFAULTS[kind];
+    const obj: CanvasObject = {
+      type: "shape",
+      kind,
+      id: createObjectId(),
+      x: worldCenter.x - d.width / 2,
+      y: worldCenter.y - d.height / 2,
+      width: d.width,
+      height: d.height,
+      rotation: 0,
+      zIndex: this.project.nextZIndex(),
+      locked: false,
+      metadata: {},
+      fill: d.fill,
+      stroke: d.stroke,
+      strokeWidth: d.strokeWidth,
+    } as CanvasObject;
+    this.commitCommand(addObjectCommand(this.project, obj));
+    return obj.id;
+  }
+
   // -------- Image loading --------
 
   async ensureImage(assetId: string): Promise<HTMLImageElement | null> {
@@ -849,6 +1072,58 @@ export class CanvasEngine implements InteractionHost {
 
   // -------- Rendering --------
 
+  /**
+   * Rasterize the full document (all objects, no culling beyond the requested
+   * bounds) to an offscreen canvas and return its data URL. This drives PNG /
+   * JPEG / PDF export while reusing the exact same drawing pipeline the
+   * interactive canvas uses.
+   */
+  async rasterizeExport(
+    bounds: Rect,
+    scale = 2,
+    mime: "image/png" | "image/jpeg" = "image/png"
+  ): Promise<{ dataUrl: string; width: number; height: number } | null> {
+    let s = scale;
+    const maxDim = Math.max(bounds.width, bounds.height);
+    if (maxDim <= 0) return null;
+    // Cap extremely large documents so the raster stays in the 8192px budget.
+    if (bounds.width * s > 8192 || bounds.height * s > 8192) {
+      s = Math.max(0.1, 8192 / maxDim);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bounds.width * s));
+    canvas.height = Math.max(1, Math.round(bounds.height * s));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.fillStyle = "#121417";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const frame: ViewportFrame = {
+      cameraX: bounds.x,
+      cameraY: bounds.y,
+      zoom: s,
+      originWidth: bounds.width,
+      originHeight: bounds.height,
+    };
+    const drawCtx: ObjectDrawContext = {
+      imageOf: (assetId) => this.images.get(assetId),
+      objLabel: (assetId) => this.project.getAsset(assetId)?.name ?? "File",
+      assetKindOf: (assetId) => this.project.getAsset(assetId)?.kind,
+      assetExtOf: (assetId) => this.project.getAsset(assetId)?.ext,
+      objectById: (id) => this.project.getObject(id),
+    };
+    const objects = this.project.getObjectsSorted();
+    drawObjects(ctx, frame, objects, new Set(), drawCtx);
+    // Wait for image assets so the raster reflects the loaded binaries, then
+    // re-draw once (the first pass may still contain placeholder fills).
+    const imageIds = objects
+      .filter((o) => o.type === "image")
+      .map((o) => (o as { assetId: string }).assetId);
+    await Promise.all(imageIds.map((id) => this.ensureImage(id).catch(() => null)));
+    drawObjects(ctx, frame, objects, new Set(), drawCtx);
+    const dataUrl = mime === "image/jpeg" ? canvas.toDataURL("image/jpeg", 0.92) : canvas.toDataURL("image/png");
+    return { dataUrl, width: canvas.width, height: canvas.height };
+  }
+
   render(): void {
     const ctx = this.canvasEl.getContext("2d");
     if (!ctx) return;
@@ -869,7 +1144,7 @@ export class CanvasEngine implements InteractionHost {
     const objects = this.isolationIds === null
       ? this.project.getObjectsSorted()
       : this.project.getObjectsSorted().filter((obj) => this.isObjectVisible(obj.id));
-    drawObjects(ctx, this.frame, objects, selected, drawCtx);
+    drawObjects(ctx, this.frame, objects, selected, drawCtx, this.coarse);
 
     if (this.draftConn) {
       const fromObj = this.project.getObject(this.draftConn.from);
@@ -904,15 +1179,10 @@ export class CanvasEngine implements InteractionHost {
 
     if (this.draftPen && this.draftPen.length >= 2) {
       ctx.save();
-      ctx.strokeStyle = "#e8eaed";
-      ctx.lineWidth = Math.max(1, 3 * this.frame.zoom);
+      ctx.strokeStyle = this.penEraser ? "rgba(232,234,237,0.45)" : this.penColor;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.beginPath();
-      const pts = this.draftPen.map((p) => worldToScreen(p, this.frame));
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.stroke();
+      strokePathVariable(ctx, this.draftPen, this.frame, Math.max(1, this.penSize * this.frame.zoom));
       ctx.restore();
     }
 
@@ -972,6 +1242,10 @@ export class CanvasEngine implements InteractionHost {
     this.canvasEl.style.height = `${this.height}px`;
     this.syncFrame();
     this.requestRender();
+    // The canvas just changed size (e.g. a panel opened/closed). The camera did
+    // not move, but the viewport frame did, so overlay/culling/minimap math
+    // dependent on the canvas size must re-baseline.
+    this.viewport.changed.emit(this.viewport.get());
   }
 
   private syncFrame(): void {
@@ -998,7 +1272,7 @@ function createObjectId(): string {
   return "obj_" + Math.random().toString(36).slice(2, 10);
 }
 
-function buildPenObject(points: Point[], zIndex: number): CanvasObject {
+function buildPenObject(points: PenDraftPoint[], zIndex: number, color: string, width: number): CanvasObject {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -1012,9 +1286,9 @@ function buildPenObject(points: Point[], zIndex: number): CanvasObject {
   return {
     type: "pen",
     id: createObjectId(),
-    points: points.map((p) => ({ x: p.x, y: p.y })),
-    color: "#e8eaed",
-    strokeWidth: 3,
+    points: points.map((p) => (p.width === undefined ? { x: p.x, y: p.y } : { x: p.x, y: p.y, width: p.width })),
+    color,
+    strokeWidth: width,
     x: Number.isFinite(minX) ? minX : 0,
     y: Number.isFinite(minY) ? minY : 0,
     width: Number.isFinite(minX) ? maxX - minX : 0,
@@ -1040,8 +1314,158 @@ function handleWorldRect(rect: Rect, handle: Handle): Point {
   return pos[handle];
 }
 
+/** Normalize an angle to (-PI, PI] so serialized rotations stay canonical. */
+function normalizeAngle(a: number): number {
+  while (a > Math.PI) a -= 2 * Math.PI;
+  while (a <= -Math.PI) a += 2 * Math.PI;
+  return a;
+}
+
 function aabb(o: CanvasObject): Rect {
   return { x: o.x, y: o.y, width: o.width, height: o.height };
+}
+
+/* --- freehand pen helpers (pressure strokes, erasing) --------------------- */
+
+interface PenDraftPoint {
+  x: number;
+  y: number;
+  width?: number;
+}
+
+/**
+ * Stroke a polyline whose width may change per vertex. `width` is in world
+ * units and is scaled by the frame; when no vertex carries a width the whole
+ * stroke renders as a single uniform path (the common, fast case).
+ */
+function strokePathVariable(
+  ctx: CanvasRenderingContext2D,
+  pts: PenDraftPoint[],
+  frame: ViewportFrame,
+  uniformScreenWidth: number
+): void {
+  const n = pts.length;
+  if (n < 2) return;
+  let anyWidth = false;
+  for (const p of pts) {
+    if (p.width !== undefined) {
+      anyWidth = true;
+      break;
+    }
+  }
+  if (!anyWidth) {
+    ctx.lineWidth = uniformScreenWidth;
+    ctx.beginPath();
+    const s0 = worldToScreen(pts[0], frame);
+    ctx.moveTo(s0.x, s0.y);
+    for (let i = 1; i < n; i++) {
+      const s = worldToScreen(pts[i], frame);
+      ctx.lineTo(s.x, s.y);
+    }
+    ctx.stroke();
+    return;
+  }
+  for (let i = 1; i < n; i++) {
+    const prev = pts[i - 1];
+    const cur = pts[i];
+    if (!prev || !cur) continue;
+    const a = worldToScreen(prev, frame);
+    const b = worldToScreen(cur, frame);
+    const wa = prev.width === undefined ? uniformScreenWidth : Math.max(1, prev.width * frame.zoom);
+    const wb = cur.width === undefined ? uniformScreenWidth : Math.max(1, cur.width * frame.zoom);
+    ctx.lineWidth = (wa + wb) / 2;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+}
+
+function distancePointToSegment(p: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const len2 = abx * abx + aby * aby;
+  let t = 0;
+  if (len2 > 0) t = Math.min(1, Math.max(0, ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2));
+  const cx = a.x + t * abx;
+  const cy = a.y + t * aby;
+  return Math.hypot(p.x - cx, p.y - cy);
+}
+
+function segTouchesRect(a: Point, b: Point, r: Rect): boolean {
+  const loX = r.x;
+  const hiX = r.x + r.width;
+  const loY = r.y;
+  const hiY = r.y + r.height;
+  if (Math.max(a.x, b.x) < loX || Math.min(a.x, b.x) > hiX) return false;
+  if (Math.max(a.y, b.y) < loY || Math.min(a.y, b.y) > hiY) return false;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let tmin = 0;
+  let tmax = 1;
+  const slabs: [number, number, number, number][] = [
+    [a.x, dx, loX, hiX],
+    [a.y, dy, loY, hiY],
+  ];
+  for (const [p, d, lo, hi] of slabs) {
+    if (Math.abs(d) < 1e-12) {
+      if (p < lo || p > hi) return false;
+      continue;
+    }
+    let t1 = (lo - p) / d;
+    let t2 = (hi - p) / d;
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
+    }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return false;
+  }
+  return true;
+}
+
+function distanceRectPath(r: Rect, path: Point[]): number {
+  if (path.length === 0) return Infinity;
+  let a = path[0];
+  for (let i = 1; i < path.length; i++) {
+    const b = path[i];
+    if (segTouchesRect(a, b, r)) return 0;
+    a = b;
+  }
+  let best = Infinity;
+  for (const end of path) {
+    best = Math.min(best, Math.max(0, Math.hypot(Math.max(r.x - end.x, 0, end.x - (r.x + r.width)), Math.max(r.y - end.y, 0, end.y - (r.y + r.height)))));
+  }
+  const corners: Point[] = [
+    { x: r.x, y: r.y },
+    { x: r.x + r.width, y: r.y },
+    { x: r.x, y: r.y + r.height },
+    { x: r.x + r.width, y: r.y + r.height },
+  ];
+  a = path[0];
+  for (let i = 1; i < path.length; i++) {
+    const b = path[i];
+    for (const c of corners) best = Math.min(best, distancePointToSegment(c, a, b));
+    a = b;
+  }
+  return best;
+}
+
+function polylineDistance(a: Point[], b: Point[], threshold: number): boolean {
+  if (a.length === 0 || b.length === 0) return false;
+  for (let i = 1; i < a.length; i++) {
+    for (let j = 0; j < b.length; j++) {
+      if (distancePointToSegment(b[j], a[i - 1], a[i]) <= threshold) return true;
+    }
+  }
+  for (let i = 1; i < b.length; i++) {
+    for (let j = 0; j < a.length; j++) {
+      if (distancePointToSegment(a[j], b[i - 1], b[i]) <= threshold) return true;
+    }
+  }
+  return false;
 }
 
 /** All eligible snap targets: every object not in `exclude`, minus decorative types. */

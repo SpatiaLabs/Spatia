@@ -1,4 +1,4 @@
-import type { ViewportState } from "../types/project.js";
+import type { ViewportState, ShareInfo } from "../types/project.js";
 import type {
   CanvasObject,
   AssetMeta,
@@ -14,8 +14,11 @@ import type {
   GroupObject,
   FrameObject,
   PenObject,
+  ShapeObject,
   WorldPoint,
 } from "../types/object.js";
+import { SHAPE_KINDS, SHAPE_DEFAULTS } from "../geometry/shapes.js";
+import type { ShapeKind } from "../types/object.js";
 
 export const PROJECT_FORMAT_VERSION = 5;
 
@@ -33,10 +36,18 @@ export interface ProjectFile {
     name: string;
     createdAt: string;
     updatedAt: string;
+    /** Project-level tags (Phase 2, additive). */
+    tags?: string[];
+    /** Collaboration metadata (Phase 2, additive). */
+    shared?: ShareInfo;
   };
   viewport: ViewportState;
   objects: CanvasObject[];
   assets: AssetMeta[];
+  /**
+   * Legacy permissions-era field: a `comments` array from pre-v0.5 files is
+   * tolerated and ignored (the separate canvas-comments feature was removed).
+   */
 }
 
 export function serialize(
@@ -47,12 +58,21 @@ export function serialize(
     name: string;
     createdAt: string;
     updatedAt: string;
+    tags?: readonly string[];
+    shared?: ShareInfo;
   },
   assets: readonly AssetMeta[] = []
 ): string {
   const file: ProjectFile = {
     formatVersion: PROJECT_FORMAT_VERSION,
-    project,
+    project: {
+      id: project.id,
+      name: project.name,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      ...(project.tags !== undefined ? { tags: [...project.tags] } : {}),
+      ...(project.shared !== undefined ? { shared: { ...project.shared } } : {}),
+    },
     viewport: { ...viewport },
     objects: objects.map((o) => ({ ...o })),
     assets: assets.map((a) => ({ ...a })),
@@ -166,6 +186,10 @@ function assertBoolean(value: unknown, label: string): asserts value is boolean 
   }
 }
 
+/** Cap on the number of project tags and their length (kept from files safe). */
+const TAGS_LIMIT = 100;
+const TAG_MAX_LENGTH = 60;
+
 function validateProjectMeta(meta: unknown): void {
   if (typeof meta !== "object" || meta === null) {
     throw new ProjectFormatError("Invalid project metadata.");
@@ -173,6 +197,41 @@ function validateProjectMeta(meta: unknown): void {
   const m = meta as Record<string, unknown>;
   assertString(m.id, "project.id");
   assertString(m.name, "project.name");
+  if (m.tags !== undefined) {
+    if (!Array.isArray(m.tags)) {
+      throw new ProjectFormatError("Invalid project.tags: expected an array.");
+    }
+    const tags: string[] = [];
+    for (const t of m.tags) {
+      if (typeof t !== "string") {
+        throw new ProjectFormatError("Invalid project.tags: entries must be strings.");
+      }
+      const tag = t.trim();
+      if (tag) tags.push(tag.slice(0, TAG_MAX_LENGTH));
+    }
+    m.tags = [...new Set(tags)].slice(0, TAGS_LIMIT);
+  }
+  if (m.shared !== undefined) {
+    if (typeof m.shared !== "object" || m.shared === null) {
+      throw new ProjectFormatError("Invalid project.shared.");
+    }
+    const r = m.shared as Record<string, unknown>;
+    assertString(r.roomId, "project.shared.roomId");
+    assertString(r.serverUrl, "project.shared.serverUrl");
+    if (r.role !== "owner" && r.role !== "editor" && r.role !== "viewer") {
+      throw new ProjectFormatError("Invalid project.shared.role.");
+    }
+    const shared: ShareInfo = {
+      roomId: r.roomId,
+      serverUrl: r.serverUrl,
+      role: r.role,
+    };
+    if (r.lastSyncedAt !== undefined) {
+      assertString(r.lastSyncedAt, "project.shared.lastSyncedAt");
+      shared.lastSyncedAt = r.lastSyncedAt;
+    }
+    m.shared = shared;
+  }
 }
 
 function validateViewport(vp: unknown): void {
@@ -204,6 +263,8 @@ function validateAsset(a: unknown): AssetMeta {
   assertFiniteNumber(rec.size, "asset.size");
   assertString(rec.mime, "asset.mime");
   assertString(rec.ext, "asset.ext");
+  const thumbnail = rec.thumbnail === undefined ? undefined : rec.thumbnail;
+  if (thumbnail !== undefined) assertString(thumbnail, "asset.thumbnail");
   return {
     id: rec.id,
     kind: rec.kind as AssetMeta["kind"],
@@ -211,6 +272,7 @@ function validateAsset(a: unknown): AssetMeta {
     size: rec.size,
     mime: rec.mime,
     ext: rec.ext,
+    ...(thumbnail !== undefined && thumbnail !== "" ? { thumbnail } : {}),
   };
 }
 
@@ -369,7 +431,8 @@ function validateObject(o: unknown): CanvasObject {
         const p = raw as Record<string, unknown>;
         assertFiniteNumber(p.x, "pen.point.x");
         assertFiniteNumber(p.y, "pen.point.y");
-        points.push({ x: p.x, y: p.y });
+        const width = typeof p.width === "number" && Number.isFinite(p.width) && p.width > 0 ? p.width : undefined;
+        points.push(width === undefined ? { x: p.x, y: p.y } : { x: p.x, y: p.y, width });
       }
       const color = obj.color === undefined ? "#e8eaed" : obj.color;
       assertString(color, "pen.color");
@@ -396,6 +459,22 @@ function validateObject(o: unknown): CanvasObject {
       assertString(color, "frame.color");
       const frame: FrameObject = { ...base, name, color };
       return frame;
+    }
+    case "shape": {
+      const base = commonBase(obj, "shape", obj.id);
+      const kind: ShapeKind =
+        typeof obj.kind === "string" &&
+        (SHAPE_KINDS as readonly string[]).includes(obj.kind)
+          ? (obj.kind as ShapeKind)
+          : "rectangle";
+      const fill = obj.fill === undefined ? SHAPE_DEFAULTS[kind].fill : obj.fill;
+      assertString(fill, "shape.fill");
+      const stroke = obj.stroke === undefined ? SHAPE_DEFAULTS[kind].stroke : obj.stroke;
+      assertString(stroke, "shape.stroke");
+      const strokeWidth = obj.strokeWidth ?? SHAPE_DEFAULTS[kind].strokeWidth;
+      assertFiniteNumber(strokeWidth, "shape.strokeWidth");
+      const shape: ShapeObject = { ...base, kind, fill, stroke, strokeWidth };
+      return shape;
     }
     default:
       throw new ProjectFormatError(`Unknown object type: ${String(obj.type)}`);

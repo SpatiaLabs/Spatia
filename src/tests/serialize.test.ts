@@ -92,7 +92,7 @@ function sampleProject() {
     project: { id: "proj_1", name: "Demo", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
     viewport: { x: 100, y: -50, zoom: 2 },
     objects: sampleObjects(),
-    assets: [{ id: "ast_1", kind: "image" as AssetMeta["kind"], name: "pic.png", size: 100, mime: "image/png", ext: "png" }],
+    assets: [{ id: "ast_1", kind: "image" as AssetMeta["kind"], name: "pic.png", size: 100, mime: "image/png", ext: "png" }] as AssetMeta[],
   };
 }
 
@@ -317,6 +317,65 @@ test("deserialize requires url on a url object", () => {
   assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
 });
 
+test("deserialize round trips a shape object with kind-specific fields", () => {
+  const shape: CanvasObject = {
+    type: "shape",
+    kind: "arrow",
+    id: "obj_sh",
+    x: 5,
+    y: 7,
+    width: 240,
+    height: 12,
+    rotation: 0.2,
+    zIndex: 3,
+    locked: false,
+    metadata: {},
+    fill: "#112233",
+    stroke: "#445566",
+    strokeWidth: 4,
+  };
+  const p = sampleProject();
+  p.objects = [shape];
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  const round = file.objects.find((o) => o.id === "obj_sh") as Extract<CanvasObject, { type: "shape" }>;
+  assert.ok(round);
+  assert.equal(round.type, "shape");
+  assert.equal(round.kind, "arrow");
+  assert.equal(round.fill, "#112233");
+  assert.equal(round.stroke, "#445566");
+  assert.equal(round.strokeWidth, 4);
+});
+
+test("deserialize fills shape defaults for a minimal shape object", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [{ type: "shape", id: "o", x: 0, y: 0, width: 1, height: 1, rotation: 0, zIndex: 1, locked: false }],
+  };
+  const file = deserialize(JSON.stringify(bad));
+  const round = file.objects[0] as Extract<CanvasObject, { type: "shape" }>;
+  assert.equal(round.kind, "rectangle");
+  assert.equal(round.fill, "#3d5be8");
+  assert.equal(round.stroke, "#17256b");
+  assert.equal(round.strokeWidth, 2);
+});
+
+test("deserialize defaults an unknown shape kind to rectangle", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [
+      { type: "shape", kind: "hexagon", id: "o", x: 0, y: 0, width: 1, height: 1, rotation: 0, zIndex: 1, locked: false },
+    ],
+  };
+  const file = deserialize(JSON.stringify(bad));
+  const round = file.objects[0] as Extract<CanvasObject, { type: "shape" }>;
+  assert.equal(round.kind, "rectangle");
+});
+
 test("deserialize round trips richer asset kinds (video, audio, pdf)", () => {
   const p = sampleProject();
   p.assets = [
@@ -329,6 +388,45 @@ test("deserialize round trips richer asset kinds (video, audio, pdf)", () => {
   assert.equal(file.assets.length, 3);
   const kinds = file.assets.map((a) => a.kind).sort();
   assert.deepEqual(kinds, ["audio", "pdf", "video"]);
+});
+
+test("M5: asset thumbnail (additive field) round trips and missing/empty is tolerated", () => {
+  const p = sampleProject();
+  const thumb =
+    "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////";
+  p.assets = [
+    { id: "ast_t", kind: "image" as const, name: "pic.png", size: 2048, mime: "image/png", ext: "png", thumbnail: thumb },
+    { id: "ast_old", kind: "image" as const, name: "legacy.png", size: 100, mime: "image/png", ext: "png" },
+  ];
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  assert.equal(file.assets[0].thumbnail, thumb);
+  assert.equal(file.assets[1].thumbnail, undefined);
+  // Legacy v5 files without the field still load, and an empty string is dropped.
+  const legacy = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [],
+    assets: [
+      { id: "a", kind: "image", name: "x.png", size: 1, mime: "image/png", ext: "png", thumbnail: "" },
+      { id: "b", kind: "image", name: "y.png", size: 1, mime: "image/png", ext: "png" },
+    ],
+  };
+  const parsed = deserialize(JSON.stringify(legacy));
+  assert.equal(parsed.assets[0].thumbnail, undefined);
+  assert.equal(parsed.assets[1].thumbnail, undefined);
+});
+
+test("deserialize rejects a non-string asset thumbnail", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [],
+    assets: [{ id: "a", kind: "image", name: "x.png", size: 1, mime: "image/png", ext: "png", thumbnail: 42 }],
+  };
+  assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
 });
 
 test("Phase5 P0a: distant objects and viewport round trip through save/load", () => {
@@ -427,4 +525,100 @@ test("deserialize rejects non-finite numbers", () => {
     objects: [],
   };
   assert.throws(() => deserialize(JSON.stringify(bad)), ProjectFormatError);
+});
+
+// -------- Phase 2: additive tags / sharing (plus legacy-comments tolerance) ---
+
+test("serialize round trips project tags and shared metadata", () => {
+  const p = sampleProject();
+  const json = serialize(
+    p.viewport,
+    p.objects,
+    { ...p.project, tags: ["launch", " design "], shared: { roomId: "room_1", serverUrl: "http://localhost:8787", role: "editor" } },
+    p.assets
+  );
+  const file = deserialize(json);
+  assert.deepEqual(file.project.tags, ["launch", "design"]);
+  assert.deepEqual(file.project.shared, { roomId: "room_1", serverUrl: "http://localhost:8787", role: "editor" });
+  assert.equal("comments" in file, false);
+});
+
+test("deserialize defaults missing tags/shared for pre-Phase-2 files", () => {
+  const json = serialize(sampleProject().viewport, sampleProject().objects, sampleProject().project, sampleProject().assets);
+  const file = deserialize(json);
+  assert.equal(file.project.tags, undefined);
+  assert.equal(file.project.shared, undefined);
+  assert.equal(file.formatVersion, PROJECT_FORMAT_VERSION);
+});
+
+test("deserialize normalizes duplicate tags and caps the array", () => {
+  const tags = Array.from({ length: 250 }, (_, i) => (i % 5 === 0 ? "  dup  " : "t" + i));
+  const p = sampleProject();
+  const json = serialize(p.viewport, p.objects, { ...p.project, tags }, p.assets);
+  const file = deserialize(json);
+  assert.ok(file.project!.tags!.length <= 100);
+  assert.equal(new Set(file.project!.tags).size, file.project!.tags!.length);
+  // "  dup  " is trimmed to "dup" and de-duplicated to a single entry.
+  assert.equal(file.project!.tags!.filter((t) => t === "dup").length, 1);
+});
+
+test("deserialize tolerates and ignores legacy comments data", () => {
+  const p = sampleProject();
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const withComments = JSON.parse(json);
+  const legacy = [
+    { id: "c", text: "x", authorId: "u", authorName: "n", createdAt: "t", updatedAt: "t", anchor: "canvas", objectId: null, x: 1, y: 2, resolved: false },
+  ];
+  // Well-formed legacy comments are ignored…
+  withComments.comments = legacy;
+  const ok = deserialize(JSON.stringify(withComments));
+  assert.equal("comments" in ok, false);
+  // …and so are malformed ones (the feature was removed, so nothing breaks).
+  const broken = JSON.parse(JSON.stringify(withComments));
+  broken.comments[0].anchor = "page";
+  assert.doesNotThrow(() => deserialize(JSON.stringify(broken)));
+  const badNumber = JSON.parse(JSON.stringify(withComments));
+  badNumber.comments[0].x = NaN;
+  assert.doesNotThrow(() => deserialize(JSON.stringify(badNumber)));
+  const notArray = JSON.parse(JSON.stringify(withComments));
+  notArray.comments = "nope";
+  assert.doesNotThrow(() => deserialize(JSON.stringify(notArray)));
+});
+
+test("deserialize rejects malformed project tags", () => {
+  const p = sampleProject();
+  const json = serialize(p.viewport, p.objects, { ...p.project, tags: ["ok"] }, p.assets);
+  const broken = JSON.parse(json);
+  (broken.project as Record<string, unknown>).tags = [42];
+  assert.throws(() => deserialize(JSON.stringify(broken)), ProjectFormatError);
+  const nonArray = JSON.parse(json);
+  (nonArray.project as Record<string, unknown>).tags = "oops";
+  assert.throws(() => deserialize(JSON.stringify(nonArray)), ProjectFormatError);
+});
+
+test("deserialize rejects malformed shared metadata", () => {
+  const p = sampleProject();
+  const good = {
+    id: "p0",
+    name: "n",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    shared: { roomId: "room_1", serverUrl: "http://localhost:8787", role: "owner" as const },
+  };
+  const json = serialize(p.viewport, p.objects, good, p.assets);
+  const badRole = JSON.parse(json);
+  (badRole.project as Record<string, unknown>).shared = { roomId: "r", serverUrl: "u", role: "admin" };
+  assert.throws(() => deserialize(JSON.stringify(badRole)), ProjectFormatError);
+});
+
+test("object-level tags live in metadata and survive round trips", () => {
+  const obj: CanvasObject = {
+    ...sampleObject(),
+    metadata: { tags: ["focus", "vip"] },
+  };
+  const p = sampleProject();
+  p.objects = [obj];
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  assert.deepEqual((file.objects[0] as unknown as Record<string, unknown>).metadata, { tags: ["focus", "vip"] });
 });

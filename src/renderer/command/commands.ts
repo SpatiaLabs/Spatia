@@ -82,6 +82,25 @@ export interface PropChange {
   after: unknown;
 }
 
+export function rotateObjectsCommand(
+  project: ProjectStore,
+  before: { id: string; rotation: number }[],
+  after: { id: string; rotation: number }[]
+): Command {
+  const apply = (list: typeof before): void => {
+    for (const r of list) project.setObjectProp(r.id, "rotation", r.rotation);
+  };
+  return {
+    label: after.length > 1 ? `Rotate ${after.length} objects` : "Rotate object",
+    redo() {
+      apply(after);
+    },
+    undo() {
+      apply(before);
+    },
+  };
+}
+
 /** Apply a set of property changes (style/config edits) in one step. */
 export function setPropsCommand(project: ProjectStore, changes: PropChange[]): Command {
   const apply = (list: PropChange[], valueOf: (c: PropChange) => unknown): void => {

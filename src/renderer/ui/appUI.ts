@@ -1,5 +1,6 @@
 import type { ViewportState } from "../../shared/types/project.js";
 import type { ProjectMeta } from "../../shared/types/project.js";
+import { initInspectorColorPickers } from "./colorPicker.js";
 
 export interface RecentProjectItem {
   filePath: string;
@@ -38,6 +39,14 @@ export class AppUI {
   readonly btnAddFile = el<HTMLButtonElement>("btn-add-file");
   readonly btnAddUrl = el<HTMLButtonElement>("btn-add-url");
   readonly btnAddTest = el<HTMLButtonElement>("btn-add-test");
+  readonly btnAddShapeRectangle = el<HTMLButtonElement>("btn-add-shape-rectangle");
+  readonly btnAddShapeRoundedRectangle = el<HTMLButtonElement>("btn-add-shape-rounded-rectangle");
+  readonly btnAddShapeEllipse = el<HTMLButtonElement>("btn-add-shape-ellipse");
+  readonly btnAddShapeDiamond = el<HTMLButtonElement>("btn-add-shape-diamond");
+  readonly btnAddShapeTriangle = el<HTMLButtonElement>("btn-add-shape-triangle");
+  readonly btnAddShapeLine = el<HTMLButtonElement>("btn-add-shape-line");
+  readonly btnAddShapeArrow = el<HTMLButtonElement>("btn-add-shape-arrow");
+  readonly btnTemplates = el<HTMLButtonElement>("btn-templates");
   readonly btnZoomIn = el<HTMLButtonElement>("btn-zoom-in");
   readonly btnZoomOut = el<HTMLButtonElement>("btn-zoom-out");
   readonly btnZoomReset = el<HTMLButtonElement>("btn-zoom-reset");
@@ -46,6 +55,27 @@ export class AppUI {
   readonly btnSelect = el<HTMLButtonElement>("btn-select");
   readonly sidebar = el<HTMLElement>("sidebar");
   readonly btnMenu = el<HTMLButtonElement>("btn-menu");
+  readonly btnPlugins = el<HTMLButtonElement>("btn-plugins");
+  readonly btnSettings = el<HTMLButtonElement>("btn-settings");
+
+  readonly exportDialog = el<HTMLElement>("export-dialog");
+  readonly exportClose = el<HTMLButtonElement>("export-close");
+  readonly templatesDialog = el<HTMLElement>("templates-dialog");
+  readonly templatesClose = el<HTMLButtonElement>("templates-close");
+  readonly templatesList = el<HTMLDivElement>("templates-list");
+  readonly projectsDialog = el<HTMLElement>("projects-dialog");
+  readonly projectsClose = el<HTMLButtonElement>("projects-close");
+  readonly projectsList = el<HTMLDivElement>("projects-list");
+  readonly projectsSearch = el<HTMLInputElement>("projects-search");
+  readonly projectsSort = el<HTMLSelectElement>("projects-sort");
+  readonly projectsFolder = el<HTMLSelectElement>("projects-folder");
+  readonly projectsNewFolder = el<HTMLButtonElement>("projects-new-folder");
+  readonly btnProjects = el<HTMLButtonElement>("btn-projects");
+  readonly versionsDialog = el<HTMLElement>("versions-dialog");
+  readonly versionsClose = el<HTMLButtonElement>("versions-close");
+  readonly versionsCapture = el<HTMLButtonElement>("versions-capture");
+  readonly versionsList = el<HTMLDivElement>("versions-list");
+  readonly btnVersions = el<HTMLButtonElement>("btn-versions");
 
   private inspectorEl = el<HTMLElement>("inspector");
   private inspectorBody = el<HTMLDivElement>("inspector-body");
@@ -58,6 +88,11 @@ export class AppUI {
   private isolationLabel = el<HTMLSpanElement>("isolation-label");
   private exitIsolationButton = el<HTMLButtonElement>("btn-exit-isolation");
 
+  // Settings dialog.
+  readonly settingsDialog = el<HTMLElement>("settings-dialog");
+  readonly settingsClose = el<HTMLButtonElement>("settings-close");
+  private settingsVersion = el<HTMLSpanElement>("settings-version");
+
   /** The inspector body element, so the app can delegate edit events. */
   readonly inspectorBodyEl = el<HTMLDivElement>("inspector-body");
 
@@ -67,6 +102,8 @@ export class AppUI {
   onExitIsolation: (() => void) | null = null;
 
   private urlResolver: ((value: string | null) => void) | null = null;
+  private urlTitle = el<HTMLDivElement>("url-title");
+  private urlConfirmLabel = el<HTMLButtonElement>("url-confirm");
 
   constructor() {
     this.canvas.addEventListener("pointermove", this.onPointerMove);
@@ -93,8 +130,19 @@ export class AppUI {
    * entered value on confirm, or null when cancelled / dismissed with Escape.
    */
   promptUrl(initial = ""): Promise<string | null> {
+    return this.promptText("Add link", initial, "https://example.com", "Add link");
+  }
+
+  /**
+   * Generic single-line text prompt (window.prompt is unavailable in Electron).
+   * Resolves with the entered value, or null when cancelled.
+   */
+  promptText(title: string, initial = "", placeholder = "", confirmLabel = "OK"): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
       this.urlResolver = resolve;
+      this.urlTitle.textContent = title;
+      this.urlConfirmLabel.textContent = confirmLabel;
+      this.urlInput.placeholder = placeholder;
       this.urlInput.value = initial;
       this.urlDialog.classList.add("open");
       this.urlDialog.setAttribute("aria-hidden", "false");
@@ -109,6 +157,47 @@ export class AppUI {
     const resolve = this.urlResolver;
     this.urlResolver = null;
     resolve?.(value);
+  }
+
+  openExportDialog(): void {
+    this.exportDialog.classList.add("open");
+    this.exportDialog.setAttribute("aria-hidden", "false");
+  }
+
+  closeExportDialog(): void {
+    this.exportDialog.classList.remove("open");
+    this.exportDialog.setAttribute("aria-hidden", "true");
+  }
+
+  openTemplatesDialog(): void {
+    this.templatesDialog.classList.add("open");
+    this.templatesDialog.setAttribute("aria-hidden", "false");
+  }
+
+  closeTemplatesDialog(): void {
+    this.templatesDialog.classList.remove("open");
+    this.templatesDialog.setAttribute("aria-hidden", "true");
+  }
+
+  openProjectsDialog(): void {
+    this.projectsDialog.classList.add("open");
+    this.projectsDialog.setAttribute("aria-hidden", "false");
+    this.projectsSearch.focus();
+  }
+
+  closeProjectsDialog(): void {
+    this.projectsDialog.classList.remove("open");
+    this.projectsDialog.setAttribute("aria-hidden", "true");
+  }
+
+  openVersionsDialog(): void {
+    this.versionsDialog.classList.add("open");
+    this.versionsDialog.setAttribute("aria-hidden", "false");
+  }
+
+  closeVersionsDialog(): void {
+    this.versionsDialog.classList.remove("open");
+    this.versionsDialog.setAttribute("aria-hidden", "true");
   }
 
   /** Render the recent-projects list. */
@@ -132,9 +221,27 @@ export class AppUI {
     }
   }
 
+  // -------- Settings dialog --------
+
+  /** Mirror the current version into the settings dialog. */
+  setVersion(version: string): void {
+    this.settingsVersion.textContent = `v${version}`;
+  }
+
+  openSettingsDialog(): void {
+    this.settingsDialog.classList.add("open");
+    this.settingsDialog.setAttribute("aria-hidden", "false");
+  }
+
+  closeSettingsDialog(): void {
+    this.settingsDialog.classList.remove("open");
+    this.settingsDialog.setAttribute("aria-hidden", "true");
+  }
+
   /** Render the object inspector body from a list of field descriptors. */
   setInspector(html: string): void {
     this.inspectorBody.innerHTML = html;
+    initInspectorColorPickers(this.inspectorBody);
   }
 
   setInspectorOpen(open: boolean): void {
@@ -161,6 +268,23 @@ export class AppUI {
 
   setStatus(text: string): void {
     this.statusText.textContent = text;
+  }
+
+  private notifyTimer: number | null = null;
+
+  /** Transient toast for plugin notifications and non-blocking feedback. */
+  notify(text: string): void {
+    let toast = document.getElementById("app-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "app-toast";
+      toast.className = "app-toast";
+      document.body.appendChild(toast);
+    }
+    toast.textContent = text;
+    toast.classList.add("show");
+    if (this.notifyTimer !== null) window.clearTimeout(this.notifyTimer);
+    this.notifyTimer = window.setTimeout(() => toast.classList.remove("show"), 3200);
   }
 
   setZoom(zoom: number): void {

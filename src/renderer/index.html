@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data: blob:; connect-src 'self' blob: ws: wss:; worker-src 'self' blob:"
     />
     <title>Spatia</title>
     <link rel="stylesheet" href="./style.css" />
@@ -30,6 +30,8 @@
           </div>
         </div>
         <canvas id="minimap" title="Workspace overview — click to navigate"></canvas>
+        <div id="presence-layer" class="presence-layer" aria-hidden="true"></div>
+        <div id="browser-layer" class="browser-layer" aria-hidden="true"></div>
         <aside id="sidebar" aria-hidden="true">
           <div class="sidebar-section">
             <span class="sidebar-label">File</span>
@@ -38,7 +40,12 @@
             <button id="btn-import" class="btn sidebar-btn" title="Import a .spatia folder">Import</button>
             <button id="btn-save" class="btn sidebar-btn" title="Save project">Save</button>
             <button id="btn-save-as" class="btn sidebar-btn" title="Save project as">Save As</button>
-            <button id="btn-export" class="btn sidebar-btn" title="Export a portable .spatia folder">Export</button>
+            <button id="btn-templates" class="btn sidebar-btn" title="Start from a template">Templates…</button>
+            <button id="btn-export" class="btn sidebar-btn" title="Export as PNG, PDF, Markdown or .spatia">Export…</button>
+            <button id="btn-projects" class="btn sidebar-btn" title="Browse your project library">Projects…</button>
+            <button id="btn-versions" class="btn sidebar-btn" title="Browse past versions and snapshots">Versions…</button>
+            <button id="btn-plugins" class="btn sidebar-btn" title="Manage plugins">Plugins…</button>
+            <button id="btn-settings" class="btn sidebar-btn" title="App settings">Settings…</button>
           </div>
           <div class="sidebar-section">
             <span class="sidebar-label">Recent</span>
@@ -53,6 +60,15 @@
             <span class="sidebar-label">Tools</span>
             <button id="btn-select" class="btn sidebar-btn" title="Select / move objects">Select</button>
             <button id="btn-pen-sidebar" class="btn sidebar-btn" title="Pen tool (draw freely)">Pen</button>
+            <button id="btn-search" class="btn sidebar-btn" title="Find objects (Ctrl+F or /)">Search</button>
+          </div>
+          <div class="sidebar-section">
+            <span class="sidebar-label">Media</span>
+            <button id="btn-assets" class="btn sidebar-btn" title="Browse the project's imported assets, files and their thumbnails">Assets</button>
+          </div>
+          <div class="sidebar-section">
+            <span class="sidebar-label">Collaborate</span>
+            <button id="btn-share" class="btn sidebar-btn" title="Share this project, manage members and permissions">Share…</button>
           </div>
           <div class="sidebar-section">
             <span class="sidebar-label">Add</span>
@@ -63,18 +79,52 @@
             <button id="btn-add-file" class="btn sidebar-btn" title="Add a file object">File</button>
             <button id="btn-add-url" class="btn sidebar-btn" title="Add a link / bookmark">Link</button>
           </div>
+          <div class="sidebar-section">
+            <span class="sidebar-label">Shapes</span>
+            <button id="btn-add-shape-rectangle" class="btn sidebar-btn" title="Add a rectangle">Rectangle</button>
+            <button id="btn-add-shape-rounded-rectangle" class="btn sidebar-btn" title="Add a rounded rectangle">Rounded</button>
+            <button id="btn-add-shape-ellipse" class="btn sidebar-btn" title="Add an ellipse">Ellipse</button>
+            <button id="btn-add-shape-diamond" class="btn sidebar-btn" title="Add a diamond">Diamond</button>
+            <button id="btn-add-shape-triangle" class="btn sidebar-btn" title="Add a triangle">Triangle</button>
+            <button id="btn-add-shape-line" class="btn sidebar-btn" title="Add a line">Line</button>
+            <button id="btn-add-shape-arrow" class="btn sidebar-btn" title="Add an arrow">Arrow</button>
+          </div>
         </aside>
         <aside id="inspector" aria-hidden="true">
           <div class="inspector-header">Properties</div>
           <div id="inspector-body" class="inspector-body"><span class="inspector-empty">Select an object</span></div>
         </aside>
       </main>
+      <aside id="assets-panel" class="assets-panel" aria-hidden="true">
+        <div class="inspector-header assets-header">
+          <div id="assets-title">Assets (0)</div>
+          <button id="assets-close" class="btn btn-icon" type="button" title="Close assets">&times;</button>
+        </div>
+        <div id="assets-list" class="assets-list"></div>
+      </aside>
       <footer id="statusbar">
         <span id="status-text">Ready</span>
       </footer>
+      <div id="settings-dialog" class="url-dialog settings-dialog" aria-hidden="true">
+        <div class="url-dialog-box settings-dialog-box">
+          <div class="inspector-header url-dialog-title">Settings</div>
+          <div class="settings-row">
+            <span class="settings-label">Version</span>
+            <span id="settings-version">v0.0.0</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Workspace</span>
+            <span>Local-first — your projects live on this device.</span>
+          </div>
+          <p class="settings-about">Spatia is a local-first visual workspace for thinking in space. Offline by default, no account required.</p>
+          <div class="url-dialog-actions">
+            <button id="settings-close" class="btn inspector-btn" type="button">Close</button>
+          </div>
+        </div>
+      </div>
       <div id="url-dialog" class="url-dialog" aria-hidden="true">
         <div class="url-dialog-box">
-          <div class="inspector-header url-dialog-title">Add link</div>
+          <div class="inspector-header url-dialog-title" id="url-title">Add link</div>
           <input
             id="url-input"
             class="inspector-input url-input"
@@ -86,6 +136,153 @@
           <div class="url-dialog-actions">
             <button id="url-cancel" class="btn inspector-btn" type="button">Cancel</button>
             <button id="url-confirm" class="btn inspector-btn url-confirm" type="button">Add link</button>
+          </div>
+        </div>
+      </div>
+      <div id="plugins-dialog" class="url-dialog plugins-dialog" aria-hidden="true">
+        <div class="url-dialog-box plugins-dialog-box">
+          <div class="inspector-header url-dialog-title">Plugins</div>
+          <div id="plugins-list" class="plugins-list"></div>
+          <div class="plugins-url-row">
+            <input
+              id="plugins-url"
+              class="plugins-url-input"
+              type="url"
+              placeholder="https://…/manifest.json"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="plugins-install-url" class="btn inspector-btn" type="button">Install URL</button>
+          </div>
+          <div class="url-dialog-actions">
+            <button id="plugins-install" class="btn inspector-btn url-confirm" type="button">Install…</button>
+            <button id="plugins-close" class="btn inspector-btn" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+      <div id="export-dialog" class="url-dialog export-dialog" aria-hidden="true">
+        <div class="url-dialog-box export-dialog-box">
+          <div class="inspector-header url-dialog-title">Export</div>
+          <p class="export-hint">Choose a format for the current document.</p>
+          <div class="export-options">
+            <button class="btn export-option" data-export="spatia-folder" type="button"><span>Portable folder</span><small>.spatia (source)</small></button>
+            <button class="btn export-option" data-export="spatia-json" type="button"><span>Project file</span><small>.spatia.json</small></button>
+            <button class="btn export-option" data-export="png" type="button"><span>Image</span><small>PNG</small></button>
+            <button class="btn export-option" data-export="pdf" type="button"><span>Document</span><small>PDF</small></button>
+            <button class="btn export-option" data-export="md" type="button"><span>Markdown</span><small>.md</small></button>
+          </div>
+          <div class="url-dialog-actions">
+            <button id="export-close" class="btn inspector-btn" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+      <div id="templates-dialog" class="url-dialog templates-dialog" aria-hidden="true">
+        <div class="url-dialog-box plugins-dialog-box templates-dialog-box">
+          <div class="inspector-header url-dialog-title">Start from a template</div>
+          <div id="templates-list" class="templates-list"></div>
+          <div class="url-dialog-actions">
+            <button id="templates-close" class="btn inspector-btn" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+      <div id="projects-dialog" class="url-dialog projects-dialog" aria-hidden="true">
+        <div class="url-dialog-box projects-dialog-box">
+          <div class="inspector-header url-dialog-title">
+            Projects
+            <button id="projects-new-folder" class="btn inspector-btn" type="button">New folder…</button>
+          </div>
+          <div class="projects-toolbar">
+            <input
+              id="projects-search"
+              class="plugins-url-input"
+              type="text"
+              placeholder="Search projects and tags…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <select id="projects-sort" class="plugins-url-input">
+              <option value="name">Sort by name</option>
+              <option value="updated">Sort by updated</option>
+            </select>
+            <select id="projects-folder" class="plugins-url-input">
+              <option value="__all">All folders</option>
+              <option value="__fav">Favorites</option>
+              <option value="__none">Uncategorized</option>
+            </select>
+          </div>
+          <div id="projects-list" class="projects-list"></div>
+          <div class="url-dialog-actions">
+            <button id="projects-close" class="btn inspector-btn" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+      <div id="versions-dialog" class="url-dialog versions-dialog" aria-hidden="true">
+        <div class="url-dialog-box versions-dialog-box">
+          <div class="inspector-header url-dialog-title">
+            Version history
+            <button id="versions-capture" class="btn inspector-btn" type="button">Capture snapshot</button>
+          </div>
+          <p class="export-hint">Snapshots are captured automatically when you save.</p>
+          <div id="versions-list" class="versions-list"></div>
+          <div class="url-dialog-actions">
+            <button id="versions-close" class="btn inspector-btn" type="button">Close</button>
+          </div>
+        </div>
+      </div>
+      <div id="search-dialog" class="url-dialog search-dialog" aria-hidden="true">
+        <div class="url-dialog-box search-dialog-box">
+          <div class="inspector-header url-dialog-title">Find</div>
+          <input
+            id="search-input"
+            class="inspector-input search-input"
+            type="text"
+            placeholder="Search names, notes, links, tags…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div id="search-list" class="search-list"></div>
+          <div class="search-countbar"><span id="search-count" class="search-count"></span></div>
+        </div>
+      </div>
+      <div id="share-dialog" class="url-dialog share-dialog" aria-hidden="true">
+        <div class="url-dialog-box share-dialog-box">
+          <div class="inspector-header url-dialog-title">Share &amp; collaborate</div>
+          <div id="share-status" class="share-status share-status-offline"></div>
+          <div class="share-server-row">
+            <input
+              id="share-url"
+              class="inspector-input share-url"
+              type="text"
+              value="ws://localhost:8787"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="share-connect" class="btn inspector-btn" type="button">Connect</button>
+            <button id="share-disconnect" class="btn inspector-btn" type="button" disabled>Disconnect</button>
+          </div>
+          <div class="share-room-row">
+            <div id="share-room-label" class="share-room-label">No active room</div>
+            <div id="share-role" class="share-role"></div>
+            <div class="plugins-url-row">
+              <input
+                id="share-room-input"
+                class="plugins-url-input"
+                type="text"
+                placeholder="Room id to join…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="share-join" class="btn inspector-btn" type="button">Join</button>
+            </div>
+            <div class="share-actions">
+              <button id="share-create" class="btn inspector-btn url-confirm" type="button">Share this project</button>
+              <button id="share-copy" class="btn inspector-btn" type="button">Copy invite link</button>
+              <button id="share-leave" class="btn inspector-btn" type="button" hidden>Leave room</button>
+            </div>
+          </div>
+          <div id="share-users" class="share-users"></div>
+          <div class="url-dialog-actions">
+            <button id="share-close" class="btn inspector-btn" type="button">Close</button>
           </div>
         </div>
       </div>

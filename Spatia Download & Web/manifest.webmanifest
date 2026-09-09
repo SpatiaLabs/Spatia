@@ -1,0 +1,27 @@
+{
+  "name": "Spatia",
+  "short_name": "Spatia",
+  "description": "A fast, local-first visual canvas for organizing ideas and connecting concepts — right in your browser.",
+  "id": "spatia-web",
+  "start_url": "./#/web",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#121417",
+  "theme_color": "#121417",
+  "orientation": "any",
+  "categories": ["productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "New workspace",
+      "short_name": "New canvas",
+      "description": "Open the Spatia Web canvas",
+      "url": "./#/web",
+      "icons": [{ "src": "assets/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

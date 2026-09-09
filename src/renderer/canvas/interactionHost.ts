@@ -20,8 +20,16 @@ export interface InteractionHost {
   toggleSelection(id: string): void;
   hitTest(screen: Point): string | null;
   hitHandle(screen: Point): Handle | null;
+  /** True when the rotation knob (touch hosts only) is under the pointer. */
+  hitRotateHandle(screen: Point): boolean;
   /** World-space AABB of the current selection, or null. */
   selectionWorldBounds(): Rect | null;
+
+  // Rotate gesture (touch hosts only; rotates each selected object about its
+  // own center by the knob-drag delta).
+  beginRotate(screen: Point): void;
+  rotateTo(screen: Point): void;
+  endRotate(): void;
 
   // Move gesture
   grabSelection(screen: Point): void;
@@ -54,8 +62,8 @@ export interface InteractionHost {
   // Pen tool (freehand drawing). Separate from connections.
   isPenTool(): boolean;
   setPenTool(on: boolean): void;
-  startPenStroke(screen: Point): void;
-  penStrokeTo(screen: Point): void;
+  startPenStroke(screen: Point, pressure?: number): void;
+  penStrokeTo(screen: Point, pressure?: number): void;
   endPenStroke(): void;
 
   // Callbacks

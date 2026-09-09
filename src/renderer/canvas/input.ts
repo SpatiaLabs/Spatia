@@ -12,7 +12,7 @@ import { isEditingText } from "../ui/textEditor.js";
  * point + fixed grab offset), never by accumulating per-event deltas.
  */
 
-type Mode = "none" | "pending" | "move" | "resize" | "marquee" | "pan" | "connect" | "pen";
+type Mode = "none" | "pending" | "move" | "resize" | "marquee" | "pan" | "connect" | "pen" | "rotate";
 
 const WHEEL_FACTOR_PER_NOTCH = 1.1;
 const DRAG_THRESHOLD = 3;
@@ -39,6 +39,8 @@ export class CanvasInput {
     el.addEventListener("pointercancel", this.onPointerUp);
     el.addEventListener("wheel", this.onWheel, { passive: false });
     el.addEventListener("contextmenu", this.onContextMenu);
+    el.addEventListener("lostpointercapture", this.onLostPointerCapture);
+    window.addEventListener("blur", this.onWindowBlur);
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
   }
@@ -51,6 +53,8 @@ export class CanvasInput {
     el.removeEventListener("pointercancel", this.onPointerUp);
     el.removeEventListener("wheel", this.onWheel);
     el.removeEventListener("contextmenu", this.onContextMenu);
+    el.removeEventListener("lostpointercapture", this.onLostPointerCapture);
+    window.removeEventListener("blur", this.onWindowBlur);
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
     this.cancelConnect();
@@ -142,18 +146,27 @@ export class CanvasInput {
     }
 
     if (isLeft) {
-      this.handlePrimaryDown(p);
+      this.handlePrimaryDown(p, e);
     }
   };
 
-  private handlePrimaryDown(p: Point): void {
+  /**
+   * Stylus pressure, only trusted when the pointer really is a pen: mouse /
+   * touch report arbitrary values and would add noise to the stroke shape.
+   */
+  private penPressure(e: PointerEvent): number | undefined {
+    if (e.pointerType !== "pen") return undefined;
+    return e.pressure > 0 ? e.pressure : undefined;
+  }
+
+  private handlePrimaryDown(p: Point, e: PointerEvent): void {
     this.start = p;
     this.last = p;
 
     // Pen tool: left-drag draws anywhere (objects or empty space).
     if (this.host.isPenTool()) {
       this.mode = "pen";
-      this.host.startPenStroke(p);
+      this.host.startPenStroke(p, this.penPressure(e));
       return;
     }
 
@@ -163,6 +176,14 @@ export class CanvasInput {
       this.mode = "resize";
       this.host.beginResize(handle, p);
       this.host.setInteractionCursor("default");
+      return;
+    }
+
+    // Rotation knob lives above the selection box (touch hosts only).
+    if (this.host.hitRotateHandle(p)) {
+      this.mode = "rotate";
+      this.host.beginRotate(p);
+      this.host.setMarquee(null);
       return;
     }
 
@@ -204,11 +225,14 @@ export class CanvasInput {
       case "resize":
         this.host.resizeTo(p);
         break;
+      case "rotate":
+        this.host.rotateTo(p);
+        break;
       case "connect":
         this.host.connectionDragTo(p);
         break;
       case "pen":
-        this.host.penStrokeTo(p);
+        this.host.penStrokeTo(p, this.penPressure(e));
         break;
       case "marquee":
         this.updateMarquee(p);
@@ -237,17 +261,49 @@ export class CanvasInput {
     // A connection draft is keyboard-driven (Ctrl keyup finishes it); a pointer
     // release must not cancel or finish it.
     if (this.mode === "connect") return;
+    this.endActiveInteraction();
+  };
+
+  /**
+   * The window/document lost focus (or the pointer capture was lost) while an
+   * interaction was in progress. The browser keeps routing pointer moves to the
+   * canvas via implicit pointer capture as long as the button is held, so an
+   * active resize/move/pen/marquee WOULD otherwise continue from wherever the
+   * cursor reappears after focus returns. Terminate the interaction now so no
+   * stale drag state survives a focus change. Browsers can drop key events sent
+   * to a blurred window, so also clear any held modifier state.
+   */
+  private onWindowBlur = (): void => {
+    this.endActiveInteraction();
+    this.cancelConnect();
+    this.forceClearHeldKeys();
+  };
+
+  private onLostPointerCapture = (_e: PointerEvent): void => {
+    this.endActiveInteraction();
+    this.cancelConnect();
+  };
+
+  private forceClearHeldKeys(): void {
+    this.ctrlHeld = false;
+    this.spaceHeld = false;
+  }
+
+  /** Finalize the currently active mouse gesture and reset the interaction. */
+  private endActiveInteraction(): void {
     if (this.mode === "pen") {
       this.host.endPenStroke();
     } else {
       if (this.mode === "move") this.host.dropGrab();
       if (this.mode === "resize") this.host.endResize();
+      if (this.mode === "rotate") this.host.endRotate();
       if (this.mode === "marquee") this.onPointerUpMarqueeSettle();
     }
     this.mode = "none";
     this.dragArmed = false;
+    this.lastMarqueeRect = null;
     this.updateCursor();
-  };
+  }
 
   private updateMarquee(p: Point): void {
     const frame = this.host.getFrame();

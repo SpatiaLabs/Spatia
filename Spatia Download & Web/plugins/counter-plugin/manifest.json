@@ -1,0 +1,9 @@
+{
+  "id": "counter-plugin",
+  "name": "Counter",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "A tiny real-world plugin that counts the objects on your canvas by type.",
+  "author": "Spatia",
+  "main": "main.js"
+}

@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { AssetMeta } from "../shared/types/object.js";
+import type { ExportFileKind } from "../renderer/types/bridge.js";
+import type { PluginEntry, PluginInstallResult, PluginSource } from "../shared/plugins/manifest.js";
+import type { LibraryData, LibraryFolder } from "../shared/library/library.js";
+import type { VersionSnapshotMeta, RenameProjectResult, CollabIdentity } from "../renderer/types/bridge.js";
 
 /**
  * Bridge exposing a minimal, typed API to the renderer. Node integration is
@@ -47,6 +51,11 @@ export interface ImportProjectResult {
   contents: string | null;
 }
 
+export interface AiAssetResult {
+  data: string;
+  mime: string;
+}
+
 export interface SpatiaApi {
   openProject(): Promise<OpenProjectResult>;
   openProjectPath(filePath: string): Promise<OpenProjectResult>;
@@ -54,6 +63,7 @@ export interface SpatiaApi {
   saveAsProject(json: string, suggestedName: string): Promise<SaveProjectResult>;
   getRecentProjects(): Promise<RecentProject[]>;
   exportProject(projectId: string, json: string, suggestedName: string): Promise<ExportResult>;
+  exportFile(kind: ExportFileKind, suggestedName: string, payload: string): Promise<ExportResult>;
   importProject(): Promise<ImportProjectResult>;
   pickAsset(projectId: string): Promise<AssetImportResult>;
   importAssetFromPath(projectId: string, sourcePath: string, sourceName?: string): Promise<AssetImportResult>;
@@ -61,8 +71,34 @@ export interface SpatiaApi {
   openAsset(projectId: string, assetId: string): Promise<boolean>;
   assetExists(projectId: string, assetId: string): Promise<boolean>;
   relinkAsset(projectId: string, assetId: string): Promise<AssetImportResult>;
+  deleteAsset(projectId: string, assetId: string): Promise<boolean>;
   openExternal(url: string): Promise<boolean>;
   getDroppedFilePath(file: File): string | null;
+  readProjectContents(filePath: string): Promise<string | null>;
+  libraryGet(): Promise<LibraryData>;
+  libraryCreateFolder(name: string): Promise<LibraryFolder | null>;
+  libraryRenameFolder(id: string, name: string): Promise<boolean>;
+  libraryDeleteFolder(id: string): Promise<boolean>;
+  librarySetFolder(filePath: string, folderId: string | null): Promise<boolean>;
+  librarySetFavorite(filePath: string, favorite: boolean): Promise<boolean>;
+  librarySetTags(filePath: string, tags: string[]): Promise<boolean>;
+  libraryRemove(filePath: string): Promise<boolean>;
+  libraryTrash(filePath: string): Promise<boolean>;
+  libraryRename(filePath: string, newName: string): Promise<RenameProjectResult>;
+  versionsList(projectId: string): Promise<VersionSnapshotMeta[]>;
+  versionsAdd(projectId: string, label: string, json: string): Promise<VersionSnapshotMeta | null>;
+  versionsRestore(projectId: string, token: string): Promise<string | null>;
+  versionsDelete(projectId: string, token: string): Promise<boolean>;
+  pluginsList(): Promise<PluginEntry[]>;
+  pluginsGetSource(id: string): Promise<PluginSource | null>;
+  pluginsInstall(): Promise<PluginInstallResult>;
+  pluginsInstallUrl(url: string): Promise<PluginInstallResult>;
+  pluginsSetEnabled(id: string, enabled: boolean): Promise<boolean>;
+  pluginsRemove(id: string): Promise<boolean>;
+  collabGetIdentity(): Promise<CollabIdentity>;
+  onJoinRequest(cb: (roomId: string) => void): () => void;
+  /** Read a bundled Local-AI runtime file (name whitelisted in main) as base64. */
+  aiGetAsset(name: string): Promise<AiAssetResult | null>;
 }
 
 const api: SpatiaApi = {
@@ -81,8 +117,56 @@ const api: SpatiaApi = {
   getRecentProjects(): Promise<RecentProject[]> {
     return ipcRenderer.invoke("project:recent");
   },
+  readProjectContents(filePath: string): Promise<string | null> {
+    return ipcRenderer.invoke("project:readContents", filePath);
+  },
+  libraryGet(): Promise<LibraryData> {
+    return ipcRenderer.invoke("library:get");
+  },
+  libraryCreateFolder(name: string): Promise<LibraryFolder | null> {
+    return ipcRenderer.invoke("library:createFolder", name);
+  },
+  libraryRenameFolder(id: string, name: string): Promise<boolean> {
+    return ipcRenderer.invoke("library:renameFolder", id, name);
+  },
+  libraryDeleteFolder(id: string): Promise<boolean> {
+    return ipcRenderer.invoke("library:deleteFolder", id);
+  },
+  librarySetFolder(filePath: string, folderId: string | null): Promise<boolean> {
+    return ipcRenderer.invoke("library:setFolder", filePath, folderId);
+  },
+  librarySetFavorite(filePath: string, favorite: boolean): Promise<boolean> {
+    return ipcRenderer.invoke("library:setFavorite", filePath, favorite);
+  },
+  librarySetTags(filePath: string, tags: string[]): Promise<boolean> {
+    return ipcRenderer.invoke("library:setTags", filePath, tags);
+  },
+  libraryRemove(filePath: string): Promise<boolean> {
+    return ipcRenderer.invoke("library:remove", filePath);
+  },
+  libraryTrash(filePath: string): Promise<boolean> {
+    return ipcRenderer.invoke("library:trash", filePath);
+  },
+  libraryRename(filePath: string, newName: string): Promise<RenameProjectResult> {
+    return ipcRenderer.invoke("library:rename", filePath, newName);
+  },
+  versionsList(projectId: string): Promise<VersionSnapshotMeta[]> {
+    return ipcRenderer.invoke("versions:list", projectId);
+  },
+  versionsAdd(projectId: string, label: string, json: string): Promise<VersionSnapshotMeta | null> {
+    return ipcRenderer.invoke("versions:add", projectId, label, json);
+  },
+  versionsRestore(projectId: string, token: string): Promise<string | null> {
+    return ipcRenderer.invoke("versions:restore", projectId, token);
+  },
+  versionsDelete(projectId: string, token: string): Promise<boolean> {
+    return ipcRenderer.invoke("versions:delete", projectId, token);
+  },
   exportProject(projectId: string, json: string, suggestedName: string): Promise<ExportResult> {
     return ipcRenderer.invoke("project:export", projectId, json, suggestedName);
+  },
+  exportFile(kind: ExportFileKind, suggestedName: string, payload: string): Promise<ExportResult> {
+    return ipcRenderer.invoke("project:exportFile", kind, suggestedName, payload);
   },
   importProject(): Promise<ImportProjectResult> {
     return ipcRenderer.invoke("project:import");
@@ -105,6 +189,9 @@ const api: SpatiaApi = {
   relinkAsset(projectId: string, assetId: string): Promise<AssetImportResult> {
     return ipcRenderer.invoke("asset:relink", projectId, assetId);
   },
+  deleteAsset(projectId: string, assetId: string): Promise<boolean> {
+    return ipcRenderer.invoke("asset:delete", projectId, assetId);
+  },
   openExternal(url: string): Promise<boolean> {
     return ipcRenderer.invoke("shell:openExternal", url);
   },
@@ -114,6 +201,35 @@ const api: SpatiaApi = {
     } catch {
       return null;
     }
+  },
+  pluginsList(): Promise<PluginEntry[]> {
+    return ipcRenderer.invoke("plugins:list");
+  },
+  pluginsGetSource(id: string): Promise<PluginSource | null> {
+    return ipcRenderer.invoke("plugins:getSource", id);
+  },
+  pluginsInstall(): Promise<PluginInstallResult> {
+    return ipcRenderer.invoke("plugins:install");
+  },
+  pluginsInstallUrl(url: string): Promise<PluginInstallResult> {
+    return ipcRenderer.invoke("plugins:installUrl", url);
+  },
+  pluginsSetEnabled(id: string, enabled: boolean): Promise<boolean> {
+    return ipcRenderer.invoke("plugins:setEnabled", id, enabled);
+  },
+  pluginsRemove(id: string): Promise<boolean> {
+    return ipcRenderer.invoke("plugins:remove", id);
+  },
+  collabGetIdentity(): Promise<CollabIdentity> {
+    return ipcRenderer.invoke("collab:getIdentity");
+  },
+  onJoinRequest(cb: (roomId: string) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, roomId: string): void => cb(String(roomId));
+    ipcRenderer.on("collab:join", listener);
+    return () => ipcRenderer.removeListener("collab:join", listener);
+  },
+  aiGetAsset(name: string): Promise<AiAssetResult | null> {
+    return ipcRenderer.invoke("ai:getAsset", name);
   },
 };
 

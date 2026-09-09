@@ -1,19 +1,44 @@
 import { createNewDocument, ProjectStore, serialize } from "./project/projectStore.js";
 import type { ProjectDocument } from "../shared/types/project.js";
-import type { CanvasObject, ObjectKind, AssetMeta } from "../shared/types/object.js";
+import type { CanvasObject, ObjectKind, AssetMeta, ShapeKind } from "../shared/types/object.js";
+import { objectTags, sameTags } from "../shared/types/object.js";
+import type { LibraryData } from "../shared/library/library.js";
+import { filterProjects, sortProjects } from "../shared/library/library.js";
+import type { VersionSnapshotMeta } from "./types/bridge.js";
+import type { SearchableItem, RankedHit } from "../shared/search/search.js";
+import { SearchStore } from "./state/searchStore.js";
+import { SearchUI } from "./ui/searchUI.js";
 import { deserialize, ProjectFormatError } from "../shared/project/serialize.js";
 import { ViewportStore } from "./state/viewportStore.js";
 import { SelectionStore } from "./state/selectionStore.js";
 import { CommandManager } from "./command/commandManager.js";
 import { CanvasEngine } from "./canvas/engine.js";
+import { BrowserFrameOverlay } from "./canvas/browserOverlay.js";
+import { browserUrlOf, normalizeBrowserUrl } from "../shared/plugins/browserFrame.js";
 import { AppUI } from "./ui/appUI.js";
 import { AssetStore } from "./assets/assetStore.js";
 import { showContextMenu, hideContextMenu, type ContextMenuItem } from "./ui/contextMenu.js";
 import { openTextEditor, closeTextEditor, isEditingText } from "./ui/textEditor.js";
 import { Minimap } from "./ui/minimap.js";
 import type { Point } from "../shared/geometry/viewport.js";
-import { screenToWorld, viewportForRect, type Rect } from "../shared/geometry/viewport.js";
+import { screenToWorld, worldToScreen, viewportForRect, type Rect, type ViewportFrame } from "../shared/geometry/viewport.js";
 import { addObjectCommand, resizeObjectsCommand, setPropsCommand, type PropChange } from "./command/commands.js";
+import { deleteObjectsCommand } from "./command/commands.js";
+import { PluginManager, type PluginApiGateway, type PluginObjectView } from "./plugins/pluginManager.js";
+import { PluginsUI } from "./plugins/pluginsUI.js";
+import { SHAPE_KINDS, shapeLabel } from "../shared/geometry/shapes.js";
+import { exportBounds } from "../shared/export/bounds.js";
+import { buildMarkdown } from "../shared/export/markdown.js";
+import { buildPdfFromJpeg } from "../shared/export/pdf.js";
+import { bytesToBase64 } from "../shared/export/base64.js";
+import { TEMPLATES, templateById } from "../shared/templates/templates.js";
+import { CollaborationStore } from "./state/collaborationStore.js";
+import { CollabUI, type CollabShareView } from "./ui/collabUI.js";
+import { loadCollabIdentity } from "./state/collabIdentity.js";
+import { sanitizeRoomId, DEFAULT_COLLAB_URL, type CollabUser } from "../shared/collab/protocol.js";
+import { createId } from "../shared/core/id.js";
+import { AssetsUI } from "./ui/assetsUI.js";
+import { APP_VERSION } from "../shared/core/version.js";
 
 /**
  * Top-level controller composing state stores, the canvas engine, the command
@@ -26,16 +51,37 @@ export class App {
   private commands = new CommandManager();
   private project = new ProjectStore();
   private engine: CanvasEngine;
+  private browserOverlay: BrowserFrameOverlay;
   private assets = new AssetStore();
   private ui = new AppUI();
   private minimap: Minimap;
 
   private clipboard: CanvasObject[] = [];
   private isolation: { containerId: string; visibleIds: string[] } | null = null;
+  private pluginsManager: PluginManager;
+  private pluginsUi: PluginsUI;
+  private search = new SearchStore();
+  private searchUi = new SearchUI();
+
+  private collab = new CollaborationStore();
+  private collabUi = new CollabUI();
+  private assetsUi = new AssetsUI();
+  private collabIdentity: CollabUser | null = null;
+  private collabSnapshotTimer: number | null = null;
+  private overlayTimer: number | null = null;
+  private applyingRemote = false;
+  private pendingJoinRoom = "";
+  private inspectorMinimized = false;
+
+  /** Public plugin manager — used by the UI, the mobile shell and tests. */
+  get plugins(): PluginManager {
+    return this.pluginsManager;
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.project.replace(createNewDocument());
     this.engine = new CanvasEngine(canvas, this.viewport, this.project, this.selection);
+    this.browserOverlay = new BrowserFrameOverlay(this.engine, this.project, this.selection);
     const minimapEl = document.getElementById("minimap");
     if (minimapEl instanceof HTMLCanvasElement) {
       this.minimap = new Minimap(
@@ -58,9 +104,18 @@ export class App {
     this.bindDragDrop(canvas);
     this.refreshProjectRefs();
     this.ui.setTools(false);
+    this.ui.setVersion(APP_VERSION);
     this.ui.onRecentPick = (filePath) => void this.openProjectPath(filePath);
     this.ui.onExitIsolation = () => this.exitIsolation();
+    this.bindSearch();
+    this.bindCollab();
+    this.bindAssets();
     void this.refreshRecent();
+
+    this.pluginsUi = new PluginsUI();
+    this.pluginsManager = new PluginManager(this.pluginGateway());
+    this.bindPlugins();
+    void this.pluginsManager.reload();
   }
 
   private navigateTo(world: Point): void {
@@ -72,6 +127,400 @@ export class App {
       zoom,
     });
     this.setStatus(`Navigated to ${Math.round(world.x)}, ${Math.round(world.y)}.`);
+  }
+
+  // -------- Search (Find modal) --------
+
+  private bindSearch(): void {
+    this.searchUi.onQuery = (q) => this.search.setQuery(q);
+    this.searchUi.onPick = (id) => this.pickSearchHit(id);
+    this.searchUi.onNext = () => this.search.selectNext();
+    this.searchUi.onPrev = () => this.search.selectPrev();
+    this.searchUi.onDismiss = () => this.closeSearch();
+    this.search.onChange(() => {
+      this.searchUi.setQuery(this.search.query);
+      this.searchUi.render(this.search.resultList, this.search.activeId);
+      this.searchUi.scrollActiveIntoView();
+    });
+  }
+
+  /** Open the Find modal (Ctrl+F or "/"). */
+  openSearch(): void {
+    this.search.open(this.buildSearchCorpus());
+    this.searchUi.open();
+    this.setStatus("Search the canvas — Enter to jump to the first match.");
+  }
+
+  closeSearch(): void {
+    this.search.close();
+    this.searchUi.close();
+  }
+
+  private buildSearchCorpus(): SearchableItem[] {
+    const items: SearchableItem[] = [];
+    const assets = this.project.getAssets();
+    const assetName = new Map(assets.map((a) => [a.id, a.name]));
+    for (const obj of this.project.getObjects()) {
+      items.push(objectToSearchItem(obj, assetName));
+    }
+    items.push({
+      id: "__project__",
+      kind: "project",
+      label: this.project.getMeta().name || "Project",
+      text: this.project.getMeta().name ?? "",
+      tags: this.project.getMeta().tags ?? [],
+      typeLabel: "project",
+    });
+    return items;
+  }
+
+  private pickSearchHit(id: string): void {
+    const hit = id ? this.search.resultList.find((r) => r.id === id) : this.search.activeHit();
+    if (!hit) return;
+    this.closeSearch();
+    this.focusSearchHit(hit);
+  }
+
+  private focusSearchHit(hit: RankedHit): void {
+    this.exitIsolation();
+    const obj = this.project.getObject(hit.id);
+    if (obj) {
+      this.selection.setIds([hit.id]);
+      this.navigateTo({ x: obj.x + obj.width / 2, y: obj.y + obj.height / 2 });
+      this.setStatus(`Found ${outlineFor(hit.typeLabel)} "${hit.label}".`);
+      return;
+    }
+    // Project hit — the current document already matches.
+    if (hit.kind === "project") {
+      this.setStatus(`You're in project "${hit.label}".`);
+    }
+  }
+
+  // -------- Collaboration (share, presence) --------
+
+  private bindCollab(): void {
+    this.collabUi.btnShare.addEventListener("click", () => void this.openShareDialog());
+    this.collabUi.onConnect = (url) => this.connectCollab(url);
+    this.collabUi.onDisconnect = () => this.collab.disconnect();
+    this.collabUi.onJoinRoom = (roomId) => void this.joinRoom(roomId);
+    this.collabUi.onLeaveRoom = () => this.leaveRoom();
+    this.collabUi.onCreateRoom = () => void this.createSharedRoom();
+    this.collabUi.onCopyLink = () => void this.copyInviteLink();
+    this.collabUi.onPermSet = (userId, role) => this.collab.sendPermSet(userId, role);
+
+    this.collab.onRemoteFile = (file) => this.applyRemoteFile(file);
+    this.collab.changed.subscribe(() => {
+      this.refreshCollabUi();
+      this.refreshAssetsUi();
+    });
+
+    // Desktop deep link (spatia://join?room=…) and web join URL (?room=…).
+    window.spatia?.onJoinRequest?.((room) => void this.joinRoom(room));
+    const urlRoom = new URLSearchParams(location.search).get("room");
+    if (urlRoom) this.pendingJoinRoom = urlRoom;
+
+    // Note: the main window is created later in lifecycle, so the join invite
+    // that arrives AFTER the window exists is handled by onJoinRequest above.
+    void this.bootstrapCollab();
+  }
+
+  private async ensureCollabIdentity(): Promise<CollabUser> {
+    if (this.collabIdentity) return this.collabIdentity;
+    const identity = await loadCollabIdentity();
+    this.collabIdentity = identity;
+    this.collab.user = identity;
+    this.collabUi.selfId = identity.id;
+    return identity;
+  }
+
+  /** Wait for any server identity then honor a boot-time join invite. */
+  private async bootstrapCollab(): Promise<void> {
+    await this.ensureCollabIdentity();
+    if (this.pendingJoinRoom) {
+      const room = sanitizeRoomId(this.pendingJoinRoom);
+      this.pendingJoinRoom = "";
+      if (room) await this.joinRoom(room);
+    }
+  }
+
+  private connectCollab(url: string): void {
+    this.collab.connect(url || DEFAULT_COLLAB_URL);
+    this.setStatus(`Connecting to collaboration server…`);
+  }
+
+  private async openShareDialog(): Promise<void> {
+    await this.ensureCollabIdentity();
+    this.refreshCollabUi();
+    this.collabUi.openShare();
+  }
+
+  /** Used by the mobile menu sheet. */
+  private bindAssets(): void {
+    this.assetsUi.btnAssets.addEventListener("click", () => this.assetsUi.toggle());
+    this.assetsUi.onOpen = (id) => void this.openAsset(id);
+    this.assetsUi.onRelink = (id) => void this.relinkAsset(id);
+    this.assetsUi.onRemove = (id) => void this.removeAsset(id);
+    this.assetsUi.onSelect = (id) => void this.findAssetOnCanvas(id);
+    this.assetsUi.onPanelToggle = () => this.refreshAssetsUi();
+    this.project.changed.subscribe(() => this.refreshAssetsUi());
+    this.refreshAssetsUi();
+  }
+
+  /** Used by the mobile menu sheet. */
+  toggleAssetsPanel(): void {
+    this.assetsUi.toggle();
+  }
+
+  private assetsUsedBy(): Map<string, number> {
+    const used = new Map<string, number>();
+    for (const o of this.project.getObjects()) {
+      if (o.type === "image" || o.type === "file") {
+        used.set(o.assetId, (used.get(o.assetId) ?? 0) + 1);
+      }
+    }
+    return used;
+  }
+
+  private refreshAssetsUi(): void {
+    this.assetsUi.render({
+      assets: this.project.getAssets(),
+      usedBy: this.assetsUsedBy(),
+      canEdit: this.canEditAssets(),
+    });
+  }
+
+  /** Asset edits are allowed when we hold write permission (or are offline). */
+  private canEditAssets(): boolean {
+    if (!this.collab.isJoined) return true;
+    return this.collab.role === "owner" || this.collab.role === "editor";
+  }
+
+  private async openAsset(assetId: string): Promise<void> {
+    const ok = await window.spatia.openAsset(this.project.getMeta().id, assetId);
+    this.setStatus(ok ? "Opened in your default app." : "Asset file is missing.");
+  }
+
+  private async relinkAsset(assetId: string): Promise<void> {
+    if (!this.canEditAssets()) {
+      this.setStatus("You are a viewer — you cannot change assets.");
+      return;
+    }
+    const result = await window.spatia.relinkAsset(this.project.getMeta().id, assetId);
+    if (!result.canceled && result.asset) {
+      this.project.replaceAsset(result.asset);
+      this.engine.invalidateImage(assetId);
+      this.setStatus(`Relinked asset "${result.asset.name}".`);
+    } else {
+      this.setStatus("Could not relink asset.");
+    }
+    this.refreshAssetsUi();
+  }
+
+  private async removeAsset(assetId: string): Promise<void> {
+    if (!this.canEditAssets()) {
+      this.setStatus("You are a viewer — you cannot change assets.");
+      return;
+    }
+    const meta = this.project.getAsset(assetId);
+    if (!meta) return;
+    const count = this.assetsUsedBy().get(assetId) ?? 0;
+    const ok = window.confirm(
+      count > 0
+        ? `Delete "${meta.name}" and the file behind it? ${count} object${count > 1 ? "s are" : " is"} still using it and will show a missing-file notice.`
+        : `Delete "${meta.name}" and the file behind it?`
+    );
+    if (!ok) return;
+    await window.spatia.deleteAsset(this.project.getMeta().id, assetId);
+    this.engine.invalidateImage(assetId);
+    this.project.removeAsset(assetId);
+    this.setStatus(`Removed asset "${meta.name}".`);
+    this.refreshAssetsUi();
+  }
+
+  /** Center the viewport on the first object that uses the given asset. */
+  private async findAssetOnCanvas(assetId: string): Promise<void> {
+    const obj = this.project
+      .getObjects()
+      .find((o) => (o.type === "image" || o.type === "file") && o.assetId === assetId);
+    if (!obj) {
+      this.setStatus(
+        this.project.getAssets().length > 0 ? "This asset is not used on the canvas." : "No assets yet."
+      );
+      return;
+    }
+    this.selection.setIds([obj.id]);
+    const frame = this.engine.getFrame();
+    const cx = obj.x + obj.width / 2;
+    const cy = obj.y + obj.height / 2;
+    const zoom = Math.max(frame.zoom, 1);
+    this.viewport.set({
+      x: cx - frame.originWidth / 2 / zoom,
+      y: cy - frame.originHeight / 2 / zoom,
+      zoom,
+    });
+    this.setStatus(`Found at ${Math.round(cx)}, ${Math.round(cy)}.`);
+  }
+
+  async joinRoom(roomId: string): Promise<void> {
+    const room = sanitizeRoomId(roomId);
+    if (!room) {
+      this.setStatus("That room id is not valid (use 4+ letters, digits, - or _).");
+      return;
+    }
+    const user = await this.ensureCollabIdentity();
+    this.collab.join(room, user);
+    this.collabUi.openShare();
+    this.setStatus(`Joining room ${room}…`);
+  }
+
+  leaveRoom(): void {
+    const room = this.collab.roomId;
+    this.collab.disconnect();
+    if (room) this.setStatus(`Left room ${room}.`);
+  }
+
+  async createSharedRoom(): Promise<void> {
+    const user = await this.ensureCollabIdentity();
+    const room = this.collab.roomId || createId("room");
+    const url = this.collab.serverUrl || DEFAULT_COLLAB_URL;
+    if (!this.collab.isJoined) {
+      this.collab.connect(url);
+      if (this.collab.status === "connecting") {
+        // Wait for open before joining (store joins on open via pendingJoin).
+        this.collab.join(room, user);
+      } else {
+        this.collab.join(room, user);
+      }
+    }
+    this.collabUi.openShare();
+    this.refreshCollabUi();
+  }
+
+  private async copyInviteLink(): Promise<void> {
+    const room = this.collab.roomId;
+    if (!room) return;
+    const link = this.inviteLink(room);
+    try {
+      await navigator.clipboard.writeText(link);
+      this.setStatus("Invite link copied.");
+    } catch {
+      this.setStatus(`Invite link: ${link}`);
+    }
+  }
+
+  /** A real URL the owner can send; same server, room in the query string. */
+  private inviteLink(room: string): string {
+    const here = `${location.origin}${location.pathname}`;
+    return `${here}?room=${encodeURIComponent(room)}`;
+  }
+
+  private refreshCollabUi(): void {
+    this.collabUi.renderShare(this.shareView());
+    this.scheduleOverlayUpdate();
+
+    // Reflect room/role changes in the status bar (once per transition).
+    const label = this.collab.isJoined ? `Room ${this.collab.roomId} (${this.collab.role})` : "";
+    if (label !== this.lastCollabStatusText) {
+      this.lastCollabStatusText = label;
+      if (label) this.setStatus(`In room ${this.collab.roomId} as ${this.collab.role}. Server-enforced.`);
+    }
+    // Persist share metadata on the document so the room is recoverable.
+    if (this.collab.isJoined && this.project.getShared()?.roomId !== this.collab.roomId) {
+      this.project.setShared({
+        roomId: this.collab.roomId,
+        serverUrl: this.collab.serverUrl,
+        role: this.collab.role,
+        lastSyncedAt: new Date().toISOString(),
+      });
+    }
+    // Push the current document once after (re)joining so the room always has a
+    // baseline for new members.
+    if (this.collab.isJoined && this.collab.canEdit && !this.collabBaselineSent) {
+      this.collabBaselineSent = true;
+      this.scheduleCollabSnapshot();
+    }
+    if (!this.collab.isJoined) this.collabBaselineSent = false;
+  }
+  private lastCollabStatusText = "";
+  private collabBaselineSent = false;
+
+  private shareView(): CollabShareView {
+    const peers = [...this.collab.peers.values()].map((p) => ({ user: p.user, role: p.role }));
+    return {
+      status: this.collab.status,
+      error: this.collab.error,
+      serverUrl: this.collab.serverUrl,
+      roomId: this.collab.roomId,
+      role: this.collab.role,
+      ownerId: this.collab.ownerId,
+      canConnect: this.collab.status !== "connected" && this.collab.status !== "connecting",
+      canLeave: this.collab.isJoined,
+      canCreate: this.collab.status === "connected" && !this.collab.isJoined,
+      inviteLink: this.collab.roomId ? this.inviteLink(this.collab.roomId) : "",
+      selfName: this.collab.user?.id ?? "",
+      peers,
+    };
+  }
+
+  private scheduleOverlayUpdate(): void {
+    if (this.overlayTimer !== null) return;
+    this.overlayTimer = requestAnimationFrame(() => {
+      this.overlayTimer = null;
+      this.renderOverlay();
+    });
+  }
+
+  private renderOverlay(): void {
+    const frame = this.engine.getFrame();
+    this.browserOverlay.sync();
+    const selections = new Map<string, readonly string[]>();
+    for (const [id, peer] of this.collab.peers) {
+      if (id === this.collab.user?.id) continue;
+      if (peer.selection.length > 0) selections.set(id, peer.selection);
+    }
+    this.collabUi.renderOverlay({
+      toScreen: (w) => worldToScreen(w, frame),
+      zoom: frame.zoom,
+      objects: this.project.getObjects(),
+      presences: this.collab.activePeers.map((p) => ({ user: p.user, x: p.presence.x, y: p.presence.y })),
+      selections,
+    });
+  }
+
+  private scheduleCollabSnapshot(): void {
+    if (!this.collab.isJoined || !this.collab.canEdit || this.applyingRemote) return;
+    if (this.collabSnapshotTimer !== null) return;
+    this.collabSnapshotTimer = window.setTimeout(() => {
+      this.collabSnapshotTimer = null;
+      if (!this.collab.isJoined || !this.collab.canEdit) return;
+      try {
+        this.collab.sendSnapshot(JSON.parse(this.serialize()) as Record<string, unknown>);
+      } catch {
+        /* serialization is validated before sending */
+      }
+    }, 700);
+  }
+
+  /** A peer's authoritative document snapshot replaces this session's state. */
+  private applyRemoteFile(file: Record<string, unknown>): void {
+    try {
+      const parsed = deserialize(JSON.stringify(file));
+      const doc: ProjectDocument = {
+        meta: parsed.project,
+        viewport: parsed.viewport,
+        objects: parsed.objects,
+        assets: parsed.assets,
+      };
+      this.applyingRemote = true;
+      try {
+        this.applyDocument(doc);
+      } finally {
+        this.applyingRemote = false;
+      }
+      this.setStatus("Loaded the shared document from the room.");
+    } catch {
+      this.setStatus("Received a document that doesn't match the Spatia format.");
+    }
   }
 
   start(): void {
@@ -122,6 +571,8 @@ export class App {
     }
     this.commands.markSaved();
     this.refreshUI();
+    void this.refreshRecent();
+    this.autoSnapshotAfterSave();
     this.setStatus(`Saved to ${result.filePath}.`);
   }
 
@@ -136,6 +587,7 @@ export class App {
     this.commands.markSaved();
     this.refreshUI();
     void this.refreshRecent();
+    this.autoSnapshotAfterSave();
     this.setStatus(`Saved project as ${result.filePath}.`);
   }
 
@@ -148,6 +600,405 @@ export class App {
       return;
     }
     this.setStatus(`Exported to ${result.filePath}.`);
+  }
+
+  // -------- Export formats (assets) --------
+
+  /** Open the export dialog (sidebar button + mobile menu). */
+  openExportDialog(): void {
+    this.ui.openExportDialog();
+    this.setStatus("Choose an export format.");
+  }
+
+  /** Run one of the export formats picked from the dialog. */
+  exportFormat(format: "spatia-folder" | "spatia-json" | "png" | "pdf" | "md"): void {
+    this.closeExportDialog();
+    switch (format) {
+      case "spatia-folder":
+        void this.exportProject();
+        return;
+      case "spatia-json":
+        void this.saveAsProject();
+        return;
+      case "png":
+        void this.exportPng();
+        return;
+      case "pdf":
+        void this.exportPdf();
+        return;
+      case "md":
+        void this.exportMarkdown();
+        return;
+    }
+  }
+
+  private closeExportDialog(): void {
+    this.ui.closeExportDialog();
+  }
+
+  /** World-space bounds covering every object, used by raster exports. */
+  exportBounds(): Rect {
+    return exportBounds(this.project.getObjects());
+  }
+
+  /** Markdown down-export of the current document (notes/text/links). */
+  buildMarkdownText(): string {
+    return buildMarkdown(this.project.getMeta().name, this.project.getObjects());
+  }
+
+  private exportBaseName(): string {
+    const name = (this.project.getMeta().name || "Spatia").trim();
+    const cleaned = name.replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-");
+    return cleaned || "spatia-export";
+  }
+
+  private async exportMarkdown(): Promise<void> {
+    const text = this.buildMarkdownText();
+    const result = await window.spatia.exportFile("md", `${this.exportBaseName()}.md`, text);
+    if (result.canceled) {
+      this.setStatus("Export canceled.");
+      return;
+    }
+    this.setStatus(`Exported Markdown to ${result.filePath}.`);
+  }
+
+  private async exportPng(): Promise<void> {
+    const bounds = this.exportBounds();
+    const raster = await this.engine.rasterizeExport(bounds, 2, "image/png");
+    if (!raster) {
+      this.setStatus("Could not rasterize the canvas.");
+      return;
+    }
+    const base64 = raster.dataUrl.split(",")[1] ?? "";
+    const result = await window.spatia.exportFile("png", `${this.exportBaseName()}.png`, base64);
+    if (result.canceled) {
+      this.setStatus("Export canceled.");
+      return;
+    }
+    this.setStatus(`Exported PNG to ${result.filePath}.`);
+  }
+
+  private async exportPdf(): Promise<void> {
+    const bounds = this.exportBounds();
+    const raster = await this.engine.rasterizeExport(bounds, 2, "image/jpeg");
+    if (!raster) {
+      this.setStatus("Could not rasterize the canvas.");
+      return;
+    }
+    const jpegBase64 = raster.dataUrl.split(",")[1] ?? "";
+    const pdf = buildPdfFromJpeg(jpegBase64, raster.width, raster.height);
+    const result = await window.spatia.exportFile("pdf", `${this.exportBaseName()}.pdf`, bytesToBase64(pdf));
+    if (result.canceled) {
+      this.setStatus("Export canceled.");
+      return;
+    }
+    this.setStatus(`Exported PDF to ${result.filePath}.`);
+  }
+
+  // -------- Templates --------
+
+  /** Open the template picker dialog and render the starter cards. */
+  openTemplatesDialog(): void {
+    const list = this.ui.templatesList;
+    list.innerHTML = TEMPLATES.map(
+      (t) =>
+        `<button class="template-card" data-template="${t.id}" type="button">` +
+        `<span class="template-accent" style="background:${t.accent}"></span>` +
+        `<span class="template-name">${escapeHtml(t.name)}</span>` +
+        `<span class="template-desc">${escapeHtml(t.description)}</span>` +
+        `</button>`
+    ).join("");
+    Array.from(list.querySelectorAll("[data-template]")).forEach((el) => {
+      el.addEventListener("click", () => {
+        const id = (el as HTMLElement).getAttribute("data-template");
+        if (id) void this.applyTemplate(id);
+      });
+    });
+    this.ui.openTemplatesDialog();
+  }
+
+  private closeTemplatesDialog(): void {
+    this.ui.closeTemplatesDialog();
+  }
+
+  /** Replace the current document with the given template's starter canvas. */
+  async applyTemplate(id: string): Promise<void> {
+    this.closeTemplatesDialog();
+    const tpl = templateById(id);
+    if (!tpl) {
+      this.setStatus("Unknown template.");
+      return;
+    }
+    if (!(await this.confirmDiscard())) return;
+    const doc = createNewDocument();
+    doc.objects = tpl.build();
+    this.applyDocument(doc);
+    this.setStatus(`Applied the "${tpl.name}" template.`);
+  }
+
+  // -------- Project library dialog --------
+
+  private library: LibraryData | null = null;
+
+  /** Open the project library (browse / search / favorite / organize). */
+  async openProjectsDialog(): Promise<void> {
+    this.setStatus("Loading project library…");
+    try {
+      this.library = await window.spatia.libraryGet();
+    } catch {
+      this.library = null;
+    }
+    this.renderProjects();
+    this.ui.openProjectsDialog();
+  }
+
+  private closeProjectsDialog(): void {
+    this.ui.closeProjectsDialog();
+  }
+
+  private async reloadLibrary(): Promise<boolean> {
+    try {
+      this.library = await window.spatia.libraryGet();
+      this.renderProjects();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private renderProjects(): void {
+    if (!this.library) {
+      this.ui.projectsList.innerHTML = `<span class="recent-empty">Could not load the project library.</span>`;
+      return;
+    }
+    const query = this.ui.projectsSearch.value.trim();
+    const sort = this.ui.projectsSort.value as "name" | "updated";
+    const folder = this.ui.projectsFolder.value;
+    let items = filterProjects(this.library.projects, query);
+    if (folder === "__fav") items = items.filter((p) => p.favorite);
+    else if (folder === "__none") items = items.filter((p) => !p.folderId);
+    else if (folder !== "__all") items = items.filter((p) => p.folderId === folder);
+    const sorted = sortProjects(items, sort);
+
+    const folderName = (id: string | null | undefined): string | null => {
+      if (!id) return null;
+      return this.library!.folders.find((f) => f.id === id)?.name ?? null;
+    };
+    const folderOptions = `<option value="__all">All folders</option>
+      <option value="__fav">Favorites</option>
+      <option value="__none">Uncategorized</option>
+      ${this.library.folders.map((f) => `<option value="${escapeAttr(f.id)}">${escapeHtml(f.name)}</option>`).join("")}`;
+    this.ui.projectsFolder.innerHTML = folderOptions;
+    this.ui.projectsFolder.value = folder;
+
+    let html = "";
+    // Folder management strip.
+    for (const f of this.library.folders) {
+      const count = this.library.projects.filter((p) => p.folderId === f.id).length;
+      html += `<div class="project-folder-row">
+        <button class="projects-link" data-action="filter-folder" data-folder="${escapeAttr(f.id)}">📁 ${escapeHtml(f.name)}</button>
+        <span class="project-count">${count}</span>
+        <button class="btn projects-mini" data-action="rename-folder" data-folder="${escapeAttr(f.id)}" title="Rename folder">Rename</button>
+        <button class="btn projects-mini danger" data-action="delete-folder" data-folder="${escapeAttr(f.id)}" title="Delete folder">Delete</button>
+      </div>`;
+    }
+
+    if (sorted.length === 0) {
+      html += `<div class="projects-empty">No projects found.</div>`;
+    }
+    for (const p of sorted) {
+      const tags = (p.tags ?? [])
+        .map((t) => `<span class="project-tag">${escapeHtml(t)}</span>`)
+        .join("");
+      const folderLabel = folderName(p.folderId);
+      html += `<div class="project-row${p.exists === false ? " missing" : ""}">
+        <button class="projects-fav" data-action="fav" data-path="${escapeAttr(p.filePath)}" title="Toggle favorite">${p.favorite ? "★" : "☆"}</button>
+        <div class="project-main">
+          <button class="projects-link project-name" data-action="open" data-path="${escapeAttr(p.filePath)}">${escapeHtml(p.displayName)}</button>
+          ${p.exists === false ? `<span class="project-missing">missing</span>` : ""}
+          <div class="project-meta">${escapeHtml(p.filePath)}</div>
+          <div class="project-tags">${tags}</div>
+          ${folderLabel ? `<div class="project-meta">Folder: ${escapeHtml(folderLabel)}</div>` : ""}
+        </div>
+        <div class="project-actions">
+          <button class="btn projects-mini" data-action="rename" data-path="${escapeAttr(p.filePath)}">Rename</button>
+          <button class="btn projects-mini" data-action="tags" data-path="${escapeAttr(p.filePath)}" title="Edit tags">Tags</button>
+          <select class="projects-folder-select" data-action="folder" data-path="${escapeAttr(p.filePath)}" title="Move to folder">
+            <option value="">No folder</option>
+            ${this.library.folders.map((f) => `<option value="${escapeAttr(f.id)}"${p.folderId === f.id ? " selected" : ""}>${escapeHtml(f.name)}</option>`).join("")}
+          </select>
+          <button class="btn projects-mini" data-action="remove" data-path="${escapeAttr(p.filePath)}" title="Remove from list">Remove</button>
+          <button class="btn projects-mini danger" data-action="trash" data-path="${escapeAttr(p.filePath)}" title="Delete the project file">Trash</button>
+        </div>
+      </div>`;
+    }
+    this.ui.projectsList.innerHTML = html;
+  }
+
+  /** Handle a click/change inside the project library dialog. */
+  private onProjectsAction(e: Event): void {
+    const target = e.target as HTMLElement;
+    const isSelect = target.closest?.("[data-action='folder']") as HTMLSelectElement | null;
+    const btn = (target.closest("[data-action]") as HTMLElement | null) ?? isSelect;
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const path = btn.dataset.path ?? "";
+    const voidFn = async (): Promise<void> => {
+      if (action === "open" && path) {
+        this.closeProjectsDialog();
+        await this.openProjectPath(path);
+      } else if (action === "fav" && path && this.library) {
+        const p = this.library.projects.find((x) => x.filePath === path);
+        if (p) await window.spatia.librarySetFavorite(path, !p.favorite);
+      } else if (action === "filter-folder") {
+        const id = btn.dataset.folder ?? "";
+        this.ui.projectsFolder.value = id;
+      } else if (action === "rename" && path) {
+        const p = this.library?.projects.find((x) => x.filePath === path);
+        const name = await this.ui.promptText("Rename project", p?.displayName ?? "", "New name");
+        if (name !== null) {
+          const res = await window.spatia.libraryRename(path, name.trim());
+          this.setStatus(res.ok ? "Project renamed." : `Rename failed: ${res.error ?? "unknown error"}`);
+        }
+      } else if (action === "tags" && path) {
+        const p = this.library?.projects.find((x) => x.filePath === path);
+        const value = await this.ui.promptText("Project tags (comma separated)", (p?.tags ?? []).join(", "), "tag1, tag2");
+        if (value !== null) {
+          const tags = value.split(",").map((s) => s.trim()).filter(Boolean);
+          await window.spatia.librarySetTags(path, tags);
+        }
+      } else if (action === "folder" && path) {
+        const folderId = isSelect ? isSelect.value || null : null;
+        await window.spatia.librarySetFolder(path, folderId);
+      } else if (action === "remove" && path) {
+        if (window.confirm(`Remove "${path}" from the library? The file is not deleted.`)) {
+          await window.spatia.libraryRemove(path);
+        }
+      } else if (action === "trash" && path) {
+        if (window.confirm(`Delete the project file "${path}"?`)) {
+          const ok = await window.spatia.libraryTrash(path);
+          this.setStatus(ok ? "Project file deleted." : "Could not delete the project file.");
+        }
+      } else if (action === "rename-folder") {
+        const id = btn.dataset.folder ?? "";
+        const f = this.library?.folders.find((x) => x.id === id);
+        const name = await this.ui.promptText("Rename folder", f?.name ?? "", "Folder name");
+        if (name !== null && name.trim()) await window.spatia.libraryRenameFolder(id, name.trim());
+      } else if (action === "delete-folder") {
+        const id = btn.dataset.folder ?? "";
+        if (window.confirm("Delete this folder? Projects inside will become uncategorized.")) {
+          await window.spatia.libraryDeleteFolder(id);
+        }
+      }
+      await this.reloadLibrary();
+    };
+    void voidFn();
+  }
+
+  private async createLibraryFolder(): Promise<void> {
+    const name = await this.ui.promptText("New folder", "", "Folder name");
+    if (name !== null && name.trim()) {
+      const folder = await window.spatia.libraryCreateFolder(name.trim());
+      if (folder) this.ui.projectsFolder.value = folder.id;
+      await this.reloadLibrary();
+    }
+  }
+
+  // -------- Version history dialog --------
+
+  /** Open the version history for the current project. */
+  async openVersionsDialog(): Promise<void> {
+    await this.captureVersionSnapshot("Autosave on open");
+    this.ui.openVersionsDialog();
+    await this.refreshVersionsDialog();
+  }
+
+  private closeVersionsDialog(): void {
+    this.ui.closeVersionsDialog();
+  }
+
+  private async refreshVersionsDialog(): Promise<void> {
+    const meta = this.project.getMeta();
+    let snapshots: VersionSnapshotMeta[] = [];
+    try {
+      snapshots = await window.spatia.versionsList(meta.id);
+    } catch {
+      snapshots = [];
+    }
+    if (snapshots.length === 0) {
+      this.ui.versionsList.innerHTML = `<span class="recent-empty">No snapshots yet — save the project to capture one.</span>`;
+      return;
+    }
+    this.ui.versionsList.innerHTML = snapshots
+      .map(
+        (s) =>
+          `<div class="version-row">
+        <div class="version-main">
+          <div class="version-label">${escapeHtml(s.label)}</div>
+          <div class="project-meta">${escapeHtml(new Date(s.createdAt).toLocaleString())}</div>
+        </div>
+        <div class="project-actions">
+          <button class="btn projects-mini" data-action="restore" data-token="${escapeAttr(s.token)}">Restore</button>
+          <button class="btn projects-mini danger" data-action="delete" data-token="${escapeAttr(s.token)}">Delete</button>
+        </div>
+      </div>`
+      )
+      .join("");
+  }
+
+  /** Capture a snapshot of the current document. */
+  async captureVersionSnapshot(label: string): Promise<void> {
+    const meta = this.project.getMeta();
+    try {
+      await window.spatia.versionsAdd(meta.id, label, this.serialize());
+    } catch {
+      /* snapshots are best-effort */
+    }
+  }
+
+  private handleVersionsAction(e: Event): void {
+    const btn = (e.target as HTMLElement).closest("[data-action]") as HTMLElement | null;
+    if (!btn) return;
+    const token = btn.dataset.token ?? "";
+    const voidFn = async (): Promise<void> => {
+      const meta = this.project.getMeta();
+      if (btn.dataset.action === "restore" && token) {
+        if (!(await this.confirmDiscard())) return;
+        const json = await window.spatia.versionsRestore(meta.id, token);
+        if (json === null) {
+          this.setStatus("Could not read that snapshot.");
+          return;
+        }
+        try {
+          const file = deserialize(json);
+          this.applyDocument({
+            meta: file.project,
+            viewport: file.viewport,
+            objects: file.objects,
+            assets: file.assets,
+          });
+          this.setStatus(`Restored snapshot "${btn.textContent}".`);
+        } catch {
+          this.setStatus("That snapshot is not a valid project.");
+        }
+      } else if (btn.dataset.action === "delete" && token) {
+        if (window.confirm("Delete this snapshot?")) {
+          await window.spatia.versionsDelete(meta.id, token);
+        }
+      }
+      await this.refreshVersionsDialog();
+    };
+    void voidFn();
+  }
+
+  /** Auto-snapshot after a successful save (bounded by the store at 20/project). */
+  private autoSnapshotAfterSave(): void {
+    const meta = this.project.getMeta();
+    void window.spatia
+      .versionsAdd(meta.id, `Autosave — ${meta.name}`, this.serialize())
+      .catch(() => {
+        /* best-effort */
+      });
   }
 
   async importProject(): Promise<void> {
@@ -221,6 +1072,10 @@ export class App {
       this.addTextAt(worldCenter);
       return;
     }
+    if (kind === "note") {
+      this.addNoteAt(worldCenter);
+      return;
+    }
     if (kind === "url") {
       this.addUrlAt(worldCenter);
       return;
@@ -275,6 +1130,45 @@ export class App {
     this.selection.setIds([id]);
     this.refreshUI();
     this.setStatus(`Added link "${title || trimmed}".`);
+  }
+
+  /**
+   * Create a sticky note and immediately begin editing its body — the same
+   * "no extra click" flow as text. Starts blank so typing creates the note.
+   */
+  private addNoteAt(worldCenter: Point): void {
+    const size = { width: 180, height: 140 };
+    const colors = ["#f0c33c", "#f28c5c", "#5cb8f2", "#5cd69b", "#c07cf2"];
+    const obj: CanvasObject = {
+      type: "note",
+      id: "obj_" + crypto.randomUUID(),
+      x: worldCenter.x - size.width / 2,
+      y: worldCenter.y - size.height / 2,
+      width: size.width,
+      height: size.height,
+      rotation: 0,
+      zIndex: this.project.nextZIndex(),
+      locked: false,
+      metadata: {},
+      title: "",
+      text: "",
+      color: colors[Math.floor(Math.random() * colors.length)],
+    };
+    this.commands.execute(addObjectCommand(this.project, obj));
+    this.selection.setIds([obj.id]);
+    this.refreshUI();
+    this.editTextObject(obj);
+    this.setStatus("Adding note — start typing.");
+  }
+
+  /** Create a diagram shape centered on `worldCenter` and select it. */
+  private addShapeAt(kind: ShapeKind, worldCenter: Point): void {
+    const id = this.engine.addShapeObject(kind, worldCenter);
+    if (id) {
+      this.selection.setIds([id]);
+      this.refreshUI();
+      this.setStatus(`Added ${shapeLabel(kind)}.`);
+    }
   }
 
   private addImageObjectAt(worldCenter: Point): Promise<void> {
@@ -476,7 +1370,19 @@ export class App {
     items.push({ label: "Add file", action: () => this.addObjectAt("file", world) });
     items.push({ label: "Add link", action: () => this.addObjectAt("url", world) });
     items.push({ label: "Add frame", action: () => this.addFrameAt(world) });
+    items.push({ separatorBefore: true, label: "Add shapes", enabled: false, action: () => {} });
+    for (const sk of SHAPE_KINDS) {
+      items.push({ label: `Add ${shapeLabel(sk)}`, action: () => this.addShapeAt(sk, world) });
+    }
     items.push({ separatorBefore: true, label: "Paste here", enabled: this.clipboard.length > 0, action: () => this.pasteClipboard() });
+
+    const pluginCommands = this.pluginsManager.commandsList();
+    if (pluginCommands.length > 0) {
+      items.push({ separatorBefore: true, label: "Plugins", enabled: false, action: () => {} });
+      for (const c of pluginCommands) {
+        items.push({ label: c.label, action: () => void this.pluginsManager.dispatchCommand(c.id) });
+      }
+    }
 
     showContextMenu(items, screen.x, screen.y);
   }
@@ -586,6 +1492,7 @@ export class App {
     this.engine.setIsolation(visible);
     this.ui.setIsolation(container.type, container.name || "Untitled");
     this.focusSelection();
+    this.scheduleOverlayUpdate();
     this.setStatus(`Isolated ${container.type}. Press Escape to exit.`);
   }
 
@@ -612,6 +1519,7 @@ export class App {
     this.isolation = null;
     this.engine.setIsolation(null);
     this.ui.clearIsolation();
+    this.scheduleOverlayUpdate();
     this.setStatus("Exited isolation.");
   }
 
@@ -643,6 +1551,217 @@ export class App {
     this.setStatus("View reset.");
   }
 
+  // -------- Plugins --------
+
+  private bindPlugins(): void {
+    this.ui.btnPlugins.addEventListener("click", () => void this.openPluginsDialog());
+    this.pluginsManager.changed.subscribe(() => this.renderPluginsDialog());
+    this.pluginsUi.onInstall = () => void this.pluginsManager.install();
+    this.pluginsUi.onInstallUrl = (url) => void this.pluginsManager.installFromUrl(url);
+    this.pluginsUi.onToggle = (id, enabled) => void this.pluginsManager.setEnabled(id, enabled);
+    this.pluginsUi.onRemove = (id) => void this.pluginsManager.remove(id);
+    this.pluginsUi.onRunCommand = (commandId) => void this.pluginsManager.dispatchCommand(commandId);
+
+    // API v2: push app events to subscribed plugins (selection / document /
+    // viewport). The manager filters to plugins that registered a listener.
+    this.selection.changed.subscribe((ids) =>
+      this.pluginsManager.publish("selection", { ids: [...ids] })
+    );
+    this.project.changed.subscribe(() =>
+      this.pluginsManager.publish("document", { objectCount: this.project.getObjects().length })
+    );
+    this.viewport.changed.subscribe((vp) =>
+      this.pluginsManager.publish("viewport", { x: vp.x, y: vp.y, zoom: vp.zoom })
+    );
+  }
+
+  /** Open the Plugins dialog (also reachable from the mobile menu sheet). */
+  openPluginsDialog(): void {
+    this.renderPluginsDialog();
+    this.pluginsUi.open();
+  }
+
+  private renderPluginsDialog(): void {
+    this.pluginsUi.render(
+      this.pluginsManager.entriesList(),
+      this.pluginsManager.commandsList(),
+      (id) => this.pluginsManager.runtimeErrorOf(id)
+    );
+  }
+
+  private pluginGateway(): PluginApiGateway {
+    return {
+      notify: (text) => this.ui.notify(text),
+      selectionIds: () => [...this.selection.get()],
+      projectMeta: () => {
+        const m = this.project.getMeta();
+        return { id: m.id, name: m.name, createdAt: m.createdAt, updatedAt: m.updatedAt };
+      },
+      viewportState: () => {
+        const vp = this.viewport.get();
+        return { x: vp.x, y: vp.y, zoom: vp.zoom };
+      },
+      viewportCenter: () => this.centerWorld(),
+      objects: () =>
+        this.project
+          .getObjects()
+          .map((o) => this.toObjectView(o))
+          .filter((v): v is PluginObjectView => v !== null),
+      objectById: (id) => this.toObjectView(this.project.getObject(id)),
+      createObject: (kind, x, y, props) => this.pluginCreateObject(kind, x, y, props),
+      updateObject: (id, props) => {
+        this.applyPluginProps(id, props);
+        return this.toObjectView(this.project.getObject(id));
+      },
+      deleteObjects: (ids) => this.pluginDeleteObjects(ids),
+      select: (ids) => this.selection.setIds(ids.filter((id) => this.project.getObject(id) !== undefined)),
+      selectAdd: (ids) => this.selection.add(ids.filter((id) => this.project.getObject(id) !== undefined)),
+      clearSelection: () => this.selection.clear(),
+      focusSelection: () => this.focusSelection(),
+      zoom: (factor) => this.engine.zoomBy(factor),
+      undo: () => {
+        const had = this.commands.canUndo;
+        if (had) this.undo();
+        return had;
+      },
+      redo: () => {
+        const had = this.commands.canRedo;
+        if (had) this.redo();
+        return had;
+      },
+    };
+  }
+
+  private toObjectView(o: CanvasObject | undefined): PluginObjectView | null {
+    if (!o) return null;
+    const view: Record<string, unknown> = {
+      type: o.type,
+      id: o.id,
+      x: o.x,
+      y: o.y,
+      width: o.width,
+      height: o.height,
+      rotation: o.rotation,
+      zIndex: o.zIndex,
+      locked: o.locked,
+    };
+    if (o.type === "text") {
+      view.text = o.text;
+      view.fontSize = o.fontSize;
+      view.bold = o.bold;
+      view.italic = o.italic;
+      view.align = o.align;
+    } else if (o.type === "note") {
+      view.text = o.text;
+    } else if (o.type === "url") {
+      view.url = o.url;
+      view.title = o.title;
+    } else if (o.type === "frame") {
+      const url = browserUrlOf(o);
+      if (url) view.url = url;
+    } else if (o.type === "shape") {
+      view.kind = o.kind;
+      view.fill = o.fill;
+      view.stroke = o.stroke;
+      view.strokeWidth = o.strokeWidth;
+    }
+    if ("name" in o && o.name !== undefined) view.name = o.name;
+    return view as PluginObjectView;
+  }
+
+  private pluginCreateObject(
+    kind: string,
+    x: number,
+    y: number,
+    props: Record<string, unknown>
+  ): PluginObjectView | null {
+    const center = { x, y };
+    let id: string | null = null;
+    if (kind === "url") {
+      const url = typeof props.url === "string" ? normalizeUrl(props.url) : "";
+      if (!url) return null;
+      id = this.engine.createUrlObject(url, typeof props.title === "string" ? props.title : "", center);
+    } else if (kind === "frame") {
+      id = this.engine.createFrame(center);
+    } else if (kind === "shape") {
+      const sk =
+        typeof props.kind === "string" && (SHAPE_KINDS as readonly string[]).includes(props.kind)
+          ? (props.kind as ShapeKind)
+          : "rectangle";
+      id = this.engine.addShapeObject(sk, center);
+    } else if (kind === "text" || kind === "note" || kind === "test-object") {
+      id = this.engine.addObjectAt(kind, center);
+    }
+    if (!id) return null;
+    this.applyPluginProps(id, props);
+    this.refreshUI();
+    return this.toObjectView(this.project.getObject(id));
+  }
+
+  private applyPluginProps(id: string, props: Record<string, unknown>): void {
+    const obj = this.project.getObject(id);
+    if (!obj || Object.keys(props).length === 0) return;
+    const numKeys: readonly string[] = ["x", "y", "rotation", "zIndex", "fontSize", "strokeWidth"];
+    const boolKeys: readonly string[] = ["locked", "bold", "italic", "arrowhead"];
+    const strKeys: readonly string[] = ["text", "title", "url", "align", "name", "color", "fill", "stroke"];
+    const changes: PropChange[] = [];
+    const sizeAdjust: Partial<Record<"width" | "height", number>> = {};
+
+    for (const [key, raw] of Object.entries(props)) {
+      if (obj.locked && key !== "locked") continue;
+      // A frame's address is project metadata, never a top-level field — the
+      // serializer drops unknown top-level keys but keeps `metadata` verbatim.
+      if (key === "url" && obj.type === "frame") {
+        const url = normalizeBrowserUrl(typeof raw === "string" ? raw : "");
+        if (!url) continue;
+        if (browserUrlOf(obj) === url) continue;
+        changes.push({ id, key: "metadata", before: { ...obj.metadata }, after: { ...obj.metadata, browserUrl: url } });
+        continue;
+      }
+      const before = (obj as unknown as Record<string, unknown>)[key];
+      let after: unknown;
+      if (key === "width" || key === "height") {
+        const n = typeof raw === "number" ? raw : Number(raw);
+        if (!Number.isFinite(n)) continue;
+        sizeAdjust[key] = n;
+        continue;
+      }
+      if (numKeys.includes(key)) {
+        const n = typeof raw === "number" ? raw : Number(raw);
+        if (!Number.isFinite(n)) continue;
+        after = n;
+      } else if (boolKeys.includes(key)) {
+        after = raw === true || raw === "true" || raw === 1;
+      } else if (strKeys.includes(key)) {
+        if (typeof raw !== "string") continue;
+        after = raw;
+      } else {
+        continue;
+      }
+      if (after !== before) changes.push({ id, key, before, after });
+    }
+
+    if (sizeAdjust.width !== undefined || sizeAdjust.height !== undefined) {
+      const before = { id: obj.id, x: obj.x, y: obj.y, width: obj.width, height: obj.height };
+      const after = { ...before };
+      if (sizeAdjust.width !== undefined) after.width = Math.max(4, sizeAdjust.width);
+      if (sizeAdjust.height !== undefined) after.height = Math.max(4, sizeAdjust.height);
+      this.commands.execute(resizeObjectsCommand(this.project, [before], [after]));
+    }
+    if (changes.length > 0) {
+      this.commands.execute(setPropsCommand(this.project, changes));
+    }
+    this.refreshUI();
+  }
+
+  private pluginDeleteObjects(ids: string[]): number {
+    const existing = ids.filter((id) => this.project.getObject(id) !== undefined);
+    if (existing.length === 0) return 0;
+    this.commands.execute(deleteObjectsCommand(this.project, existing));
+    this.refreshUI();
+    return existing.length;
+  }
+
   // -------- Internals --------
 
   private serialize(): string {
@@ -650,8 +1769,15 @@ export class App {
     return serialize(
       { ...this.project.get().viewport },
       this.project.getObjects(),
-      { id: m.id, name: m.name, createdAt: m.createdAt, updatedAt: m.updatedAt },
-      this.project.getAssets()
+      {
+        id: m.id,
+        name: m.name,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+        tags: m.tags,
+        shared: m.shared,
+      },
+      this.project.getAssets(),
     );
   }
 
@@ -671,6 +1797,43 @@ export class App {
     this.assets.setProjectId(this.project.getMeta().id);
   }
 
+  /** Toggle the tools panel. */
+  private setSidebar(open: boolean): void {
+    this.ui.setSidebarOpen(open);
+  }
+
+  // -------- Settings & Local AI --------
+
+  /** Open the in-app Settings dialog. */
+  openSettingsDialog(): void {
+    this.ui.openSettingsDialog();
+    this.setStatus(`Spatia v${APP_VERSION} — local-first, offline by default.`);
+  }
+
+  /** Load the Local-AI module (floating bubble + panel). Only runs on the
+   *  desktop build where `window.spatia.aiGetAsset` is wired by the preload.
+   *  On the web build mountAi is never reached, keeping the bundle clean. The
+   *  agent-tools module is loaded lazily here (never statically) so it only
+   *  ever ships inside the desktop package, never to the web site. */
+  private mountAi(): Promise<void> {
+    if (typeof window.spatia?.aiGetAsset !== "function") return Promise.resolve();
+    const url = new URL("./ai/ai.js", document.baseURI).href;
+    const toolsPath = "./renderer/ai/agentTools.js";
+    const toolsUrl = new URL(toolsPath, document.baseURI).href;
+    return Promise.all([import(url), import(toolsUrl)])
+      .then(([mod, toolsMod]) => {
+        const anyMod = mod as { attachHost?: (h: unknown) => void };
+        if (typeof anyMod.attachHost === "function") {
+          const AgentTools = (toolsMod as { AgentTools: new (project: ProjectStore, commands: CommandManager, selection: SelectionStore, getFrame: () => ViewportFrame) => { toolsMeta(): unknown; run(name: string, args: unknown): Promise<unknown> } }).AgentTools;
+          const tools = new AgentTools(this.project, this.commands, this.selection, () => this.engine.getFrame());
+          anyMod.attachHost({ toolsMeta: () => tools.toolsMeta(), runTool: (n: string, a: unknown) => tools.run(n, a as Record<string, unknown> | null | undefined) });
+        }
+      })
+      .catch(() => {
+        this.ui.notify("Local AI did not load — this copy may be out of date.");
+      });
+  }
+
   private confirmDiscard(): Promise<boolean> {
     if (!this.commands.isDirty()) return Promise.resolve(true);
     return new Promise((resolve) => {
@@ -684,25 +1847,49 @@ export class App {
     this.project.changed.subscribe(() => {
       if (this.isolation && !this.project.getObject(this.isolation.containerId)) this.exitIsolation();
       this.refreshUI();
+      this.scheduleOverlayUpdate();
+      this.scheduleCollabSnapshot();
     });
-    this.project.replaced.subscribe(() => this.refreshUI());
+    this.project.replaced.subscribe(() => {
+      this.refreshUI();
+      this.refreshAssetsUi();
+    });
     this.viewport.changed.subscribe((vp) => {
       this.ui.setZoom(vp.zoom);
       this.minimap?.update();
+      this.scheduleOverlayUpdate();
     });
-    this.selection.changed.subscribe(() => this.refreshUI());
+    this.selection.changed.subscribe(() => {
+      this.refreshUI();
+      this.collab.sendSelection(this.selection.get());
+    });
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("paste", this.onPaste);
     // A normal workspace click dismisses the sidebar. The sidebar is a sibling
     // of the canvas, so pointer events inside it never reach this listener.
     this.engine.canvas().addEventListener("pointerdown", () => {
-      if (this.ui.isSidebarOpen()) this.ui.setSidebarOpen(false);
+      if (this.ui.isSidebarOpen()) this.setSidebar(false);
+    });
+    // Collaborative cursor presence: send the world-space pointer on move.
+    this.engine.canvas().addEventListener("pointermove", (e) => {
+      if (!this.collab.isJoined) return;
+      const rect = this.engine.canvas().getBoundingClientRect();
+      const frame = this.engine.getFrame();
+      const world = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top }, frame);
+      this.collab.sendPresence(world.x, world.y);
     });
   }
 
   /** Handle OS pasted files/text (images, files); internal objects use Ctrl+V. */
   private onPaste = (e: ClipboardEvent): void => {
     if (isEditingText()) return;
+    // When a real editable field (e.g. the Add Link URL input or an inspector
+    // input) has focus, the OS paste must go into that field, not the canvas.
+    // ClipboardEvent.target is the focused editable element in that case.
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+      return;
+    }
     const files = e.clipboardData?.files;
     if (files && files.length > 0) {
       const file = files[0];
@@ -745,6 +1932,15 @@ export class App {
   }
 
   private updateInspector(): void {
+    // While the pen tool is active the inspector hosts the pen's tool panel
+    // (size / color / eraser) so new strokes are fully editable; drawing never
+    // holds a selection, so the object view is irrelevant here.
+    if (this.engine.isPenTool()) {
+      this.setInspectorMinimized(false);
+      this.ui.setInspectorOpen(true);
+      this.ui.setInspector(this.penToolInspector());
+      return;
+    }
     const ids = this.selection.get();
     if (ids.length === 0) {
       this.ui.setInspectorOpen(false);
@@ -764,6 +1960,21 @@ export class App {
     }
   }
 
+  /** Inspector view shown while the pen tool is active (live tool style). */
+  private penToolInspector(): string {
+    const style = this.engine.getPenStyle();
+    const eraser = this.engine.isPenEraser();
+    return (
+      `<div class="inspector-row"><span class="inspector-label">Type</span><span>Pen</span></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Size</span>` +
+        `<input class="inspector-input" data-pen="size" type="number" min="1" max="24" step="1" value="${round(style.size)}"></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Color</span>` +
+        `<input class="inspector-input share-color" data-pen="color" type="color" value="${escapeAttr(style.color)}"></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Eraser</span>` +
+        `<input class="inspector-input" data-pen="eraser" type="checkbox"${eraser ? " checked" : ""}></div>`
+    );
+  }
+
   /** Build the single-object inspector DOM from the object reference. */
   private inspectorFor(obj: CanvasObject): string {
     const typeLabel = obj.type.charAt(0).toUpperCase() + obj.type.slice(1);
@@ -772,6 +1983,8 @@ export class App {
       `<input class="inspector-input" data-prop="${key}" type="number" step="${step}" value="${round(value)}"></div>`;
     const rows: string[] = [
       `<div class="inspector-row"><span class="inspector-label">Type</span><span>${typeLabel}</span></div>`,
+      `<div class="inspector-row"><span class="inspector-label">Tags</span>` +
+        `<input class="inspector-input" data-prop="metadata-tags" value="${escapeAttr(objectTags(obj).join(", "))}" placeholder="comma, separated"></div>`,
     ];
     if (obj.type === "url") {
       rows.push(
@@ -784,6 +1997,24 @@ export class App {
       rows.push(
         `<div class="inspector-row"><span class="inspector-label">Text</span>` +
           `<textarea class="inspector-input" data-prop="text" rows="3">${escapeHtml((obj as { text: string }).text)}</textarea></div>`
+      );
+    } else if (obj.type === "pen") {
+      // Committed strokes: color + base stroke width are editable. The stroke
+      // width edit scales any per-vertex (pressure) widths proportionally so
+      // the whole stroke stays consistent (see commitInspectorProp).
+      rows.push(
+        `<div class="inspector-row"><span class="inspector-label">Color</span>` +
+          `<input class="inspector-input share-color" data-prop="color" type="color" value="${escapeAttr(obj.color || "#e8eaed")}"></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Stroke W</span>` +
+          `<input class="inspector-input" data-prop="strokeWidth" type="number" min="0.5" step="0.5" value="${round(obj.strokeWidth || 3)}"></div>`
+      );
+    } else if (obj.type === "shape") {
+      const shape = obj as Extract<CanvasObject, { type: "shape" }>;
+      rows.push(
+        `<div class="inspector-row"><span class="inspector-label">Kind</span><span>${shapeLabel(shape.kind)}</span></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Fill</span><input class="inspector-input share-color" data-prop="fill" type="color" value="${escapeAttr(shape.fill || "#ffffff")}"></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Stroke</span><input class="inspector-input share-color" data-prop="stroke" type="color" value="${escapeAttr(shape.stroke)}"></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Stroke W</span><input class="inspector-input" data-prop="strokeWidth" type="number" min="0.5" step="0.5" value="${round(shape.strokeWidth)}"></div>`
       );
     }
     rows.push(numField("X", "x", obj.x, 1));
@@ -917,6 +2148,11 @@ export class App {
       this.focusSelection();
       return;
     }
+    if ((mod && key === "f") || key === "/") {
+      e.preventDefault();
+      this.openSearch();
+      return;
+    }
     if (key === "i" && e.shiftKey && !mod) {
       e.preventDefault();
       this.isolateSelection();
@@ -1006,7 +2242,8 @@ export class App {
     this.ui.btnImport.addEventListener("click", () => void this.importProject());
     this.ui.btnSave.addEventListener("click", () => void this.saveProject());
     this.ui.btnSaveAs.addEventListener("click", () => void this.saveAsProject());
-    this.ui.btnExport.addEventListener("click", () => void this.exportProject());
+    this.ui.btnExport.addEventListener("click", () => this.openExportDialog());
+    this.ui.btnTemplates.addEventListener("click", () => this.openTemplatesDialog());
     this.ui.btnUndo.addEventListener("click", () => this.undo());
     this.ui.btnRedo.addEventListener("click", () => this.redo());
     this.ui.btnZoomIn.addEventListener("click", () => this.zoomIn());
@@ -1018,9 +2255,67 @@ export class App {
     this.ui.btnAddFile.addEventListener("click", () => this.addObjectAt("file", this.centerWorld()));
     this.ui.btnAddUrl.addEventListener("click", () => this.addObjectAt("url", this.centerWorld()));
     this.ui.btnAddTest.addEventListener("click", () => this.addObjectAt("test-object", this.centerWorld()));
+    this.ui.btnAddShapeRectangle.addEventListener("click", () => this.addShapeAt("rectangle", this.centerWorld()));
+    this.ui.btnAddShapeRoundedRectangle.addEventListener("click", () => this.addShapeAt("rounded-rectangle", this.centerWorld()));
+    this.ui.btnAddShapeEllipse.addEventListener("click", () => this.addShapeAt("ellipse", this.centerWorld()));
+    this.ui.btnAddShapeDiamond.addEventListener("click", () => this.addShapeAt("diamond", this.centerWorld()));
+    this.ui.btnAddShapeTriangle.addEventListener("click", () => this.addShapeAt("triangle", this.centerWorld()));
+    this.ui.btnAddShapeLine.addEventListener("click", () => this.addShapeAt("line", this.centerWorld()));
+    this.ui.btnAddShapeArrow.addEventListener("click", () => this.addShapeAt("arrow", this.centerWorld()));
+
+    // Export dialog format buttons + close / backdrop.
+    this.ui.exportDialog.querySelectorAll("[data-export]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const format = (el as HTMLElement).getAttribute("data-export") as AppExportFormat | null;
+        if (format) this.exportFormat(format);
+      });
+    });
+    this.ui.exportClose.addEventListener("click", () => this.closeExportDialog());
+    this.ui.exportDialog.addEventListener("mousedown", (e) => {
+      if (e.target === this.ui.exportDialog) this.closeExportDialog();
+    });
+
+    // Templates dialog.
+    this.ui.templatesClose.addEventListener("click", () => this.closeTemplatesDialog());
+    this.ui.templatesDialog.addEventListener("mousedown", (e) => {
+      if (e.target === this.ui.templatesDialog) this.closeTemplatesDialog();
+    });
+
+    // Project library dialog.
+    this.ui.btnProjects.addEventListener("click", () => void this.openProjectsDialog());
+    this.ui.projectsClose.addEventListener("click", () => this.closeProjectsDialog());
+    this.ui.projectsDialog.addEventListener("mousedown", (e) => {
+      if (e.target === this.ui.projectsDialog) this.closeProjectsDialog();
+    });
+    this.ui.projectsSearch.addEventListener("input", () => this.renderProjects());
+    this.ui.projectsSort.addEventListener("change", () => this.renderProjects());
+    this.ui.projectsFolder.addEventListener("change", () => this.renderProjects());
+    this.ui.projectsNewFolder.addEventListener("click", () => void this.createLibraryFolder());
+    this.ui.projectsList.addEventListener("click", (e) => this.onProjectsAction(e));
+    this.ui.projectsList.addEventListener("change", (e) => this.onProjectsAction(e));
+
+    // Version history dialog.
+    this.ui.btnVersions.addEventListener("click", () => void this.openVersionsDialog());
+    this.ui.versionsClose.addEventListener("click", () => this.closeVersionsDialog());
+    this.ui.versionsDialog.addEventListener("mousedown", (e) => {
+      if (e.target === this.ui.versionsDialog) this.closeVersionsDialog();
+    });
+    this.ui.versionsCapture.addEventListener("click", () => void this.captureVersionSnapshot("Manual snapshot"));
+    this.ui.versionsList.addEventListener("click", (e) => this.handleVersionsAction(e));
 
     // Tool panel toggle (hamburger)
-    this.ui.btnMenu.addEventListener("click", () => this.ui.toggleSidebar());
+    this.ui.btnMenu.addEventListener("click", () => this.setSidebar(!this.ui.isSidebarOpen()));
+
+    // Settings dialog.
+    this.ui.settingsClose.addEventListener("click", () => this.ui.closeSettingsDialog());
+    this.ui.settingsDialog.addEventListener("mousedown", (e) => {
+      if (e.target === this.ui.settingsDialog) this.ui.closeSettingsDialog();
+    });
+    this.ui.btnSettings.addEventListener("click", () => this.openSettingsDialog());
+
+    // Local AI assistant (floating bubble + panel). The engine (wllama) is
+    // only initialized once the user picks a .gguf model file.
+    void this.mountAi();
 
     // Pen tool (both HUD button and sidebar button) — toggle ON/OFF
     const togglePen = () => {
@@ -1028,29 +2323,102 @@ export class App {
       this.engine.setPenTool(on);
       this.ui.setTools(on);
       if (on) this.selection.setIds([]);
+      this.refreshUI();
     };
     const enableSelect = () => {
       this.engine.setPenTool(false);
       this.ui.setTools(false);
-      this.ui.setSidebarOpen(false);
+      this.setSidebar(false);
+      this.refreshUI();
     };
     this.ui.btnPen.addEventListener("click", togglePen);
     this.ui.btnPenSidebar.addEventListener("click", togglePen);
     this.ui.btnSelect.addEventListener("click", enableSelect);
+
+    // Find modal sidebar button.
+    this.searchUi.btn.addEventListener("click", () => this.openSearch());
 
     // Double-click on canvas edits text/note: simplest is handled through
     // selection + an explicit signal. We wire the canvas dblclick below.
     this.engine.canvas().addEventListener("dblclick", this.onDblClick);
 
     this.bindInspectorEvents();
+    this.setupInspectorWindowControls();
+  }
+
+  /** Window controls for the Properties panel: minimize-to-chip + close. */
+  private setupInspectorWindowControls(): void {
+    const header = document.querySelector<HTMLElement>("#inspector .inspector-header");
+    if (!header) return;
+    header.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-inspector]");
+      if (!btn) return;
+      const act = btn.dataset["inspector"];
+      if (act === "min") this.setInspectorMinimized(true);
+      else if (act === "expand") this.setInspectorMinimized(false);
+      else if (act === "close") {
+        this.setInspectorMinimized(false);
+        this.ui.setInspectorOpen(false);
+        this.setStatus("Properties closed — selecting an object reopens them.");
+      }
+    });
+    this.renderInspectorHeader(header);
+  }
+
+  private renderInspectorHeader(header: HTMLElement): void {
+    if (this.inspectorMinimized) {
+      header.innerHTML =
+        `<button class="inspector-window-btn inspector-expand" data-inspector="expand" type="button" ` +
+        `title="Expand properties" aria-label="Expand properties">&#8250;</button>`;
+      return;
+    }
+    const tablet = document.documentElement.classList.contains("tb-active");
+    header.innerHTML =
+      `<span class="inspector-title">Properties</span>` +
+      (tablet
+        ? `<button id="tb-inspector-close" class="tb-inspector-close" data-inspector="close" type="button" aria-label="Close properties">Done</button>`
+        : "") +
+      `<button class="inspector-window-btn" data-inspector="min" type="button" title="Minimize properties" aria-label="Minimize properties">&#8249;</button>` +
+      `<button class="inspector-window-btn" data-inspector="close" type="button" title="Close properties" aria-label="Close properties">&#10005;</button>`;
+  }
+
+  /** Toggle the Properties panel between full and collapsed (chip) mode. */
+  setInspectorMinimized(on: boolean): void {
+    this.inspectorMinimized = on;
+    const inspector = document.getElementById("inspector");
+    inspector?.classList.toggle("minimized", on);
+    const header = document.querySelector<HTMLElement>("#inspector .inspector-header");
+    if (header) this.renderInspectorHeader(header);
   }
 
   private bindInspectorEvents(): void {
     const body = this.ui.inspectorBodyEl;
+    // Pen tool panel (shown while the pen tool is active): live tool style edits.
+    const applyPenControl = (t: HTMLInputElement): void => {
+      const key = t.dataset["pen"];
+      if (!key) return;
+      if (key === "size") this.engine.setPenStyle({ size: Number(t.value) });
+      else if (key === "color") this.engine.setPenStyle({ color: t.value });
+      else if (key === "eraser") this.engine.setPenEraser(t.checked);
+      this.refreshUI();
+    };
     body.addEventListener("input", (e) => {
+      const t = e.target;
+      if (t instanceof HTMLElement && t.dataset["pen"]) applyPenControl(t as HTMLInputElement);
+    });
+    body.addEventListener("change", (e) => {
+      const t = e.target;
+      if (t instanceof HTMLElement && t.dataset["pen"]) applyPenControl(t as HTMLInputElement);
+    });
+    // Committed object properties are applied only on explicit commit (Enter,
+    // blur, a checkbox/color change) — never on intermediate keystrokes — so
+    // typing can never corrupt or partially commit an object. The pen pane is
+    // the deliberate exception above (live tool-style edits are safe).
+    body.addEventListener("change", (e) => {
       const t = e.target as HTMLElement;
-      if (!t.dataset.prop) return;
-      this.commitInspectorProp(t.dataset.prop, t as HTMLInputElement | HTMLTextAreaElement);
+      if (t.dataset.prop) {
+        this.commitInspectorProp(t.dataset.prop, t as HTMLInputElement | HTMLTextAreaElement);
+      }
     });
     body.addEventListener("click", (e) => {
       const btn = (e.target as HTMLElement).closest("[data-action]") as HTMLElement | null;
@@ -1075,13 +2443,51 @@ export class App {
     // A locked object blocks normal property edits, but the lock control itself
     // must always be allowed to toggle so the user can unlock it again.
     if (!obj || (obj.locked && key !== "locked")) return;
+    if (key === "metadata-tags") {
+      const tags = String(el.value)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const current = objectTags(obj);
+      if (!sameTags(current, tags)) {
+        this.commands.execute(
+          setPropsCommand(this.project, [
+            { id: obj.id, key: "metadata", before: { ...obj.metadata }, after: { ...obj.metadata, tags } },
+          ])
+        );
+      }
+      this.refreshUI();
+      return;
+    }
+    // Pen stroke width edit: scale any per-vertex (pressure-sensitive) widths
+    // by the same ratio so the whole stroke thickens/thins consistently, not
+    // just the width-less fallback segments.
+    if (key === "strokeWidth" && obj.type === "pen") {
+      const after = Number(el.value);
+      const before = obj.strokeWidth;
+      if (!(after > 0) || after === before) return;
+      const points = obj.points;
+      const changes: PropChange[] = [{ id: obj.id, key: "strokeWidth", before, after }];
+      if (points.some((p) => p.width !== undefined)) {
+        const ratio = after / before;
+        const scaled = points.map((p) => (p.width === undefined ? p : { ...p, width: p.width * ratio }));
+        changes.push({ id: obj.id, key: "points", before: points, after: scaled });
+      }
+      this.commands.execute(setPropsCommand(this.project, changes));
+      this.refreshUI();
+      return;
+    }
     const current = (obj as unknown as Record<string, unknown>)[key];
     let next: unknown;
     if (key === "locked") {
       next = (el as HTMLInputElement).checked;
-    } else if (key === "x" || key === "y" || key === "width" || key === "height" || key === "zIndex") {
+    } else if (key === "x" || key === "y" || key === "width" || key === "height" || key === "zIndex" || key === "strokeWidth") {
+      // Reject empty/NaN input a commit would otherwise turn into 0 — a blank
+      // or bogus partial value must never corrupt the object's geometry.
+      if (el.value.trim() === "" || !Number.isFinite(Number(el.value))) return;
       next = Number(el.value);
     } else if (key === "rotation") {
+      if (el.value.trim() === "" || !Number.isFinite(Number(el.value))) return;
       next = Number(el.value);
     } else {
       next = el.value;
@@ -1132,6 +2538,63 @@ function screenPoint(worldX: number, worldY: number, frame: { cameraX: number; c
   return { x: (worldX - frame.cameraX) * frame.zoom, y: (worldY - frame.cameraY) * frame.zoom };
 }
 
+function firstLine(text: string): string {
+  const line = String(text || "").split("\n")[0] ?? "";
+  return line.length > 60 ? line.slice(0, 60) + "…" : line;
+}
+
+/** Build a searchable index entry for one canvas object. */
+function objectToSearchItem(obj: CanvasObject, assetName: Map<string, string>): SearchableItem {
+  let label = "";
+  let text = "";
+  switch (obj.type) {
+    case "text":
+      label = firstLine(obj.text);
+      text = obj.text;
+      break;
+    case "note":
+      label = firstLine(obj.text) || obj.title;
+      text = `${obj.title} ${obj.text}`;
+      break;
+    case "shape":
+      label = shapeLabel(obj.kind);
+      text = shapeLabel(obj.kind);
+      break;
+    case "frame":
+      label = obj.name || "Frame";
+      break;
+    case "group":
+      label = obj.name || "Group";
+      text = `${obj.memberIds.length} members`;
+      break;
+    case "url":
+      label = obj.title || obj.url;
+      text = obj.url;
+      break;
+    case "image":
+    case "file":
+      label = assetName.get(obj.assetId) ?? obj.type;
+      text = label;
+      break;
+    default:
+      label = obj.type;
+  }
+  return {
+    id: obj.id,
+    kind: "object",
+    label,
+    text,
+    tags: objectTags(obj),
+    typeLabel: obj.type === "shape" ? "shape" : obj.type,
+    scoreBoost: obj.type === "note" || obj.type === "text" ? 1 : 0,
+  };
+}
+
+/** Indefinite article for status messages that read naturally. */
+function outlineFor(typeLabel: string): string {
+  return /^[aeiou]/i.test(typeLabel) ? `an ${typeLabel}` : `a ${typeLabel}`;
+}
+
 function kindLabel(kind: ObjectKind): string {
   switch (kind) {
     case "text":
@@ -1144,6 +2607,8 @@ function kindLabel(kind: ObjectKind): string {
       return "file";
     case "url":
       return "link";
+    case "shape":
+      return "shape";
     default:
       return "object";
   }
@@ -1171,6 +2636,8 @@ function escapeAttr(s: string): string {
 }
 
 export type { AssetMeta };
+
+export type AppExportFormat = "spatia-folder" | "spatia-json" | "png" | "pdf" | "md";
 
 function isContainedBy(obj: CanvasObject, bounds: Rect): boolean {
   return obj.x >= bounds.x && obj.y >= bounds.y &&

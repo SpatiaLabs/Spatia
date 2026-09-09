@@ -2,3 +2,19 @@ node_modules/
 dist/
 *.log
 .DS_Store
+.env
+
+# Local Netlify folder
+.netlify
+
+# Build / packaging output
+release/
+release-*/
+build/
+*.msi
+
+# Web release artifacts (generated output / large binaries)
+Spatia Download & Web.zip
+Spatia Download & Web/downloads/
+Spatia Download & Web/web/
+server/node_modules/

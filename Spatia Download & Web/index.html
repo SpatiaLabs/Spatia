@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no, interactive-widget=resizes-visual"
+    />
+    <meta
+      name="description"
+      content="Spatia — a fast, local-first visual workspace. Organize ideas, connect concepts, and turn thoughts into something you can see. Windows 10 / 11 · x64."
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; worker-src 'self'; media-src 'self' blob:; frame-src https: http:"
+    />
+    <meta name="theme-color" content="#121417" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Spatia" />
+    <title>Spatia — Think in space.</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="./assets/icon-48.png" />
+    <link rel="apple-touch-icon" href="./assets/icon-180.png" />
+    <link rel="stylesheet" href="./css/site.css" />
+    <script src="./js/site.js" defer></script>
+  </head>
+  <body>
+    <!-- ============ Spatia Web (#/web) ============ -->
+    <div id="web-host" hidden>
+      <div id="app">
+        <main id="canvas-container">
+          <canvas id="canvas"></canvas>
+          <div id="isolation-banner" class="isolation-banner" hidden role="status">
+            <span id="isolation-label"></span>
+            <button id="btn-exit-isolation" class="btn isolation-exit" type="button" title="Exit isolation (Escape)">Exit</button>
+          </div>
+          <div id="hud">
+            <div id="zoom-label" title="Zoom level">100%</div>
+            <div id="cursor-label" title="Cursor position">0, 0</div>
+            <div id="hud-controls">
+              <button id="btn-zoom-out" class="btn btn-icon" title="Zoom out">-</button>
+              <button id="btn-zoom-in" class="btn btn-icon" title="Zoom in">+</button>
+              <button id="btn-zoom-reset" class="btn" title="Reset view">Reset</button>
+              <span class="divider" aria-hidden="true"></span>
+              <button id="btn-pen" class="btn btn-tool" title="Pen tool (draw freely)">&#9997;</button>
+              <button id="btn-menu" class="btn btn-icon" title="Toggle tools panel">&#9776;</button>
+            </div>
+          </div>
+          <canvas id="minimap" title="Workspace overview — click to navigate"></canvas>
+          <div id="presence-layer" class="presence-layer" aria-hidden="true"></div>
+          <div id="browser-layer" class="browser-layer" aria-hidden="true"></div>
+          <aside id="sidebar" aria-hidden="true">
+            <div class="sidebar-section">
+              <span class="sidebar-label">File</span>
+              <button id="btn-new" class="btn sidebar-btn" title="New project">New</button>
+              <button id="btn-open" class="btn sidebar-btn" title="Open project">Open</button>
+              <button id="btn-import" class="btn sidebar-btn" title="Import a .spatia file">Import</button>
+              <button id="btn-save" class="btn sidebar-btn" title="Save project">Save</button>
+              <button id="btn-save-as" class="btn sidebar-btn" title="Save project as">Save As</button>
+              <button id="btn-templates" class="btn sidebar-btn" title="Start from a template">Templates…</button>
+              <button id="btn-export" class="btn sidebar-btn" title="Export as PNG, PDF, Markdown or .spatia">Export…</button>
+              <button id="btn-projects" class="btn sidebar-btn" title="Browse your project library">Projects…</button>
+              <button id="btn-versions" class="btn sidebar-btn" title="Browse past versions and snapshots">Versions…</button>
+              <button id="btn-plugins" class="btn sidebar-btn" title="Manage plugins">Plugins…</button>
+              <button id="btn-settings" class="btn sidebar-btn" title="App settings">Settings…</button>
+            </div>
+            <div class="sidebar-section">
+              <span class="sidebar-label">Recent</span>
+              <div id="recent-list" class="recent-list"><span class="recent-empty">No recent projects</span></div>
+            </div>
+            <div class="sidebar-section">
+              <span class="sidebar-label">Edit</span>
+              <button id="btn-undo" class="btn sidebar-btn" title="Undo (Ctrl+Z)" disabled>Undo</button>
+              <button id="btn-redo" class="btn sidebar-btn" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
+            </div>
+            <div class="sidebar-section">
+              <span class="sidebar-label">Tools</span>
+              <button id="btn-select" class="btn sidebar-btn" title="Select / move objects">Select</button>
+              <button id="btn-pen-sidebar" class="btn sidebar-btn" title="Pen tool (draw freely)">Pen</button>
+              <button id="btn-search" class="btn sidebar-btn" title="Find objects (Ctrl+F or /)">Search</button>
+            </div>
+            <div class="sidebar-section">
+              <span class="sidebar-label">Media</span>
+              <button id="btn-assets" class="btn sidebar-btn" title="Browse the project's imported assets, files and their thumbnails">Assets</button>
+            </div>
+            <div class="sidebar-section">
+              <span class="sidebar-label">Collaborate</span>
+              <button id="btn-share" class="btn sidebar-btn" title="Share this project, manage members and permissions">Share…</button>
+            </div>
+            <div class="sidebar-section">
+              <span class="sidebar-label">Add</span>
+              <button id="btn-add-test" class="btn sidebar-btn" title="Add a test object">Test</button>
+              <button id="btn-add-text" class="btn sidebar-btn" title="Add a text object">Text</button>
+              <button id="btn-add-note" class="btn sidebar-btn" title="Add a sticky note">Note</button>
+              <button id="btn-add-image" class="btn sidebar-btn" title="Add an image object">Image</button>
+              <button id="btn-add-file" class="btn sidebar-btn" title="Add a file object">File</button>
+              <button id="btn-add-url" class="btn sidebar-btn" title="Add a link / bookmark">Link</button>
+            </div>
+            <div class="sidebar-section">
+              <span class="sidebar-label">Shapes</span>
+              <button id="btn-add-shape-rectangle" class="btn sidebar-btn" title="Add a rectangle">Rectangle</button>
+              <button id="btn-add-shape-rounded-rectangle" class="btn sidebar-btn" title="Add a rounded rectangle">Rounded</button>
+              <button id="btn-add-shape-ellipse" class="btn sidebar-btn" title="Add an ellipse">Ellipse</button>
+              <button id="btn-add-shape-diamond" class="btn sidebar-btn" title="Add a diamond">Diamond</button>
+              <button id="btn-add-shape-triangle" class="btn sidebar-btn" title="Add a triangle">Triangle</button>
+              <button id="btn-add-shape-line" class="btn sidebar-btn" title="Add a line">Line</button>
+              <button id="btn-add-shape-arrow" class="btn sidebar-btn" title="Add an arrow">Arrow</button>
+            </div>
+          </aside>
+          <aside id="inspector" aria-hidden="true">
+            <div class="inspector-header">Properties</div>
+            <div id="inspector-body" class="inspector-body"><span class="inspector-empty">Select an object</span></div>
+          </aside>
+        </main>
+        <aside id="assets-panel" class="assets-panel" aria-hidden="true">
+          <div class="inspector-header assets-header">
+            <div id="assets-title">Assets (0)</div>
+            <button id="assets-close" class="btn btn-icon" type="button" title="Close assets">&times;</button>
+          </div>
+          <div id="assets-list" class="assets-list"></div>
+        </aside>
+        <footer id="statusbar">
+          <span id="status-text">Ready</span>
+        </footer>
+        <div id="settings-dialog" class="url-dialog settings-dialog" aria-hidden="true">
+          <div class="url-dialog-box settings-dialog-box">
+            <div class="inspector-header url-dialog-title">Settings</div>
+            <div class="settings-row">
+              <span class="settings-label">Version</span>
+              <span id="settings-version">v0.0.0</span>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">Workspace</span>
+              <span>Local-first — your projects live on this device.</span>
+            </div>
+            <p class="settings-about">Spatia is a local-first visual workspace for thinking in space. Offline by default, no account required.</p>
+            <div class="url-dialog-actions">
+              <button id="settings-close" class="btn inspector-btn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+        <div id="url-dialog" class="url-dialog" aria-hidden="true">
+          <div class="url-dialog-box">
+            <div class="inspector-header url-dialog-title" id="url-title">Add link</div>
+            <input
+              id="url-input"
+              class="inspector-input url-input"
+              type="text"
+              placeholder="https://example.com"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <div class="url-dialog-actions">
+              <button id="url-cancel" class="btn inspector-btn" type="button">Cancel</button>
+              <button id="url-confirm" class="btn inspector-btn url-confirm" type="button">Add link</button>
+            </div>
+          </div>
+        </div>
+        <div id="plugins-dialog" class="url-dialog plugins-dialog" aria-hidden="true">
+          <div class="url-dialog-box plugins-dialog-box">
+            <div class="inspector-header url-dialog-title">Plugins</div>
+            <div id="plugins-list" class="plugins-list"></div>
+            <div class="plugins-url-row">
+              <input
+                id="plugins-url"
+                class="plugins-url-input"
+                type="url"
+                placeholder="https://…/manifest.json"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="plugins-install-url" class="btn inspector-btn" type="button">Install URL</button>
+            </div>
+            <div class="url-dialog-actions">
+              <button id="plugins-install" class="btn inspector-btn url-confirm" type="button">Install…</button>
+              <button id="plugins-close" class="btn inspector-btn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+        <div id="export-dialog" class="url-dialog export-dialog" aria-hidden="true">
+          <div class="url-dialog-box export-dialog-box">
+            <div class="inspector-header url-dialog-title">Export</div>
+            <p class="export-hint">Choose a format for the current document.</p>
+            <div class="export-options">
+              <button class="btn export-option" data-export="spatia-folder" type="button"><span>Portable folder</span><small>.spatia (source)</small></button>
+              <button class="btn export-option" data-export="spatia-json" type="button"><span>Project file</span><small>.spatia.json</small></button>
+              <button class="btn export-option" data-export="png" type="button"><span>Image</span><small>PNG</small></button>
+              <button class="btn export-option" data-export="pdf" type="button"><span>Document</span><small>PDF</small></button>
+              <button class="btn export-option" data-export="md" type="button"><span>Markdown</span><small>.md</small></button>
+            </div>
+            <div class="url-dialog-actions">
+              <button id="export-close" class="btn inspector-btn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+        <div id="templates-dialog" class="url-dialog templates-dialog" aria-hidden="true">
+          <div class="url-dialog-box plugins-dialog-box templates-dialog-box">
+            <div class="inspector-header url-dialog-title">Start from a template</div>
+            <div id="templates-list" class="templates-list"></div>
+            <div class="url-dialog-actions">
+              <button id="templates-close" class="btn inspector-btn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+        <div id="projects-dialog" class="url-dialog projects-dialog" aria-hidden="true">
+          <div class="url-dialog-box projects-dialog-box">
+            <div class="inspector-header url-dialog-title">
+              Projects
+              <button id="projects-new-folder" class="btn inspector-btn" type="button">New folder…</button>
+            </div>
+            <div class="projects-toolbar">
+              <input
+                id="projects-search"
+                class="plugins-url-input"
+                type="text"
+                placeholder="Search projects and tags…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <select id="projects-sort" class="plugins-url-input">
+                <option value="name">Sort by name</option>
+                <option value="updated">Sort by updated</option>
+              </select>
+              <select id="projects-folder" class="plugins-url-input">
+                <option value="__all">All folders</option>
+                <option value="__fav">Favorites</option>
+                <option value="__none">Uncategorized</option>
+              </select>
+            </div>
+            <div id="projects-list" class="projects-list"></div>
+            <div class="url-dialog-actions">
+              <button id="projects-close" class="btn inspector-btn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+        <div id="versions-dialog" class="url-dialog versions-dialog" aria-hidden="true">
+          <div class="url-dialog-box versions-dialog-box">
+            <div class="inspector-header url-dialog-title">
+              Version history
+              <button id="versions-capture" class="btn inspector-btn" type="button">Capture snapshot</button>
+            </div>
+            <p class="export-hint">Snapshots are captured automatically when you save.</p>
+            <div id="versions-list" class="versions-list"></div>
+            <div class="url-dialog-actions">
+              <button id="versions-close" class="btn inspector-btn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+        <div id="search-dialog" class="url-dialog search-dialog" aria-hidden="true">
+          <div class="url-dialog-box search-dialog-box">
+            <div class="inspector-header url-dialog-title">Find</div>
+            <input
+              id="search-input"
+              class="inspector-input search-input"
+              type="text"
+              placeholder="Search names, notes, links, tags…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="search-list" class="search-list"></div>
+            <div class="search-countbar"><span id="search-count" class="search-count"></span></div>
+          </div>
+        </div>
+        <div id="share-dialog" class="url-dialog share-dialog" aria-hidden="true">
+          <div class="url-dialog-box share-dialog-box">
+            <div class="inspector-header url-dialog-title">Share &amp; collaborate</div>
+            <div id="share-status" class="share-status share-status-offline"></div>
+            <div class="share-server-row">
+              <input
+                id="share-url"
+                class="inspector-input share-url"
+                type="text"
+                value="ws://localhost:8787"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="share-connect" class="btn inspector-btn" type="button">Connect</button>
+              <button id="share-disconnect" class="btn inspector-btn" type="button" disabled>Disconnect</button>
+            </div>
+            <div class="share-room-row">
+              <div id="share-room-label" class="share-room-label">No active room</div>
+              <div id="share-role" class="share-role"></div>
+              <div class="plugins-url-row">
+                <input
+                  id="share-room-input"
+                  class="plugins-url-input"
+                  type="text"
+                  placeholder="Room id to join…"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button id="share-join" class="btn inspector-btn" type="button">Join</button>
+              </div>
+              <div class="share-actions">
+                <button id="share-create" class="btn inspector-btn url-confirm" type="button">Share this project</button>
+                <button id="share-copy" class="btn inspector-btn" type="button">Copy invite link</button>
+                <button id="share-leave" class="btn inspector-btn" type="button" hidden>Leave room</button>
+              </div>
+            </div>
+            <div id="share-users" class="share-users"></div>
+            <div class="url-dialog-actions">
+              <button id="share-close" class="btn inspector-btn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <a class="web-chrome-link" href="#top" title="Back to spatia website">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+        Back to site
+      </a>
+      <span class="web-chrome-badge">Spatia Web · beta</span>
+    </div>
+
+    <!-- ============ Spatia Wiki (#/wiki) ============ -->
+    <div id="wiki-host" class="wiki" hidden>
+      <div class="wiki-page">
+        <header class="site-header wiki-header">
+          <a class="brand" href="#top" aria-label="Spatia — back to main website">
+            <img class="brand-logo" src="./assets/icon-48.png" alt="" width="48" height="48" aria-hidden="true" />
+            <span class="brand-name">Spatia</span>
+            <span class="brand-tag">Wiki</span>
+          </a>
+          <nav class="nav-links" aria-label="Primary">
+            <a href="#about">About</a>
+            <a href="#features">Features</a>
+            <a class="nav-web" href="#/web">Web</a>
+            <a href="#download">Download</a>
+            <a class="nav-wiki" href="#/wiki">Wiki</a>
+          </nav>
+          <div class="header-actions">
+            <a class="btn btn-ghost btn-sm" href="#/web">Try Web</a>
+            <a class="btn btn-primary btn-sm" href="./downloads/Spatia-0.4.9-x64.msi">Download</a>
+          </div>
+        </header>
+
+        <div class="wiki-intro">
+          <h1 class="wiki-title">Spatia Wiki</h1>
+          <p class="wiki-lede">
+            Everything you need to know about using Spatia — from your first canvas to
+            advanced workflows. Beginner and power-user friendly, from A to Z.
+          </p>
+          <div class="wiki-toolbar">
+            <div class="wiki-search-box">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+              <input
+                id="wiki-search"
+                class="wiki-search-input"
+                type="search"
+                placeholder="Search the wiki…"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="Search the wiki"
+              />
+            </div>
+            <span id="wiki-result-count" class="wiki-result-count" role="status" aria-live="polite"></span>
+            <button class="btn btn-ghost btn-sm wiki-report-btn" type="button" data-report-open>
+              Report a problem
+            </button>
+          </div>
+        </div>
+
+        <div class="wiki-layout">
+          <nav class="wiki-toc" id="wiki-toc" aria-label="Table of contents">
+            <div class="wiki-toc-group">
+              <h3 class="wiki-toc-title">Start</h3>
+              <ul>
+                <li><a href="#/wiki/what-is" data-wiki-search="What is Spatia overview local-first canvas">What is Spatia?</a></li>
+                <li><a href="#/wiki/getting-started" data-wiki-search="Getting started install desktop web mobile first canvas">Getting started</a></li>
+              </ul>
+            </div>
+            <div class="wiki-toc-group">
+              <h3 class="wiki-toc-title">Canvases &amp; projects</h3>
+              <ul>
+                <li><a href="#/wiki/canvases-projects" data-wiki-search="Canvases projects create new manage workspace object">Canvases &amp; projects</a></li>
+                <li><a href="#/wiki/saving-open" data-wiki-search="Saving opening save open recent files persistence">Saving &amp; opening projects</a></li>
+                <li><a href="#/wiki/import-export" data-wiki-search="Import export png pdf markdown spatia json folder">Import &amp; export</a></li>
+                <li><a href="#/wiki/templates" data-wiki-search="Templates blank brainstorming project planning mind map study notes personal">Templates</a></li>
+              </ul>
+            </div>
+            <div class="wiki-toc-group">
+              <h3 class="wiki-toc-title">Objects</h3>
+              <ul>
+                <li><a href="#/wiki/notes-text" data-wiki-search="Notes text sticky edit typing color title">Notes &amp; text</a></li>
+                <li><a href="#/wiki/connections" data-wiki-search="Connections arrows link lines follow objects edge">Connections</a></li>
+                <li><a href="#/wiki/frames" data-wiki-search="Frames containers sections organize workspace name color">Frames</a></li>
+                <li><a href="#/wiki/images-files-urls" data-wiki-search="Images files links urls bookmarks assets attach">Images, files &amp; links</a></li>
+                <li><a href="#/wiki/drawing-shapes" data-wiki-search="Drawing shapes pen freehand rectangle rounded ellipse diamond triangle line arrow">Drawing &amp; shapes</a></li>
+                <li><a href="#/wiki/selection" data-wiki-search="Selection editing move resize rotate duplicate group z-order context menu">Selection &amp; editing</a></li>
+              </ul>
+            </div>
+            <div class="wiki-toc-group">
+              <h3 class="wiki-toc-title">Canvas &amp; viewing</h3>
+              <ul>
+                <li><a href="#/wiki/navigation" data-wiki-search="Navigation zoom pan controls minimap focus isolate hud">Zoom, pan &amp; navigation</a></li>
+                <li><a href="#/wiki/shortcuts" data-wiki-search="Keyboard shortcuts hotkeys keys quick reference">Keyboard shortcuts</a></li>
+                <li><a href="#/wiki/mobile" data-wiki-search="Mobile gestures touch pwa phone tablet pinch two finger">Mobile &amp; gestures</a></li>
+                <li><a href="#/wiki/search-organization" data-wiki-search="Search organization find organize structure workspace">Search &amp; organization</a></li>
+              </ul>
+            </div>
+            <div class="wiki-toc-group">
+              <h3 class="wiki-toc-title">Extending</h3>
+              <ul>
+                <li><a href="#/wiki/plugins" data-wiki-search="Plugins install manifest url folder commands api permissions events sandbox">Plugins</a></li>
+              </ul>
+            </div>
+            <div class="wiki-toc-group">
+              <h3 class="wiki-toc-title">Beyond local</h3>
+              <ul>
+                <li><a href="#/wiki/collaboration" data-wiki-search="Collaboration sharing teamwork multiplayer realtime">Collaboration</a></li>
+                <li><a href="#/wiki/version-history" data-wiki-search="Version history backups undo redo safety recovery">Version history &amp; data safety</a></li>
+              </ul>
+            </div>
+            <div class="wiki-toc-group">
+              <h3 class="wiki-toc-title">Help</h3>
+              <ul>
+                <li><a href="#/wiki/faq" data-wiki-search="FAQ frequently asked questions common">Frequently asked questions</a></li>
+                <li><a href="#/wiki/troubleshooting" data-wiki-search="Troubleshooting problems errors fixes crash missing">Troubleshooting</a></li>
+                <li><a href="#/wiki/report" data-wiki-search="Report a problem bug mail contact email spatiacanvas">Report a problem</a></li>
+              </ul>
+            </div>
+          </nav>
+
+          <div class="wiki-body">
+            <!-- What is Spatia -->
+            <article class="wiki-section" id="wiki-what-is">
+              <h2>What is Spatia?</h2>
+              <p>
+                Spatia is a <strong>local-first visual infinite canvas</strong> for organizing ideas,
+                connecting concepts, and turning thoughts into something you can see. Instead of pages
+                and scrolling documents, you get one unbounded space where notes, text, shapes, frames,
+                files and links live side by side.
+              </p>
+              <ul>
+                <li><strong>Local-first.</strong> Your projects are saved as real files on your machine (or in your browser on the Web app). No account, no cloud, no lock-in — everything works offline.</li>
+                <li><strong>Infinite canvas.</strong> Arrange anything anywhere. Zoom from a bird's-eye view of your whole workspace down to a single note.</li>
+                <li><strong>Everything connects.</strong> Lines and arrows follow objects as you move them, so diagrams stay tidy without manual redrawing.</li>
+                <li><strong>Fast and lean.</strong> A dependency-free canvas engine renders smoothly even on very large workspaces.</li>
+                <li><strong>One format.</strong> Projects use a versioned JSON format that keeps working when Spatia evolves.</li>
+              </ul>
+              <p>
+                Spatia is available as a <strong>Windows 10 / 11 (x64) desktop app</strong> and as a
+                <strong>Web app / installable PWA</strong> for any modern browser, including mobile devices.
+                Current version: <strong>0.4.9</strong>.
+              </p>
+            </article>
+
+            <!-- Getting started -->
+            <article class="wiki-section" id="wiki-getting-started">
+              <h2>Getting started</h2>
+              <h3>On Windows (desktop)</h3>
+              <ol>
+                <li>Download the installer from the <a href="#download">Spatia website</a> (<code>Spatia-0.4.9-x64.msi</code>).</li>
+                <li>Run the <code>.msi</code> and follow the setup wizard.</li>
+                <li>Launch Spatia. It opens a fresh blank canvas with the tools panel on the left.</li>
+              </ol>
+              <h3>In the browser (Web app)</h3>
+              <ol>
+                <li>Open the Spatia website and choose <strong>Try Web</strong> (or the <a href="#/web">Web</a> link).</li>
+                <li>No sign-up needed. Your work is stored locally in your browser and stays private.</li>
+                <li>From the browser you can install Spatia as a PWA for an app-like, offline experience.</li>
+              </ol>
+              <h3>Your first canvas — 60 seconds</h3>
+              <ol>
+                <li><strong>Add a note:</strong> in the left panel, add a <strong>Note</strong> (its text editor opens right away — start typing).</li>
+                <li><strong>Add another note</strong> and connect the two: hold <kbd>Ctrl</kbd>, drag from the first note to the second, and release. An arrow connects them.</li>
+                <li><strong>Zoom and pan:</strong> scroll the mouse wheel to zoom at the cursor, and hold the middle button (or <kbd>Space</kbd> + left-drag) to pan.</li>
+                <li><strong>Save:</strong> use <strong>Save As</strong> to store your project, or start from a template next time via <strong>Templates…</strong>.</li>
+              </ol>
+            </article>
+
+            <!-- Canvases & projects -->
+            <article class="wiki-section" id="wiki-canvases-projects">
+              <h2>Canvases &amp; projects</h2>
+              <p>
+                Every Spatia workspace is a <strong>project</strong> with one infinite
+                <strong>canvas</strong>. A project stores all of your objects (notes, text, shapes,
+                frames, connections, images, files and links) plus metadata like the project name.
+              </p>
+              <h3>Creating a project</h3>
+              <ul>
+                <li><strong>New</strong> — an empty canvas.</li>
+                <li><strong>Templates…</strong> — start from a structured starter (see <a href="#/wiki/templates">Templates</a>).</li>
+                <li><strong>New project</strong> in the mobile menu works the same way.</li>
+              </ul>
+              <h3>Managing projects</h3>
+              <ul>
+                <li>The left panel's <strong>File</strong> section holds New, Open, Import, Save, Save As, Templates…, Export… and Plugins….</li>
+                <li><strong>Recent</strong> projects appear at the top of the panel and in the Web app's menu — click one to reopen it.</li>
+                <li>Objects on the canvas can be organized with <a href="#/wiki/frames">frames</a> and
+                    <a href="#/wiki/selection">groups</a>, layered with bring-to-front/send-to-back, and locked to prevent accidental edits.</li>
+              </ul>
+              <div class="wiki-note">
+                <p><strong>Tip:</strong> there is no fixed page size — your canvas is as large as you need it to be.</p>
+              </div>
+            </article>
+
+            <!-- Saving & opening -->
+            <article class="wiki-section" id="wiki-saving-open">
+              <h2>Saving &amp; opening projects</h2>
+              <h3>Desktop</h3>
+              <ul>
+                <li><strong>Save</strong> writes the current project to its existing file location.</li>
+                <li><strong>Save As</strong> lets you pick a folder and name. The project is stored as a versioned JSON file (<code>.spatia.json</code>) or as a portable folder (<code>.spatia</code>) that keeps files and images alongside the project data.</li>
+                <li><strong>Open</strong> loads a <code>.spatia.json</code> or <code>.spatia</code> file. <strong>Import</strong> does the same while keeping your current session.</li>
+                <li>Recently opened projects are always one click away in the <strong>Recent</strong> list.</li>
+              </ul>
+              <h3>Web app</h3>
+              <ul>
+                <li><strong>Save</strong> stores the project in your browser's local database (IndexedDB) — private to you and ready offline.</li>
+                <li><strong>Save As</strong> also downloads a <code>.spatia.json</code> copy you can keep anywhere.</li>
+                <li><strong>Open</strong> lets you pick a saved <code>.spatia.json</code> or <code>.spatia</code> file from your device.</li>
+              </ul>
+              <div class="wiki-note">
+                <p><strong>Tip:</strong> keep a downloaded copy of important canvases — it is your portable, shareable version of the project.</p>
+              </div>
+            </article>
+
+            <!-- Import & export -->
+            <article class="wiki-section" id="wiki-import-export">
+              <h2>Import &amp; export</h2>
+              <p>Use <strong>Export…</strong> to share or archive your work. You can choose:</p>
+              <table class="wiki-table">
+                <thead>
+                  <tr><th>Format</th><th>What you get</th><th>Best for</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><code>.spatia</code></td><td>A portable folder: project data plus included files and images</td><td>Backups and re-opening later</td></tr>
+                  <tr><td><code>.spatia.json</code></td><td>Single JSON file with the whole project</td><td>Emailing, sharing, safe keeping</td></tr>
+                  <tr><td>PNG</td><td>An image of the whole visible canvas</td><td>Screenshots, docs, quick sharing</td></tr>
+                  <tr><td>PDF</td><td>A PDF document of the canvas area</td><td>Handouts, printing, presentations</td></tr>
+                  <tr><td>Markdown (<code>.md</code>)</td><td>A readable text outline of notes and text on the canvas</td><td>Notes, drafts, plain-text workflows</td></tr>
+                </tbody>
+              </table>
+              <p>
+                Import works in the opposite direction: open any <code>.spatia.json</code> or
+                <code>.spatia</code> project from disk (desktop) or from your device (Web app).
+              </p>
+              <div class="wiki-note">
+                <p><strong>Tip:</strong> on the desktop, images and files are copied into the project when you drop them onto the canvas, so an exported <code>.spatia</code> folder travels with everything it needs.</p>
+              </div>
+            </article>
+
+            <!-- Templates -->
+            <article class="wiki-section" id="wiki-templates">
+              <h2>Templates</h2>
+              <p>
+                Rather than starting from a blank canvas, choose <strong>Templates…</strong> to begin
+                from a ready-made starter. Everything in a template is a normal object, fully editable
+                and undoable.
+              </p>
+              <table class="wiki-table">
+                <thead>
+                  <tr><th>Template</th><th>What it sets up</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Blank canvas</td><td>Start empty and build your own workspace</td></tr>
+                  <tr><td>Brainstorming</td><td>A central idea with a ring of related thoughts</td></tr>
+                  <tr><td>Project planning</td><td>Phases across a timeline with tasks under each phase</td></tr>
+                  <tr><td>Mind map</td><td>A central topic branching into sub-topics</td></tr>
+                  <tr><td>Study</td><td>Flashcards for questions and answers</td></tr>
+                  <tr><td>Notes</td><td>A focused set of meeting or scratch notes</td></tr>
+                  <tr><td>Product planning</td><td>A now / next / later roadmap with feature cards</td></tr>
+                  <tr><td>Personal</td><td>Goals, a habit grid and a simple daily planner</td></tr>
+                </tbody>
+              </table>
+              <p>
+                Applying a template asks you to confirm, then creates a fresh project pre-filled with
+                objects. Use <strong>Undo</strong> to remove them, or edit them like any other object.
+              </p>
+            </article>
+
+            <!-- Notes & text -->
+            <article class="wiki-section" id="wiki-notes-text">
+              <h2>Notes &amp; text</h2>
+              <h3>Notes</h3>
+              <p>
+                Notes are colorful sticky-style cards with a title and body. They are the fastest way
+                to capture an idea. When you add a note, its editor opens immediately so you can type
+                right away.
+              </p>
+              <ul>
+                <li><strong>Edit:</strong> double-click a note to open its inline editor.</li>
+                <li><strong>Color:</strong> notes come in a palette — pick one that fits (the inspector shows note properties when a note is selected).</li>
+                <li><strong>Resize:</strong> drag the selection handles on the note's corners or edges.</li>
+              </ul>
+              <h3>Text</h3>
+              <p>
+                Text objects are lighter than notes — great for headings, labels and titles. Select a
+                text object to adjust size, bold, italic and alignment from the inspector. Double-click
+                to edit the text itself.
+              </p>
+              <div class="wiki-note">
+                <p><strong>Tip:</strong> move, resize, rotate and connect notes and text exactly like any other object.</p>
+              </div>
+            </article>
+
+            <!-- Connections -->
+            <article class="wiki-section" id="wiki-connections">
+              <h2>Connections</h2>
+              <p>
+                Connections draw lines (optionally with arrowheads) between objects. Because they
+                reference the objects they join, they <strong>follow automatically</strong> when you move
+                or resize either end — no manual redrawing.
+              </p>
+              <h3>Creating a connection</h3>
+              <ul>
+                <li><strong>Drag:</strong> hold <kbd>Ctrl</kbd> and drag from an object to a target, then release. Release on empty space to leave a free endpoint.</li>
+                <li><strong>Selected pair:</strong> select exactly two objects and press <kbd>Ctrl+Shift+C</kbd> (or use <em>Connect selection</em> in the right-click menu).</li>
+                <li><strong>Mobile:</strong> use the Connect tool — tap a source object, then tap the target (or drag from source to target).</li>
+              </ul>
+              <h3>Managing connections</h3>
+              <ul>
+                <li>Select a connection to change its color or toggle its arrowhead in the inspector.</li>
+                <li>Delete a connection with <kbd>Delete</kbd> — the objects it connected stay put.</li>
+                <li>Connections always attach to the facing edge of an object and travel with it.</li>
+              </ul>
+            </article>
+
+            <!-- Frames -->
+            <article class="wiki-section" id="wiki-frames">
+              <h2>Frames</h2>
+              <p>
+                Frames are named, colored containers that give your workspace structure — like zones on
+                a giant whiteboard. Use them for projects, phases, departments, or any grouping of ideas.
+              </p>
+              <ul>
+                <li><strong>Add a frame:</strong> right-click the canvas and choose <em>Add frame</em> (or use the Add sheet on mobile and pick <em>Frame</em>).</li>
+                <li><strong>Name and color:</strong> select a frame and edit its name and color in the inspector.</li>
+                <li><strong>Isolate:</strong> select a frame and press <kbd>Shift+I</kbd> to isolate its content and focus on just that area; press <kbd>Escape</kbd> to exit.</li>
+                <li><strong>Size it:</strong> drag the frame's handles to fit the content inside.</li>
+              </ul>
+              <p>
+                Frames are visual containers, not pages — nothing is clipped, and objects can overlap
+                them freely.
+              </p>
+            </article>
+
+            <!-- Images, files & links -->
+            <article class="wiki-section" id="wiki-images-files-urls">
+              <h2>Images, files &amp; links</h2>
+              <h3>Images</h3>
+              <ul>
+                <li><strong>Add:</strong> use <em>Image</em> in the Add section, drag an image file from your computer onto the canvas, or paste an image from the clipboard.</li>
+                <li>Images become objects you can move, resize and rotate like anything else.</li>
+                <li>When an image is imported, Spatia captures a small thumbnail automatically, so galleries load instantly without decoding the full file.</li>
+              </ul>
+              <h3>Files</h3>
+              <ul>
+                <li><strong>Add:</strong> use <em>File</em> in the Add section, or drop any file onto the canvas.</li>
+                <li>Files are stored with the project (desktop) or in the browser (Web app) and can be opened later — right-click a file object and choose <em>Open file</em>.</li>
+                <li>If a file goes missing (for example after moving a project folder), right-click and choose <em>Relink file…</em> to point Spatia at the new location.</li>
+              </ul>
+              <h3>The Assets panel</h3>
+              <ul>
+                <li><strong>Open it:</strong> use <em>Assets</em> in the Media sidebar section (or the mobile menu). It lists every image, video, audio, PDF and file imported into the project.</li>
+                <li><strong>Thumbnail chips:</strong> each asset shows a thumbnail for images, a file icon otherwise, plus its name, size and how many objects use it.</li>
+                <li><strong>Find on canvas:</strong> click a chip to jump to and select the first object that uses that asset.</li>
+                <li><strong>Open / Relink / Remove:</strong> each chip offers these actions. <em>Relink</em> swaps in a replacement file; <em>Remove</em> deletes the stored file permanently (objects still using it then show a missing-file notice so you can relink).</li>
+              </ul>
+              <h3>Links (URLs)</h3>
+              <ul>
+                <li><strong>Add:</strong> use <em>Link</em> in the Add section and enter the address, or drop a link from your browser onto the canvas.</li>
+                <li>Link cards show a title (editable) and open the page when you choose <em>Open link</em>.</li>
+              </ul>
+            </article>
+
+            <!-- Drawing & shapes -->
+            <article class="wiki-section" id="wiki-drawing-shapes">
+              <h2>Drawing &amp; shapes</h2>
+              <h3>Shapes</h3>
+              <p>
+                The Shapes section adds ready-made diagram primitives: <strong>rectangle</strong>,
+                <strong>rounded rectangle</strong>, <strong>ellipse</strong>, <strong>diamond</strong>,
+                <strong>triangle</strong>, <strong>line</strong> and <strong>arrow</strong>. Everything
+                you do with other objects works here too — move, resize, rotate, snap and connect.
+              </p>
+              <ul>
+                <li><strong>Style:</strong> select a shape and use the inspector to change its fill color, stroke color and stroke width.</li>
+                <li><strong>Lines and arrows</strong> are drawn horizontally from the box's left center to its right center; resize to change their length and direction.</li>
+              </ul>
+              <h3>The Pen tool</h3>
+              <p>
+                The <strong>Pen</strong> tool (in the Tools section or the HUD) lets you draw freehand
+                strokes directly on the canvas — underline, circle, scribble, annotate. Pen strokes are
+                decorative: they render with your drawings but aren't selectable objects.
+              </p>
+              <p>
+                Combine shapes, freehand strokes and connections to sketch flow charts, wireframes,
+                diagrams and more.
+              </p>
+            </article>
+
+            <!-- Selection & editing -->
+            <article class="wiki-section" id="wiki-selection">
+              <h2>Selection &amp; editing</h2>
+              <p><strong>Select tool</strong> (default) drives almost everything:</p>
+              <ul>
+                <li><strong>Select:</strong> click an object. <kbd>Shift</kbd>+click (or <kbd>Ctrl</kbd>+click) toggles an object on/off the selection.</li>
+                <li><strong>Marquee:</strong> drag on empty canvas to select everything inside the rectangle.</li>
+                <li><strong>Move:</strong> drag any selected object (or the marquee selection) to move everything.</li>
+                <li><strong>Resize:</strong> drag the handles on the selection box's corners and edges.</li>
+                <li><strong>Rotate:</strong> use the rotation handle above the selection.</li>
+                <li><strong>Multiple:</strong> select two or more objects to move them together, group them, or connect them.</li>
+              </ul>
+              <h3>Editing actions</h3>
+              <table class="wiki-table">
+                <thead>
+                  <tr><th>Action</th><th>How</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Duplicate</td><td><kbd>Ctrl+D</kbd> or right-click → <em>Duplicate</em></td></tr>
+                  <tr><td>Delete</td><td><kbd>Delete</kbd>/<kbd>Backspace</kbd> or right-click → <em>Delete</em></td></tr>
+                  <tr><td>Copy / paste</td><td><kbd>Ctrl+C</kbd> / <kbd>Ctrl+V</kbd></td></tr>
+                  <tr><td>Select all</td><td><kbd>Ctrl+A</kbd></td></tr>
+                  <tr><td>Group</td><td>Select ≥ 2 objects and press <kbd>Ctrl+G</kbd></td></tr>
+                  <tr><td>Ungroup</td><td>Select a group and press <kbd>Ctrl+Shift+G</kbd></td></tr>
+                  <tr><td>Bring to front / send to back</td><td><kbd>]</kbd> and <kbd>[</kbd>, or the right-click menu</td></tr>
+                  <tr><td>Focus selection</td><td><kbd>F</kbd> — zoom to the selection</td></tr>
+                  <tr><td>Isolate container</td><td><kbd>Shift+I</kbd> on a frame or group; <kbd>Escape</kbd> to exit</td></tr>
+                  <tr><td>Right-click menu</td><td>Open/edit, duplicate, delete, connect, group, layer and add actions</td></tr>
+                </tbody>
+              </table>
+            </article>
+
+            <!-- Zoom, pan & navigation -->
+            <article class="wiki-section" id="wiki-navigation">
+              <h2>Zoom, pan &amp; navigation</h2>
+              <h3>Zoom</h3>
+              <ul>
+                <li><strong>Mouse wheel</strong> zooms in and out centered on the cursor.</li>
+                <li>The <strong>HUD</strong> (+ / – / Reset) in the bottom center zooms around the view center.</li>
+                <li><strong>Focus</strong> (<kbd>F</kbd>) jumps to your selection; <strong>Fit all</strong> (mobile) fits everything on screen.</li>
+              </ul>
+              <h3>Pan</h3>
+              <ul>
+                <li><strong>Middle mouse button</strong> drag pans from anywhere.</li>
+                <li>Hold <kbd>Space</kbd> and left-drag to pan.</li>
+                <li>The <strong>minimap</strong> (bottom-left) shows an overview — click or drag it to jump around the workspace.</li>
+              </ul>
+              <h3>Finding your way around</h3>
+              <ul>
+                <li><strong>Zoom out</strong> for the big picture, zoom in to a note for detail — the canvas never ends.</li>
+                <li>Use <strong>frames</strong> as landmarks and <strong>groups</strong> to keep related objects together.</li>
+                <li>Isolation (<kbd>Shift+I</kbd>) hides everything outside the selected frame or group so you can focus.</li>
+              </ul>
+            </article>
+
+            <!-- Keyboard shortcuts -->
+            <article class="wiki-section" id="wiki-shortcuts">
+              <h2>Keyboard shortcuts</h2>
+              <table class="wiki-table">
+                <thead>
+                  <tr><th>Shortcut</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Redo</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Copy / paste objects</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Duplicate selection</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select all objects</td></tr>
+                  <tr><td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td><td>Delete selection</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></td><td>Group / ungroup</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></td><td>Connect the two selected objects</td></tr>
+                  <tr><td><kbd>]</kbd> / <kbd>[</kbd></td><td>Bring to front / send to back</td></tr>
+                  <tr><td><kbd>F</kbd></td><td>Focus (zoom to) selection</td></tr>
+                  <tr><td><kbd>Shift</kbd>+<kbd>I</kbd></td><td>Isolate container / exit isolation</td></tr>
+                  <tr><td><kbd>Escape</kbd></td><td>Clear selection, close pop-ups, exit isolation</td></tr>
+                  <tr><td><kbd>Space</kbd> + drag</td><td>Pan the canvas</td></tr>
+                  <tr><td><kbd>Ctrl</kbd> + drag from an object</td><td>Start a connection</td></tr>
+                </tbody>
+              </table>
+              <p>
+                Shortcuts work in the desktop app and the Web app. While you're typing in a text editor,
+                keys go to the text, not the canvas.
+              </p>
+            </article>
+
+            <!-- Mobile & gestures -->
+            <article class="wiki-section" id="wiki-mobile">
+              <h2>Mobile &amp; gestures</h2>
+              <p>
+                Spatia's Web app is touch-optimized and installable from your phone or tablet browser.
+                Install it (your browser's "Add to Home screen" / "Install app" option) for an
+                app-like, offline experience.
+              </p>
+              <h3>Gestures</h3>
+              <ul>
+                <li><strong>Pan &amp; zoom:</strong> move or pinch with <strong>two fingers</strong>.</li>
+                <li><strong>Select:</strong> tap an object to select it.</li>
+                <li><strong>Resize:</strong> drag the selection handles (corners and edges) to resize.</li>
+                <li><strong>Edit text:</strong> double-tap a note or text object.</li>
+                <li><strong>Connect:</strong> use the Connect tool — tap a source object, then tap the target (or hold and drag from source to target).</li>
+                <li><strong>More actions:</strong> the bottom <strong>Menu</strong> holds edit, duplicate, delete, connect, group, layer and view actions for the current selection.</li>
+              </ul>
+              <h3>Bottom bar</h3>
+              <p>
+                The bottom navigation gives you <strong>Select</strong>, <strong>Pen</strong>,
+                <strong>Add</strong> (text, note, link, image, file, frame and all shapes),
+                <strong>Connect</strong> and a <strong>Menu</strong> with File (New, Open, Import, Save,
+                Save As, Export, Templates), Plugins, View (zoom, fit, exit isolation) and Recent projects.
+              </p>
+            </article>
+
+            <!-- Search & organization -->
+            <article class="wiki-section" id="wiki-search-organization">
+              <h2>Search &amp; organization</h2>
+              <p>
+                Your canvas <em>is</em> the search and organization surface — and it is built to stay
+                clear as it grows:
+              </p>
+              <ul>
+                <li><strong>Zoom out</strong> to see everything at once, the way a map shows a whole city.</li>
+                <li><strong>Frames</strong> divide the space into named regions (phases, topics, areas).</li>
+                <li><strong>Groups</strong> keep related objects moving and layering together.</li>
+                <li><strong>The minimap</strong> is your always-on overview: click anywhere to jump there.</li>
+                <li><strong>Focus</strong> (<kbd>F</kbd>) snaps the view to whatever you're working on; <strong>isolation</strong> hides the rest.</li>
+              </ul>
+              <div class="wiki-note">
+                <p><strong>Note:</strong> a full text-search box inside the canvas is planned for a future
+                version. Today, keeping things in named frames plus zoom-to-focus covers most canvases.</p>
+              </div>
+            </article>
+
+            <!-- Plugins -->
+            <article class="wiki-section" id="wiki-plugins">
+              <h2>Plugins</h2>
+              <p>
+                Plugins are small add-ons that extend Spatia with extra commands from inside a secure,
+                sandboxed environment. A plugin declares its identity in a <em>manifest</em> and can
+                read from and write to your canvas through a small, audited API.
+              </p>
+              <h3>Installing a plugin</h3>
+              <ul>
+                <li>Open <strong>Plugins…</strong> from the File section (desktop, Web app and mobile all have it).</li>
+                <li><strong>Install…</strong> picks a local plugin folder that contains a <code>manifest.json</code> and the plugin code (desktop).</li>
+                <li><strong>Install URL</strong> installs from a hosted <code>manifest.json</code> address.</li>
+                <li>Plugins appear in the list with an enable/disable toggle, and can be removed.</li>
+              </ul>
+              <h3>Using a plugin</h3>
+              <p>
+                Enabled plugins add their commands to Spatia's menus. A small <strong>Example Plugin</strong>
+                is built in (an <em>"Add example note"</em> command and a live selection listener); the official
+                hosted <strong>Counter Plugin</strong> provides a <em>"Count objects by type"</em> command that
+                demonstrates the public Plugin API from a <code>manifest.json</code> URL — a plugin reads the
+                canvas, computes the result and shows it, all inside the
+                <strong>sandboxed plugin environment</strong>.
+              </p>
+              <p>
+                Commands run only when you invoke them, and the plugin only reaches the canvas through the
+                documented API.
+              </p>
+              <p>
+                The official hosted <strong>Browser Frame</strong> plugin adds an <em>"Add Browser Frame"</em>
+                command that places a real, interactive web page on the canvas — with an address bar, search,
+                back/forward/reload, move and resize. Only the current URL is stored on the object. On the
+                desktop app it uses a full Chromium frame so any site loads including video; on the web build
+                it falls back to an <code>&lt;iframe&gt;</code>, which many sites block by refusing to be
+                embedded — that limitation is shown honestly in the frame rather than faked.
+              </p>
+              <h3>API v2: permissions and events</h3>
+              <ul>
+                <li>A plugin declares the API it wants in its manifest via <code>apiVersion: 2</code> and an
+                  optional <code>permissions</code> list, e.g.
+                  <code>["notify", "commands", "view", "documents", "selection", "navigation"]</code>.</li>
+                <li>Every API method is gated by one of those permissions (<code>view</code> = reading objects,
+                  the project and the viewport; <code>documents</code> = create/update/delete objects,
+                  <code>selection</code> = reading and changing the selection,
+                  <code>navigation</code> = zoom, undo/redo, focus; <code>commands</code> = registering menu
+                  actions; <code>notify</code> = toasts). A permission a plugin did not ask for is refused at runtime.</li>
+                <li>Plugins built before API v2 (no <code>apiVersion</code>/<code>permissions</code> field) keep
+                  full v1-compatible access, so nothing existing breaks.</li>
+                <li>Plugins can subscribe to app events with <code>api.on("selection" | "document" | "viewport",
+                  handler)</code> — the handler is called with the current selection ids, the object count, or the
+                  viewport position, and the manifest's permission list is what decides which API calls the
+                  handler may perform.</li>
+              </ul>
+              <div class="wiki-note">
+                <p><strong>Security:</strong> plugins run sandboxed with no direct access to your files,
+                and every API call is validated against the plugin's declared permissions. Install plugins only
+                from sources you trust.</p>
+              </div>
+            </article>
+
+            <!-- Collaboration -->
+            <article class="wiki-section" id="wiki-collaboration">
+              <h2>Collaboration</h2>
+              <p>
+                Spatia is a <strong>local-first</strong> tool — your projects stay under your
+                control — and it also supports <strong>real-time collaboration</strong> for
+                nearby or online teammates.
+              </p>
+              <ul>
+                <li>Start the bundled collaboration server (<code>npm run server</code>, default
+                  <code>ws://localhost:8787</code>), click <strong>Share…</strong> and connect.</li>
+                <li>The first person to join a room becomes its <strong>owner</strong> and can promote
+                  others from <em>viewer</em> to <em>editor</em> inside the share dialog.</li>
+                <li>Everyone sees <strong>live cursors</strong> and each other's selections; the owner
+                  and editors share the document and see each other's changes in real time.</li>
+                <li>Share the room ID (or an invite link) with teammates; they join the same room —
+                  desktop and Web apps interoperate.</li>
+              </ul>
+              <p>
+                Rooms are stored on the server (one file per room under <code>server-data/</code>),
+                so a session survives server restarts and reconnects automatically.
+              </p>
+              <p>Prefer to stay entirely local? Export the canvas as <code>.spatia.json</code> or a
+                <code>.spatia</code> folder and share it — recipients open or import it directly.</p>
+            </article>
+
+            <!-- Version history & data safety -->
+            <article class="wiki-section" id="wiki-version-history">
+              <h2>Version history &amp; data safety</h2>
+              <p>In version 0.4.9, version history means what a versioned, save-based workflow gives you:</p>
+              <ul>
+                <li><strong>Undo / Redo</strong> for everything you do in the current session.</li>
+                <li><strong>Manual save</strong> to your chosen location (desktop files, or IndexedDB in the browser).</li>
+                <li><strong>Portable copies:</strong> every <code>.spatia.json</code> or <code>.spatia</code> export is a snapshot you can store, rename or put in your own backup system.</li>
+                <li><strong>Recent projects</strong> keep your last few canvases one tap away.</li>
+              </ul>
+              <div class="wiki-note">
+                <p><strong>Tip:</strong> for sensitive work, export a <code>.spatia</code> folder after a big
+                session and let your OS backup handle version snapshots — it's a plain file you control.</p>
+              </div>
+              <p>Automatic multi-version history and crash-safe autosave are planned for future releases.</p>
+            </article>
+
+            <!-- FAQ -->
+            <article class="wiki-section" id="wiki-faq">
+              <h2>Frequently asked questions</h2>
+              <h3>Is Spatia really free and offline?</h3>
+              <p>
+                Yes. The desktop app works entirely offline, and the Web app keeps your work in your own
+                browser. There's no account and no cloud dependency.
+              </p>
+              <h3>What's the difference between the desktop app and the Web app?</h3>
+              <p>
+                The desktop app saves files directly on your machine and can store large images and
+                files with the project. The Web app is a lightweight version that runs in any modern
+                browser (and as an installable PWA), storing projects locally in the browser.
+              </p>
+              <h3>Where do my projects live?</h3>
+              <p>
+                Desktop: wherever you saved them (you choose with Save As). Web app: in your browser's
+                local storage (IndexedDB). Nothing is uploaded anywhere.
+              </p>
+              <h3>Can I open a Web-app project in the desktop app and back again?</h3>
+              <p>
+                Yes — save or export the project as <code>.spatia.json</code> in one place and open or
+                import it in the other. The project format is shared.
+              </p>
+              <h3>What can I put on a canvas?</h3>
+              <p>
+                Notes, text, images, files, links, frames, all the built-in shapes, freehand pen
+                strokes, groups and connections.
+              </p>
+              <h3>Can I undo a mistake?</h3>
+              <p>
+                Yes — <kbd>Ctrl+Z</kbd> undoes, <kbd>Ctrl+Shift+Z</kbd> (or <kbd>Ctrl+Y</kbd>) redoes.
+                Undo covers adds, moves, resizes, rotates, deletes, grouping and more.
+              </p>
+              <h3>Are there templates I can start from?</h3>
+              <p>
+                Yes — eight starters covering brainstorming, planning, study, notes and personal use.
+                See <a href="#/wiki/templates">Templates</a>.
+              </p>
+              <h3>Does Spatia support collaboration?</h3>
+              <p>
+                Yes, plus it stays local-first. Start the bundled server (<code>npm run server</code>,
+                default <code>ws://localhost:8787</code>), then click <strong>Share…</strong> to open a
+                room — the first joiner is the owner and can invite editors. Teammates see live cursors
+                and share changes in real time; rooms survive server restarts and reconnect automatically.
+                You can also share portable <code>.spatia</code> exports and edit them together as a
+                fully offline alternative.
+              </p>
+            </article>
+
+            <!-- Troubleshooting -->
+            <article class="wiki-section" id="wiki-troubleshooting">
+              <h2>Troubleshooting</h2>
+              <h3>The Web app won't boot</h3>
+              <ul>
+                <li>Try a hard refresh and use an up-to-date browser (Chrome, Edge, Firefox or Safari).</li>
+                <li>If a cached copy misbehaves after an update, reload once — the service worker refreshes its shell.</li>
+              </ul>
+              <h3>An image or file shows as missing / can't be opened</h3>
+              <ul>
+                <li>Right-click the object and choose <em>Relink file…</em> to point at the moved file.</li>
+                <li>Keep the <code>.spatia</code> folder together with its files so assets travel with the project.</li>
+              </ul>
+              <h3>I can't type on the canvas</h3>
+              <ul>
+                <li>Double-click a note or text object to open its inline editor.</li>
+                <li>Make sure a pop-up dialog (like the link box) isn't holding focus.</li>
+              </ul>
+              <h3>A plugin isn't working</h3>
+              <ul>
+                <li>Check it's enabled in <strong>Plugins…</strong>, then try disabling and re-enabling it.</li>
+                <li>Reinstall it from its <code>manifest.json</code> URL or folder to pick up a fix.</li>
+                <li>Only install plugins you trust.</li>
+              </ul>
+              <h3>Something else is wrong</h3>
+              <p>
+                If you hit a genuine bug, we want to know. Click <strong>Report a problem</strong> to open
+                the in-page reporting form, describe what happened, and send it — no email client needed.
+              </p>
+            </article>
+
+            <!-- Report a problem -->
+            <article class="wiki-section" id="wiki-report">
+              <h2>Report a problem</h2>
+              <p>
+                Found a bug or something that isn't working the way it should? Let us know — we read
+                every report.
+              </p>
+              <p>
+                <button class="btn btn-primary" type="button" data-report-open>Report a problem</button>
+              </p>
+              <p>
+                Clicking <strong>Report a problem</strong> opens a small form right on the page. Type what
+                happened and press <strong>Send report</strong> — the report goes in the background, and the
+                page stays where you are. You'll see a confirmation when it's sent, or an error you can retry.
+              </p>
+              <p>
+                The form is specifically for <strong>reporting problems and bugs</strong>, not general
+                support questions. It helps us if you include:
+              </p>
+              <ul>
+                <li>What you were doing when it happened</li>
+                <li>Whether you were in the desktop app or the Web app</li>
+                <li>Any error message you saw</li>
+              </ul>
+              <p>
+                The version, page and browser details are attached to the report automatically — you only
+                need to write the description.
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <footer class="wiki-footer">
+          <div class="wiki-footer-brand">
+            <img class="brand-logo" src="./assets/icon-48.png" alt="" width="48" height="48" aria-hidden="true" />
+            <span class="brand-name">Spatia</span>
+            <span class="brand-tag">Think in space.</span>
+          </div>
+          <nav class="footer-links" aria-label="Footer">
+            <a href="#about">About</a>
+            <a href="#features">Features</a>
+            <a href="#/web">Web</a>
+            <a href="#download">Download</a>
+            <a href="#/wiki">Wiki</a>
+          </nav>
+          <div class="wiki-footer-actions">
+            <button class="wiki-report-link" type="button" data-report-open>Report a problem</button>
+            <a class="wiki-back-site" href="#top">Back to site</a>
+          </div>
+          <p class="footer-legal">&copy; 2026 Spatia. All rights reserved.</p>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ============ Landing ============ -->
+    <div class="site" id="top">
+      <header class="site-header">
+        <a class="brand" href="#top" aria-label="Spatia — back to top">
+          <img class="brand-logo" src="./assets/icon-48.png" alt="" width="48" height="48" aria-hidden="true" />
+          <span class="brand-name">Spatia</span>
+          <span class="brand-tag">Think in space.</span>
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="#about">About</a>
+          <a href="#features">Features</a>
+          <a class="nav-web" href="#/web">Web</a>
+          <a href="#download">Download</a>
+          <a class="nav-wiki" href="#/wiki">Wiki</a>
+        </nav>
+        <div class="header-actions">
+          <a class="btn btn-ghost btn-sm" href="#/web">Try Web</a>
+          <button class="btn btn-ghost btn-sm header-report-btn" type="button" data-report-open>Report a problem</button>
+          <a class="btn btn-primary btn-sm" href="./downloads/Spatia-0.4.9-x64.msi">Download</a>
+        </div>
+      </header>
+
+      <main>
+        <!-- Hero -->
+        <section class="hero">
+          <div class="hero-inner">
+            <span class="badge">Spatia 0.4.9 is here</span>
+            <h1 class="hero-title">
+              Think in<span class="hero-accent"> space.</span>
+            </h1>
+            <p class="hero-sub">
+              Spatia is a powerful visual canvas for organizing ideas, connecting concepts,
+              and turning thoughts into something you can see.
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary btn-lg" href="#/web">Try Web</a>
+              <a class="btn btn-outline btn-lg" href="./downloads/Spatia-0.4.9-x64.msi">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
+                Download for Windows
+              </a>
+            </div>
+            <p class="hero-meta">Windows 10 / 11 &middot; x64 &middot; Version 0.4.9</p>
+          </div>
+          <figure class="window hero-window">
+            <div class="window-bar">
+              <span class="dot dot-a"></span><span class="dot dot-b"></span><span class="dot dot-c"></span>
+              <span class="window-title">Spatia — Workspace</span>
+            </div>
+            <img
+              class="window-shot"
+              src="./assets/screenshots/overview.webp"
+              alt="Spatia canvas showing notes, a frame, connections and a link card"
+              width="1200"
+              height="740"
+              decoding="async"
+              fetchpriority="high"
+            />
+          </figure>
+        </section>
+
+        <!-- About / The canvas -->
+        <section class="section" id="about">
+          <div class="section-eyebrow">01 — The canvas</div>
+          <div class="section-grid">
+            <div class="section-copy">
+              <h2 class="section-title">One canvas.<br />Everything connected.</h2>
+              <p class="section-body">
+                A flexible space where ideas, objects, frames, text and connections exist together.
+                No rigid documents. No forced structure. Just a canvas that adapts to the way you think.
+              </p>
+              <ul class="check-list">
+                <li><strong>Your workspace</strong> — arrange ideas exactly where they belong.</li>
+                <li><strong>Zoom without limits</strong> — move freely from a bird's-eye view down to a single note.</li>
+              </ul>
+            </div>
+            <figure class="window">
+              <div class="window-bar">
+                <span class="dot dot-a"></span><span class="dot dot-b"></span><span class="dot dot-c"></span>
+                <span class="window-title">Spatia — Workspace</span>
+              </div>
+              <img
+                class="window-shot"
+                src="./assets/screenshots/overview.webp"
+                alt="Spatia infinite canvas with ideas, notes and connections"
+                width="1200"
+                height="740"
+                loading="lazy"
+                decoding="async"
+              />
+            </figure>
+          </div>
+        </section>
+
+        <!-- Features -->
+        <section class="section" id="features">
+          <div class="section-eyebrow">02 — Built for the way you think</div>
+          <h2 class="section-title">Powerful doesn't have<br />to mean complicated.</h2>
+
+          <div class="features">
+            <article class="feature">
+              <span class="feature-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+              </span>
+              <h3>Your workspace</h3>
+              <p>Arrange ideas exactly where they belong on an infinite canvas. Nothing is fixed until you decide.</p>
+            </article>
+
+            <article class="feature">
+              <span class="feature-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+              </span>
+              <h3>Focus mode</h3>
+              <p>Move freely through your workspace and concentrate on exactly what matters. Everything else gets out of the way.</p>
+            </article>
+
+            <article class="feature">
+              <span class="feature-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M6 14h.01M10 14h8"/></svg>
+              </span>
+              <h3>Keyboard first</h3>
+              <p>Powerful shortcuts keep your hands on the canvas instead of hunting through menus. Less clicking, more doing.</p>
+            </article>
+
+            <article class="feature">
+              <span class="feature-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 7.2l7.4 1M7.4 8l3.6 7.6M14.5 10l-1.6 5.6"/></svg>
+              </span>
+              <h3>Visual thinking</h3>
+              <p>Put ideas next to each other. Connect them. Move them. See relationships instead of reading lists.</p>
+            </article>
+
+            <article class="feature">
+              <span class="feature-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><rect x="8" y="8" width="8" height="8" rx="1.5"/></svg>
+              </span>
+              <h3>Structure without limits</h3>
+              <p>Frames and groups give your canvas structure while keeping everything flexible.</p>
+            </article>
+
+            <article class="feature">
+              <span class="feature-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v6c0 4-3 6-7 8-4-2-7-4-7-8V7l7-4z"/><path d="M9.5 12l2 2 3.5-4"/></svg>
+              </span>
+              <h3>Local &amp; private</h3>
+              <p>Desktop files live on your machine. The web preview keeps your work safely in your own browser.</p>
+            </article>
+          </div>
+
+          <figure class="window feature-window">
+            <div class="window-bar">
+              <span class="dot dot-a"></span><span class="dot dot-b"></span><span class="dot dot-c"></span>
+              <span class="window-title">Spatia — Workspace</span>
+            </div>
+            <img
+              class="window-shot"
+              src="./assets/screenshots/workspace.webp"
+              alt="Spatia with the tools panel open and an object selected"
+              width="1200"
+              height="740"
+              loading="lazy"
+              decoding="async"
+            />
+          </figure>
+        </section>
+
+        <!-- Product / real screenshots -->
+        <section class="section" id="product">
+          <div class="section-eyebrow">03 — The product</div>
+          <div class="section-grid">
+            <div class="section-copy">
+              <h2 class="section-title">Made to disappear.<br />So your ideas don't.</h2>
+              <p class="section-body">
+                The interface stays quiet so the canvas can take over. Every interaction is designed
+                to feel immediate, predictable and natural — rendered at 60&nbsp;fps with viewport culling,
+                even on large canvases.
+              </p>
+              <ul class="check-list">
+                <li><strong>Fast</strong> — a lean, dependency-free engine built around a single canvas.</li>
+                <li><strong>Precise</strong> — edge-to-edge connections that follow your objects.</li>
+              </ul>
+            </div>
+            <figure class="window">
+              <div class="window-bar">
+                <span class="dot dot-a"></span><span class="dot dot-b"></span><span class="dot dot-c"></span>
+                <span class="window-title">Spatia — Workspace</span>
+              </div>
+              <img
+                class="window-shot"
+                src="./assets/screenshots/detail.webp"
+                alt="A close-up of the Spatia canvas showing a frame, notes and a connection"
+                width="1200"
+                height="740"
+                loading="lazy"
+                decoding="async"
+              />
+            </figure>
+          </div>
+        </section>
+
+        <!-- Try Web -->
+        <section class="section try-web">
+          <div class="section-eyebrow">04 — Try it now</div>
+          <h2 class="section-title">No install.<br />Just a canvas.</h2>
+          <p class="section-body">
+            Run Spatia straight in your browser. Create notes, frames and connections, pan and zoom,
+            and export your work as a <code>.spatia.json</code> file whenever you're ready.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary btn-lg" href="#/web">Try Web</a>
+            <a class="btn btn-outline btn-lg" href="#features">Explore features</a>
+          </div>
+        </section>
+
+        <!-- CTA / Download -->
+        <section class="section cta" id="download">
+          <h2 class="cta-title">Start creating.</h2>
+          <p class="cta-sub">
+            Download Spatia for Windows, or open it in your browser right now — version 0.4.9, ready
+            for Windows 10 / 11 on x64.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary btn-lg" href="./downloads/Spatia-0.4.9-x64.msi">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
+              Download Spatia
+            </a>
+            <a class="btn btn-outline btn-lg" href="#/web">Try Web</a>
+          </div>
+          <p class="hero-meta cta-meta">Windows 10 / 11 &middot; x64 &middot; 0.4.9</p>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div class="footer-brand">
+          <img class="brand-logo" src="./assets/icon-48.png" alt="" width="48" height="48" aria-hidden="true" />
+          <span class="brand-name">Spatia</span>
+          <span class="brand-tag">Think in space.</span>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="#about">About</a>
+          <a href="#features">Features</a>
+          <a href="#download">Download</a>
+          <a href="#/wiki">Wiki</a>
+          <button class="footer-report-btn" type="button" data-report-open>Report a problem</button>
+        </nav>
+        <p class="footer-legal">&copy; 2026 Spatia. All rights reserved.</p>
+      </footer>
+    </div>
+
+    <!-- ============ Report a problem dialog ============ -->
+    <div id="report-dialog" class="report-dialog" role="dialog" aria-modal="true" aria-labelledby="report-title" hidden>
+      <div class="report-dialog-backdrop" data-report-close></div>
+      <div class="report-dialog-box">
+        <div class="report-dialog-header">
+          <h2 id="report-title" class="report-dialog-title">Report a problem</h2>
+          <button class="report-dialog-close" type="button" data-report-close aria-label="Close report dialog">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <form id="report-form" class="report-form">
+          <label for="report-message" class="report-label">Describe the problem — what were you doing?</label>
+          <textarea
+            id="report-message"
+            name="message"
+            class="report-message"
+            rows="7"
+            maxlength="6000"
+            required
+            placeholder="Describe the problem…"
+            autocomplete="off"
+            spellcheck="true"
+          ></textarea>
+          <p id="report-status" class="report-status" role="status" aria-live="polite" hidden></p>
+          <div class="report-dialog-actions">
+            <button class="btn btn-ghost btn-sm" type="button" data-report-close>Cancel</button>
+            <button id="report-send" class="btn btn-primary btn-sm" type="submit">Send report</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </body>
+</html>

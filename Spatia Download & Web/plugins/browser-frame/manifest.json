@@ -1,0 +1,10 @@
+{
+  "id": "browser-frame",
+  "name": "Browser Frame",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "description": "Adds a live, interactive browser frame to the canvas. Fully functional on the desktop app; sites that refuse iframe embedding cannot appear in the browser build.",
+  "author": "Spatia",
+  "main": "main.js",
+  "permissions": ["commands", "notify", "view", "documents", "selection"]
+}

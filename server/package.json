@@ -1,0 +1,14 @@
+{
+  "name": "spatia-collab-server",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Spatia collaboration server (rooms, permissions, presence, snapshots).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test server.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
