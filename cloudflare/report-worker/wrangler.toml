@@ -1,8 +1,0 @@
-name = "spatia-report"
-main = "worker.js"
-compatibility_date = "2026-09-12"
-
-[vars]
-REPORT_FROM = ""
-REPORT_SUBJECT = "Spatia \u2014 Problem Report"
-REPORT_TO = "spatiacanvas@gmail.com"

@@ -19,7 +19,10 @@ Spatia Download & Web/web/app.css
 Spatia Download & Web/web/plugins/
 
 # Local deployment metadata
-.netlify
+.netlify/
+.wrangler/
+.vercel/
+.cloudflare/
 
 # Secrets / local environment — never commit real values
 .env

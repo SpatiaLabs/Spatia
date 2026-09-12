@@ -27,10 +27,11 @@ Try Spatia in your browser at **<https://spatiaweb.surge.sh>** — installable a
 
 ### Download a ready-made build
 
-Prebuilt Windows releases (portable `.zip`) are published on
+Prebuilt Windows releases (an installer, `.msi`) are published on
 [GitHub Releases](https://github.com/ji2-2/Spatia/releases). Download
-`Spatia-0.5.0-win-x64.zip`, extract it, and run `Spatia.exe` — no install
-required.
+`Spatia-0.5.0-win-x64.msi` and run it to install, or grab the portable
+`Spatia-0.5.0-win-x64.zip` for a no-install option (extract and run
+`Spatia.exe`).
 
 ### Build and run from source
 
@@ -80,7 +81,6 @@ npm run test:server    # collaboration server API tests
 | `server/` | Optional real-time collaboration server. |
 | `scripts/` | Build, asset, and verification scripts. |
 | `Spatia Download & Web/` | The public website (including the embedded web app). |
-| `cloudflare/` | Serverless worker for the "Report a problem" inbox. |
 
 ## Overview
 
@@ -95,36 +95,6 @@ A plugin is a folder containing a `manifest.json` and a `main.js` entry script t
 - **API v2** — plugins declare an explicit capability set: `notify`, `commands`, `view`, `documents`, `selection`, `navigation`. Anything else is rejected so a plugin can never silently request more than Spatia understands.
 - **v1 compatibility** — plugins without a `permissions` field keep full legacy access; unknown extra manifest fields are preserved so the format can grow without breaking existing plugins.
 - **Built-ins** — the standard plugin set ships in `src/shared/plugins/builtin.ts`; the demo plugins live next to the site in `Spatia Download & Web/plugins/`.
-
-## Report a problem
-
-The in-app "Report a problem" dialog posts to a serverless Cloudflare Worker
-([`cloudflare/report-worker/`](cloudflare/report-worker/)) that forwards the
-rendered report by email through [Resend](https://resend.com). Secrets are
-never stored in the repository — the API key is read from the worker's
-environment only.
-
-Required configuration (values stay in your Cloudflare account, never in the
-repository):
-
-- `RESEND_API_KEY` — Resend API key (set with `wrangler secret put RESEND_API_KEY`).
-- `REPORT_FROM` — a verified sender address at Resend (set in `wrangler.toml` `[vars]`).
-
-Optional: `REPORT_TO` (defaults to `spatiacanvas@gmail.com`) and `REPORT_SUBJECT`.
-
-Deploying (one interactive step):
-
-```sh
-cd cloudflare/report-worker
-npx wrangler login          # interactive — completes auth in your browser
-npx wrangler secret put RESEND_API_KEY   # interactive prompt
-npx wrangler deploy
-```
-
-Then set `REPORT_ENDPOINT` in `Spatia Download & Web/js/site.js` to the
-deployed worker URL and rebuild the site.
-
-See [`.env.example`](.env.example) for the same variables.
 
 ## Contributing
 

@@ -54,33 +54,6 @@ function ok(name, value) {
 
 function serve() {
   return http.createServer((req, res) => {
-    // Stubbed "Report a problem" endpoint: succeed for normal reports, fail
-    // when the message carries the SPATIA_VERIFY_FAIL marker.
-    if (req.method === "POST" && (req.url || "").indexOf("/api/report") === 0) {
-      const chunks = [];
-      req.on("data", (c) => chunks.push(c));
-      req.on("end", () => {
-        let payload = {};
-        try {
-          payload = JSON.parse(Buffer.concat(chunks).toString("utf-8") || "{}");
-        } catch {
-          /* invalid body */
-        }
-        if (!payload.message) {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "message is required" }));
-          return;
-        }
-        if (String(payload.message).indexOf("SPATIA_VERIFY_FAIL") !== -1) {
-          res.writeHead(500, { "content-type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "delivery failed" }));
-          return;
-        }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-      });
-      return;
-    }
     const urlPath = decodeURIComponent((req.url || "/").split("?")[0]);
     let rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "");
     const file = path.resolve(BASE, rel);
@@ -279,11 +252,8 @@ app.whenReady().then(async () => {
         tocCount: links.length,
         sectionCount: document.querySelectorAll(".wiki-section").length,
         hasSearch: !!document.getElementById("wiki-search"),
-        hasReportTrigger: (() => {
-          const trigs = document.querySelectorAll('.wiki-report-btn[data-report-open], #wiki-report [data-report-open], .wiki-report-link[data-report-open]');
-          return trigs.length >= 3 && trigs[0].tagName === "BUTTON";
-        })(),
-        noMailtoReport: document.body.innerHTML.indexOf("mailto:spatiacanvas@gmail.com") === -1,
+        hasReportUI: !!document.querySelector('[data-report-open], [data-report-close], #report-dialog, #report-form'),
+        hasGmail: /@gmail\.com/.test(document.body.innerHTML),
         sectionIds: Array.prototype.map.call(document.querySelectorAll(".wiki-section"), (s) => s.id || ""),
       };
     });
@@ -293,15 +263,15 @@ app.whenReady().then(async () => {
     ok("wiki TOC has navigation entries", wiki.tocCount >= 20);
     ok("wiki has documentation sections", wiki.sectionCount >= 20);
     ok("wiki search present", wiki.hasSearch);
-    ok("wiki has an in-page Report a problem trigger", wiki.hasReportTrigger);
-    ok("wiki no longer uses a manual mailto report", wiki.noMailtoReport);
+    ok("wiki has no Report a problem UI", !wiki.hasReportUI);
+    ok("wiki exposes no personal contact email", !wiki.hasGmail);
 
     const wikiSlugs = [
       "what-is", "getting-started", "canvases-projects", "saving-open", "import-export",
       "templates", "notes-text", "connections", "frames", "images-files-urls",
       "drawing-shapes", "selection", "navigation", "shortcuts", "mobile",
       "search-organization", "plugins", "collaboration", "version-history",
-      "faq", "troubleshooting", "report",
+      "faq", "troubleshooting",
     ];
     const wikiMissing = wikiSlugs.filter((s) => wiki.sectionIds.indexOf("wiki-" + s) === -1);
     ok("all required wiki sections exist", wikiMissing.length === 0);
@@ -349,98 +319,20 @@ app.whenReady().then(async () => {
     const wikiText = await execute(win, () => ({
       mobile: (document.getElementById("wiki-mobile").textContent || "").toLowerCase(),
       plugins: (document.getElementById("wiki-plugins").textContent || "").toLowerCase(),
-      report: (document.getElementById("wiki-report").textContent || "").toLowerCase(),
     }));
     ok("wiki: mobile section no longer claims a long-press menu", wikiText.mobile.indexOf("long-press") === -1);
     ok("wiki: mobile section documents the real touch model", wikiText.mobile.indexOf("two fingers") !== -1 && wikiText.mobile.indexOf("connect") !== -1);
     ok("wiki: plugins section documents the hosted Counter Plugin", wikiText.plugins.indexOf("count objects by type") !== -1 && wikiText.plugins.indexOf("sandbox") !== -1);
     ok("wiki: plugins section no longer claims note creation", wikiText.plugins.indexOf("creates a note") === -1);
-    ok("wiki: report section documents the in-page form", wikiText.report.indexOf("send report") !== -1 && wikiText.report.indexOf("mailto") === -1);
 
-    // ---- 1d) Report a problem dialog --------------------------------------
-    await execute(win, () => {
-      window.SPATIA_REPORT_ENDPOINT = "http://127.0.0.1:8756/api/report";
-      return true;
-    });
-    const repTrig = await execute(win, () => ({
-      header: !!document.querySelector('.header-actions [data-report-open]'),
-      footer: !!document.querySelector('.footer-links .footer-report-btn[data-report-open]'),
-      dialogGone: document.getElementById("report-dialog").hidden,
-      dialogHidden: getComputedStyle(document.getElementById("report-dialog")).display === "none",
+    // ---- 1d) Report a problem is fully removed ---------------------------
+    const reportGone = await execute(win, () => ({
+      dialog: document.getElementById("report-dialog"),
+      form: document.getElementById("report-form"),
+      triggers: document.querySelectorAll('[data-report-open]').length,
     }));
-    ok("report: landing has header + footer triggers", repTrig.header && repTrig.footer);
-    ok("report: dialog is closed by default", repTrig.dialogGone && repTrig.dialogHidden);
-
-    await execute(win, () => { document.querySelector('.header-actions [data-report-open]').click(); });
-    await until(win, () => !document.getElementById("report-dialog").hidden && document.documentElement.getAttribute("data-report-dialog") === "open", "report dialog opens");
-    await until(win, () => document.activeElement === document.getElementById("report-message"), "textarea focused");
-    const repOpen = await execute(win, () => ({
-      open: !document.getElementById("report-dialog").hidden,
-      attr: document.documentElement.getAttribute("data-report-dialog") === "open",
-      focused: document.activeElement === document.getElementById("report-message"),
-      stillLanding: getComputedStyle(document.querySelector(".site")).display !== "none",
-    }));
-    ok("report: dialog opens from the header", repOpen.open && repOpen.attr);
-    ok("report: textarea receives focus", repOpen.focused);
-    ok("report: opening dialog does not navigate away", repOpen.stillLanding);
-
-    await execute(win, () => {
-      const m = document.getElementById("report-message");
-      m.value = "aaaaaaaaaaaa";
-      document.getElementById("report-form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-    await until(win, () => {
-      const s = document.getElementById("report-status");
-      return !!s && !s.hidden && /Report sent. Thank you!/.test(s.textContent || "");
-    }, "report success state shows");
-    const repSent = await execute(win, () => ({
-      status: document.getElementById("report-status").textContent.trim(),
-      cleared: document.getElementById("report-message").value === "",
-      sendEnabled: !document.getElementById("report-send").disabled,
-      onLanding: getComputedStyle(document.querySelector(".site")).display !== "none",
-      noExternalNav: location.href.indexOf("mailto:") === -1 && location.hash.indexOf("#/web") !== 0,
-    }));
-    ok("report: submission succeeds without navigating", repSent.status === "Report sent. Thank you!" && repSent.onLanding);
-    ok("report: successful send clears the textarea", repSent.cleared);
-    ok("report: Send button re-enabled after success", repSent.sendEnabled);
-
-    await execute(win, () => {
-      const m = document.getElementById("report-message");
-      m.value = "SPATIA_VERIFY_FAIL simulate a broken endpoint";
-      document.getElementById("report-form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-    await until(win, () => {
-      const s = document.getElementById("report-status");
-      return !!s && !s.hidden && /Couldn't send the report/.test(s.textContent || "");
-    }, "report failure state shows");
-    const repFail = await execute(win, () => ({
-      errorShown: /Couldn't send the report/.test(document.getElementById("report-status").textContent || ""),
-      sendEnabled: !document.getElementById("report-send").disabled,
-      stillHere: getComputedStyle(document.querySelector(".site")).display !== "none",
-    }));
-    ok("report: failure shows an error and keeps the user on site", repFail.errorShown && repFail.stillHere);
-    ok("report: Send re-enabled after failure (retry possible)", repFail.sendEnabled);
-
-    await execute(win, () => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    });
-    await sleep(80);
-    const repEsc = await execute(win, () =>
-      document.getElementById("report-dialog").hidden && document.documentElement.getAttribute("data-report-dialog") !== "open"
-    );
-    ok("report: Escape closes the dialog", repEsc);
-
-    await execute(win, () => { document.querySelector('.footer-report-btn').click(); });
-    await sleep(80);
-    const repReopen = await execute(win, () => !document.getElementById("report-dialog").hidden);
-    ok("report: footer trigger re-opens the dialog", repReopen);
-
-    await execute(win, () => { document.querySelector('#report-dialog [data-report-close]').click(); });
-    await sleep(80);
-    const repCancel = await execute(win, () =>
-      document.getElementById("report-dialog").hidden && document.documentElement.getAttribute("data-report-dialog") !== "open"
-    );
-    ok("report: Cancel button closes the dialog", repCancel);
+    ok("report: dialog and form markup removed", !reportGone.dialog && !reportGone.form);
+    ok("report: no in-page open triggers remain", reportGone.triggers === 0);
 
     // ---- 2) Enter #/web (first boot) ------------------------------------
     await execute(win, () => {
@@ -465,11 +357,11 @@ app.whenReady().then(async () => {
     ok("web mode: title is web", /Spatia — Web/.test(webIn.title));
     ok("web mode: app.css attached", webIn.appCssPresent);
     const repWeb = await execute(win, () => ({
-      dialogClosed: document.getElementById("report-dialog").hidden,
+      dialogGone: !document.getElementById("report-dialog"),
       noAttr: document.documentElement.getAttribute("data-report-dialog") !== "open",
       noTrigger: !document.querySelector("#web-host [data-report-open]"),
     }));
-    ok("report: dialog stays closed inside the web workspace", repWeb.dialogClosed && repWeb.noAttr && repWeb.noTrigger);
+    ok("report: dialog absent inside the web workspace", repWeb.dialogGone && repWeb.noAttr && repWeb.noTrigger);
     execute(win, () => { window.__appId = window.__spatia; });
 
     // ---- 3) Back to landing (the real bug) --------------------------------
