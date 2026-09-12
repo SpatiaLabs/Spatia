@@ -1,20 +1,49 @@
+# Dependencies
 node_modules/
+
+# Desktop build output
 dist/
-*.log
-.DS_Store
-.env
+build/
 
-# Local Netlify folder
-.netlify
-
-# Build / packaging output
+# Packaging output (installers, unpacked apps)
 release/
 release-*/
-build/
 *.msi
+*.exe
 
-# Web release artifacts (generated output / large binaries)
+# Website build output and large binaries
 Spatia Download & Web.zip
 Spatia Download & Web/downloads/
-Spatia Download & Web/web/
-server/node_modules/
+Spatia Download & Web/web/js/
+Spatia Download & Web/web/app.css
+Spatia Download & Web/web/plugins/
+
+# Local deployment metadata (Netlify state)
+.netlify
+
+# Secrets / local environment — never commit real values
+.env
+.env.*
+!.env.example
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temp files
+*.tmp
+*.temp
+
+# Stray nested git archive (leftover placeholder folder, not part of the project)
+/Spatia/

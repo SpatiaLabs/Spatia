@@ -25,7 +25,7 @@ const sharp = require("sharp");
 const root = path.resolve(__dirname, "..");
 
 // Source icon supplied by the user. May be a .png or a .ico.
-const SOURCE = process.env.SPATIA_ICON_PNG || "C:\\Users\\hakm\\Downloads\\ChatGPT Image 4 \u0633\u0628\u062a\u0645\u0628\u0631 2026\u060c 06_37_15 \u0635.png";
+const SOURCE = process.env.SPATIA_ICON_PNG || path.join(root, "Spatia Download & Web", "assets", "icon-512.png");
 // Size (in pixels) of the square normalized artwork. Every icon size below is
 // rendered as a (down/up) scale of this square.
 const BASE = 256;
