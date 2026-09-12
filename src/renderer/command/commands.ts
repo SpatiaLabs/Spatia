@@ -23,6 +23,67 @@ export function addObjectCommand(project: ProjectStore, obj: CanvasObject): Comm
   };
 }
 
+/** Add a single committed pen stroke (one stroke = one undo step). */
+export function addInkCommand(project: ProjectStore, stroke: CanvasObject): Command {
+  return {
+    label: "Draw stroke",
+    redo() {
+      project.addObject(stroke);
+    },
+    undo() {
+      project.removeObjects([stroke.id]);
+    },
+  };
+}
+
+/**
+ * Replace whole strokes (fragments) with other strokes in one undoable step.
+ * Used by the partial eraser: the eraser passes over strokes, which are split
+ * into fragments or deleted; undo restores the exact originals at their exact
+ * stack positions. A single eraser gesture = a single undo step.
+ */
+export function replaceStrokesCommand(
+  project: ProjectStore,
+  before: Extract<CanvasObject, { type: "pen" }>[],
+  after: Extract<CanvasObject, { type: "pen" }>[]
+): Command {
+  const indices = before.map((b) => project.getObjects().findIndex((o) => o.id === b.id));
+  const valid = indices.filter((i) => i >= 0);
+  const insertAt = valid.length > 0 ? Math.min(...valid) : project.getObjects().length;
+  return {
+    label: "Erase ink",
+    redo() {
+      project.removeObjects(before.map((b) => b.id));
+      for (let i = after.length - 1; i >= 0; i--) {
+        project.insertObjectAt(insertAt, after[i]);
+      }
+    },
+    undo() {
+      project.removeObjects(after.map((a) => a.id));
+      const placements = before
+        .map((b, i) => ({ obj: b, index: indices[i] }))
+        .filter((p) => p.index >= 0)
+        .sort((a, b) => a.index - b.index);
+      for (const p of placements) project.insertObjectAt(p.index, p.obj);
+    },
+  };
+}
+
+/** Run several commands in sequence as a single undo/redo step. */
+export function compositeCommand(label: string, commands: readonly Command[]): Command {
+  return {
+    label,
+    redo() {
+      for (const c of commands) c.redo();
+    },
+    undo() {
+      // Undo runs in reverse so each inner command sees the state the next
+      // one's redo produced.
+      for (let i = commands.length - 1; i >= 0; i--) commands[i].undo();
+    },
+  };
+}
+
 export function deleteObjectsCommand(
   project: ProjectStore,
   ids: readonly string[]

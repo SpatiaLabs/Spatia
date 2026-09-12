@@ -376,6 +376,136 @@ test("deserialize defaults an unknown shape kind to rectangle", () => {
   assert.equal(round.kind, "rectangle");
 });
 
+test("deserialize round trips a frame with an explicit shape", () => {
+  for (const frameShape of ["rectangle", "rounded", "ellipse"] as const) {
+    const frame: CanvasObject = {
+      type: "frame",
+      frameShape,
+      id: "obj_fr",
+      name: "Browser",
+      color: "#2a6df5",
+      x: 0,
+      y: 0,
+      width: 640,
+      height: 480,
+      rotation: 0,
+      zIndex: 4,
+      locked: false,
+      metadata: { browserUrl: "https://example.com" },
+    };
+    const p = sampleProject();
+    p.objects = [frame];
+    const json = serialize(p.viewport, p.objects, p.project, p.assets);
+    const file = deserialize(json);
+    const round = file.objects.find((o) => o.id === "obj_fr") as Extract<CanvasObject, { type: "frame" }>;
+    assert.ok(round);
+    assert.equal(round.frameShape, frameShape);
+    assert.equal(round.metadata.browserUrl, "https://example.com");
+  }
+});
+
+test("deserialize defaults a frame without a shape to rectangle", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [
+      { type: "frame", id: "o", name: "F", color: "#2a6df5", x: 0, y: 0, width: 100, height: 100, rotation: 0, zIndex: 1, locked: false },
+    ],
+  };
+  const file = deserialize(JSON.stringify(bad));
+  const round = file.objects[0] as Extract<CanvasObject, { type: "frame" }>;
+  assert.equal(round.frameShape, "rectangle");
+});
+
+test("deserialize round trips a data table (and comparison table)", () => {
+  const data = { columns: ["Item", "Value"], rows: [["A", "1"], ["B", "2"]] };
+  for (const comparison of [false, true]) {
+    const table: CanvasObject = {
+      type: "table",
+      comparison,
+      data,
+      id: comparison ? "obj_cmp" : "obj_tbl",
+      x: 0,
+      y: 0,
+      width: 320,
+      height: 220,
+      rotation: 0,
+      zIndex: 5,
+      locked: false,
+      metadata: {},
+    };
+    const p = sampleProject();
+    p.objects = [table];
+    const json = serialize(p.viewport, p.objects, p.project, p.assets);
+    const file = deserialize(json);
+    const round = file.objects.find((o) => o.id === table.id) as Extract<CanvasObject, { type: "table" }>;
+    assert.ok(round);
+    assert.equal(round.type, "table");
+    assert.equal(round.comparison, comparison);
+    assert.deepEqual(round.data, data);
+  }
+});
+
+test("deserialize degrades a broken table payload to a valid default", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [
+      { type: "table", comparison: true, id: "o", x: 0, y: 0, width: 100, height: 100, rotation: 0, zIndex: 1, locked: false, data: { not: "valid" } },
+    ],
+  };
+  const file = deserialize(JSON.stringify(bad));
+  const round = file.objects[0] as Extract<CanvasObject, { type: "table" }>;
+  assert.ok(Array.isArray(round.data.columns));
+  assert.ok(round.data.columns.length > 0);
+  assert.ok(round.data.rows.every((r) => r.length === round.data.columns.length));
+});
+
+test("deserialize round trips a chart with kind and data", () => {
+  const chart: CanvasObject = {
+    type: "chart",
+    kind: "pie",
+    title: "Budget",
+    data: { columns: ["Area", "Value"], rows: [["Ops", "40"], ["Dev", "60"]] },
+    id: "obj_ch",
+    x: 0,
+    y: 0,
+    width: 360,
+    height: 260,
+    rotation: 0,
+    zIndex: 6,
+    locked: false,
+    metadata: {},
+  };
+  const p = sampleProject();
+  p.objects = [chart];
+  const json = serialize(p.viewport, p.objects, p.project, p.assets);
+  const file = deserialize(json);
+  const round = file.objects.find((o) => o.id === "obj_ch") as Extract<CanvasObject, { type: "chart" }>;
+  assert.ok(round);
+  assert.equal(round.type, "chart");
+  assert.equal(round.kind, "pie");
+  assert.equal(round.title, "Budget");
+  assert.deepEqual(round.data, chart.data);
+});
+
+test("deserialize defaults an unknown chart kind to bar", () => {
+  const bad = {
+    formatVersion: PROJECT_FORMAT_VERSION,
+    project: { id: "1", name: "x" },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [
+      { type: "chart", kind: "treemap", id: "o", x: 0, y: 0, width: 100, height: 100, rotation: 0, zIndex: 1, locked: false },
+    ],
+  };
+  const file = deserialize(JSON.stringify(bad));
+  const round = file.objects[0] as Extract<CanvasObject, { type: "chart" }>;
+  assert.equal(round.kind, "bar");
+  assert.ok(Array.isArray(round.data.rows));
+});
+
 test("deserialize round trips richer asset kinds (video, audio, pdf)", () => {
   const p = sampleProject();
   p.assets = [

@@ -11,6 +11,41 @@
   --color-grid-major: rgba(255, 255, 255, 0.08);
   --color-grid-minor: rgba(255, 255, 255, 0.035);
   --font-ui: "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* Floating surface palette. Alpha backgrounds only (no backdrop blur), so
+   * every surface still reads clearly over the canvas when blur is disabled. */
+  --surface-1: rgba(26, 29, 33, 0.96);
+  --surface-2: rgba(31, 34, 40, 0.97);
+  --surface-hover: rgba(255, 255, 255, 0.055);
+
+  /* Exactly three reusable elevation levels — never per-element shadows. */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.24), 0 1px 4px rgba(0, 0, 0, 0.16);
+  --elev-2: 0 2px 6px rgba(0, 0, 0, 0.22), 0 6px 18px rgba(0, 0, 0, 0.3);
+  --elev-3: 0 4px 12px rgba(0, 0, 0, 0.26), 0 14px 38px rgba(0, 0, 0, 0.4);
+
+  /* Radii + short, interaction-only motion. */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+  --motion-fast: 0.12s ease;
+  --motion-med: 0.18s ease;
+}
+
+/* Lightweight mode: removes depth and motion, keeps layout and interactions
+ * identical. Enabled with the "Reduce visual effects" settings toggle. */
+html.spatia-reduced-effects {
+  --elev-1: 0 0 0 rgba(0, 0, 0, 0);
+  --elev-2: 0 0 0 rgba(0, 0, 0, 0);
+  --elev-3: 0 0 0 rgba(0, 0, 0, 0);
+}
+
+html.spatia-reduced-effects *,
+html.spatia-reduced-effects *::before,
+html.spatia-reduced-effects *::after {
+  transition: none !important;
+  animation: none !important;
 }
 
 * {
@@ -40,22 +75,20 @@ body {
   flex-direction: column;
 }
 
-/* ---------- Sidebar (tools panel, hidden by default) ---------- */
+/* ---------- Sidebar: floating command center (desktop) ---------- */
 #sidebar {
   position: absolute;
   top: 12px;
   right: 12px;
-  width: 200px;
-  max-height: calc(100% - 90px);
-  overflow-y: auto;
+  width: 216px;
+  max-height: calc(100% - 72px);
   display: none;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
-  background: rgba(26, 29, 33, 0.96);
+  overflow: hidden;
+  background: var(--surface-1);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-3);
   z-index: 20;
 }
 
@@ -63,10 +96,77 @@ body {
   display: flex;
 }
 
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 10px 9px 14px;
+  flex: 0 0 auto;
+}
+
+.sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sidebar-brand-mark {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: var(--color-accent);
+  flex: 0 0 auto;
+}
+
+.sidebar-brand-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sidebar-brand-sub {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-dim);
+}
+
+.sidebar-close {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.sidebar-close:hover {
+  background: var(--surface-hover);
+  color: var(--color-text);
+}
+
+.sidebar-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 12px 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 .sidebar-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .sidebar-label {
@@ -74,16 +174,25 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--color-text-dim);
-  margin-bottom: 2px;
+  margin-bottom: 3px;
+  opacity: 0.85;
 }
 
 .sidebar-btn {
+  display: block;
   text-align: left;
+  padding: 6px 9px;
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+}
+
+.sidebar-btn:hover {
+  background: var(--surface-hover);
 }
 
 .sidebar-btn.active {
   background: var(--color-accent-dim);
-  border-color: var(--color-accent);
+  border-color: rgba(91, 124, 250, 0.55);
   color: var(--color-text);
 }
 
@@ -143,10 +252,10 @@ body {
   color: var(--color-text);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   padding: 5px 10px;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 
 .btn:hover {
@@ -195,6 +304,13 @@ body {
   display: block;
   touch-action: none;
   cursor: default;
+  /* The canvas is programmatically given keyboard focus (tabindex=-1) so the
+     app's global shortcuts keep working after dialogs/editors close. That
+     programmatic focus triggers the UA's native focus ring (-webkit-focus-
+     ring-color, a golden-orange outline hugging the full viewport edge).
+     Remove the UA ring here, like every other focus-managed element in Spatia;
+     canvas focus state is conveyed by the accent-colored selection UI. */
+  outline: none;
 }
 
 #canvas.panning {
@@ -205,38 +321,69 @@ body {
   cursor: copy;
 }
 
-/* ---------- HUD ---------- */
+/* ---------- HUD: compact floating dock, bottom-center (desktop) ---------- */
 #hud {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  pointer-events: none;
-  z-index: 5;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  background: var(--surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-2);
+  z-index: 6;
+  pointer-events: auto;
 }
 
-#zoom-label,
-#cursor-label {
+#zoom-label {
   font-size: 11px;
   color: var(--color-text-dim);
-  background: rgba(20, 22, 26, 0.72);
-  padding: 2px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 5px;
+  background: var(--surface-hover);
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  user-select: none;
 }
 
 #hud-controls {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
   pointer-events: auto;
-  background: rgba(20, 22, 26, 0.72);
-  padding: 4px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  backdrop-filter: blur(4px);
+}
+
+#hud .btn {
+  min-width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+}
+
+#hud .btn-icon {
+  padding: 0;
+}
+
+#hud .btn-tool {
+  padding: 0;
+  min-width: 32px;
+}
+
+#hud .btn-tool.active {
+  background: var(--color-accent-dim);
+  border-color: rgba(91, 124, 250, 0.55);
+}
+
+#hud .divider {
+  height: 22px;
+  margin: 0 2px;
 }
 
 /* ---------- Minimap ---------- */
@@ -246,27 +393,32 @@ body {
   bottom: 12px;
   z-index: 5;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-2);
   cursor: crosshair;
   touch-action: none;
   user-select: none;
 }
 
-/* ---------- Status bar ---------- */
+/* ---------- Status bar (floating chip, centered above the bottom dock) ---------- */
 #statusbar {
-  height: 26px;
-  flex: 0 0 26px;
+  position: fixed;
+  left: 50%;
+  bottom: 76px;
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - 300px));
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 0 12px;
-  background: var(--color-bg-elevated);
-  border-top: 1px solid var(--color-border);
+  padding: 5px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--elev-2);
   font-size: 11px;
   color: var(--color-text-dim);
   z-index: 10;
+  pointer-events: none;
 }
 
 #status-text {
@@ -287,11 +439,11 @@ body {
   position: fixed;
   z-index: 1000;
   min-width: 200px;
-  background: var(--color-bg-elevated);
+  background: var(--surface-2);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--elev-3);
   user-select: none;
 }
 
@@ -306,7 +458,7 @@ body {
   color: var(--color-text);
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   padding: 6px 10px;
   text-align: left;
   cursor: pointer;
@@ -314,7 +466,7 @@ body {
 }
 
 .spatia-context-item:hover:not(:disabled) {
-  background: var(--color-bg-hover);
+  background: var(--surface-hover);
 }
 
 .spatia-context-item:disabled {
@@ -337,6 +489,121 @@ body {
   margin: 4px 6px;
 }
 
+/* ---------- Data grid editor (tables / charts) ---------- */
+.data-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.data-editor {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 92vw);
+  max-height: 82vh;
+  background: var(--color-bg-elevated, #1f2428);
+  border: 1px solid var(--color-border, #333a41);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.data-editor-header {
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text, #e8eaed);
+  border-bottom: 1px solid var(--color-border, #333a41);
+}
+
+.data-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border, #333a41);
+}
+
+.data-editor-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--color-border, #3a4149);
+  border-radius: 6px;
+  background: var(--color-bg-hover, #2a2f36);
+  color: var(--color-text, #e8eaed);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.data-editor-btn:hover {
+  background: #353b43;
+}
+
+.data-editor-btn--primary {
+  background: var(--color-accent, #5b7cfa);
+  border-color: #5b7cfa;
+  color: #fff;
+  font-weight: 600;
+}
+
+.data-editor-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.data-editor-grid {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 320px;
+}
+
+.data-editor-grid th,
+.data-editor-grid td {
+  border: 1px solid var(--color-border, #333a41);
+  padding: 0;
+}
+
+.data-editor-cell {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  color: var(--color-text, #e8eaed);
+  font-size: 12.5px;
+  padding: 5px 7px;
+  outline: none;
+}
+
+.data-editor-cell:focus {
+  background: rgba(91, 124, 250, 0.12);
+}
+
+.data-editor-head {
+  background: rgba(91, 124, 250, 0.16);
+}
+
+.data-editor-corner,
+.data-editor-rowhead {
+  width: 30px;
+  text-align: center;
+  color: var(--color-text-dim, #9aa1a9);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 11px;
+}
+
+.data-editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--color-border, #333a41);
+}
+
+
 /* ---------- Inline text editor ---------- */
 .spatia-text-editor {
   position: fixed;
@@ -352,6 +619,24 @@ body {
   resize: none;
   overflow: hidden;
   box-shadow: 0 0 0 2px rgba(91, 124, 250, 0.25);
+}
+
+/* ---------- Inline table cell editor ---------- */
+.spatia-cell-editor {
+  position: fixed;
+  z-index: 900;
+  box-sizing: border-box;
+  background: #15181c;
+  color: rgba(232, 234, 237, 0.92);
+  border: 1px solid var(--color-accent);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-family: var(--font-ui);
+  line-height: 1;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(91, 124, 250, 0.28);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- Recent projects list ---------- */
@@ -388,21 +673,21 @@ body {
   background: var(--color-bg-hover);
 }
 
-/* ---------- Inspector panel (right side) ---------- */
+/* ---------- Inspector panel (right side, floating) ---------- */
 #inspector {
   position: absolute;
   top: 12px;
   left: 12px;
   width: 220px;
-  max-height: calc(100% - 90px);
+  max-height: calc(100% - 72px);
   overflow-y: auto;
   display: none;
   flex-direction: column;
   padding: 12px;
-  background: rgba(26, 29, 33, 0.96);
+  background: var(--surface-1);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-3);
   z-index: 19;
 }
 
@@ -434,13 +719,13 @@ body {
   line-height: 1;
   padding: 3px 5px;
   cursor: pointer;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   touch-action: manipulation;
 }
 
 .inspector-window-btn:hover {
   color: var(--color-text);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-hover);
 }
 
 .inspector-window-btn:focus-visible {
@@ -565,10 +850,10 @@ body {
   gap: 8px;
   width: 320px;
   padding: 14px;
-  background: var(--color-bg-elevated);
+  background: var(--surface-2);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-3);
 }
 
 .url-dialog-actions {
@@ -783,18 +1068,19 @@ body {
   left: 50%;
   bottom: 44px;
   transform: translateX(-50%) translateY(8px);
-  background: rgba(18, 20, 23, 0.95);
+  background: var(--surface-2);
   color: var(--color-text);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--radius-pill);
   padding: 8px 14px;
   font-size: 12px;
   z-index: 60;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition: opacity var(--motion-med), transform var(--motion-med);
   max-width: min(480px, calc(100vw - 32px));
   text-align: center;
+  box-shadow: var(--elev-2);
 }
 
 .app-toast.show {
@@ -832,6 +1118,143 @@ body {
 .export-option small {
   font-size: 10.5px;
   color: var(--color-text-dim);
+}
+
+/* ---------- Document title bar (project name + saved state chip) ---------- */
+.doc-titlebar {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(60vw, 480px);
+  padding: 6px 10px 6px 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--elev-2);
+  font-size: 12px;
+  pointer-events: auto;
+}
+
+.doc-title {
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+#saved-state {
+  color: var(--color-text-dim);
+  font-size: 10.5px;
+  background: var(--surface-hover);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+
+/* ---------- Crash recovery banner ---------- */
+.recovery-banner {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(70vw, 560px);
+  padding: 10px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-2);
+  font-size: 12px;
+  text-align: left;
+}
+
+.recovery-banner[hidden] {
+  display: none;
+}
+
+.recovery-head {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.recovery-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recovery-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recovery-entry-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text);
+}
+
+.recovery-entry-time {
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+/* ---------- Export details panel ---------- */
+.export-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.export-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.export-field-label {
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+
+.export-radio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.export-radio-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.export-detail-title {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.export-summary {
+  font-size: 11.5px;
+  color: var(--color-text-dim);
+  margin: 0;
 }
 
 .templates-dialog-box {
@@ -1149,6 +1572,82 @@ body {
   color: var(--color-text-dim);
 }
 
+/* ---------- Command Palette (Ctrl+K) ---------- */
+.command-dialog-box {
+  width: 480px;
+  max-width: calc(100vw - 32px);
+}
+
+.command-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+#command-list {
+  display: grid;
+  gap: 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.command-row {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  gap: 0 10px;
+  align-items: center;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12.5px;
+}
+
+.command-row:hover,
+.command-row.active {
+  border-color: var(--color-accent);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.command-row.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.command-category {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-shortcut {
+  font-size: 10.5px;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+.command-empty {
+  font-size: 12px;
+  color: var(--color-text-dim);
+  padding: 16px 0;
+  text-align: center;
+}
+
 /* ---------- Modern dark scrollbars ---------- */
 ::-webkit-scrollbar {
   width: 10px;
@@ -1187,10 +1686,10 @@ body {
   gap: 12px;
   padding: 7px 8px 7px 12px;
   border: 1px solid rgba(116, 147, 255, 0.7);
-  border-radius: 8px;
+  border-radius: var(--radius-pill);
   color: #e9edff;
   background: rgba(27, 35, 66, 0.94);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--elev-2);
   font-size: 12px;
 }
 
@@ -1513,13 +2012,112 @@ body {
   display: none;
 }
 
-/* A selected frame behaves like a normal canvas object: its page becomes
-   click-through so the resize handles on the canvas below stay reachable.
-   The toolbar keeps working (address bar + back/forward/reload/search).
-   Clicking elsewhere on the canvas deselects and restores interactivity. */
-.browser-frame.bf-selected .browser-content,
-.browser-frame.bf-selected .browser-guest {
+/* A selected frame shows a chrome outline and DOM resize handles so it can be
+   resized even though its page is always interactive. The page itself is never
+   made click-through — interact with the site even while selected; press the
+   toolbar "Done" chip (or click outside on the canvas) to deselect. */
+.browser-frame.bf-selected {
+  outline: 2px solid var(--color-accent, #4f8cff);
+  outline-offset: 2px;
+}
+
+.browser-frame.bf-selected .browser-toolbar {
+  border-top: 2px solid var(--color-accent, #4f8cff);
+}
+
+.browser-resize-handles {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 38px;
+  bottom: 0;
+  z-index: 3;
   pointer-events: none;
+}
+
+.browser-frame:not(.bf-selected) .browser-resize-handles {
+  display: none;
+}
+
+.browser-resize-handle {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.browser-resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+}
+
+/* Corners: 12px squares fully inside the frame (the frame clips overflow). */
+.browser-resize-handle.r-nw,
+.browser-resize-handle.r-ne,
+.browser-resize-handle.r-sw,
+.browser-resize-handle.r-se {
+  width: 12px;
+  height: 12px;
+}
+.browser-resize-handle.r-nw { left: 0;   top: 0;   cursor: nwse-resize; }
+.browser-resize-handle.r-ne { right: 0;  top: 0;   cursor: nesw-resize; }
+.browser-resize-handle.r-sw { left: 0;   bottom: 0; cursor: nesw-resize; }
+.browser-resize-handle.r-se { right: 0;  bottom: 0; cursor: nwse-resize; }
+.browser-resize-handle.r-nw::after,
+.browser-resize-handle.r-ne::after,
+.browser-resize-handle.r-sw::after,
+.browser-resize-handle.r-se::after { width: 10px; height: 10px; transform: translate(-50%, -50%); border: 2px solid var(--color-accent, #4f8cff); border-radius: 3px; background: var(--color-bg-elevated, #1f2428); }
+.browser-resize-handle.r-nw { border-radius: 6px 0 0 0; }
+.browser-resize-handle.r-ne { border-radius: 0 6px 0 0; }
+.browser-resize-handle.r-sw { border-radius: 0 0 0 6px; }
+.browser-resize-handle.r-se { border-radius: 0 0 6px 0; }
+
+/* Edges: full-length thin bars with a centered grab square in the middle. */
+.browser-resize-handle.r-n,
+.browser-resize-handle.r-s {
+  left: 14px;
+  right: 14px;
+  height: 10px;
+}
+.browser-resize-handle.r-e,
+.browser-resize-handle.r-w {
+  top: 14px;
+  bottom: 14px;
+  width: 10px;
+}
+.browser-resize-handle.r-n { top: 0;   cursor: ns-resize; }
+.browser-resize-handle.r-s { bottom: 0; cursor: ns-resize; }
+.browser-resize-handle.r-e { right: 0;  cursor: ew-resize; }
+.browser-resize-handle.r-w { left: 0;   cursor: ew-resize; }
+.browser-resize-handle.r-e::after { width: 8px; height: 20px; transform: translate(-50%, -50%); border: 2px solid var(--color-accent, #4f8cff); border-radius: 3px; background: var(--color-bg-elevated, #1f2428); }
+.browser-resize-handle.r-w::after { width: 8px; height: 20px; transform: translate(-50%, -50%); border: 2px solid var(--color-accent, #4f8cff); border-radius: 3px; background: var(--color-bg-elevated, #1f2428); }
+.browser-resize-handle.r-n::after, .browser-resize-handle.r-s::after { width: 20px; height: 8px; transform: translate(-50%, -50%); border: 2px solid var(--color-accent, #4f8cff); border-radius: 3px; background: var(--color-bg-elevated, #1f2428); }
+
+/* "Done" chip shown on the toolbar while the frame is selected. */
+.browser-exit {
+  flex: 0 0 auto;
+  display: none;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--color-accent, #4f8cff);
+  border-radius: 5px;
+  background: rgba(91, 124, 250, 0.18);
+  color: #e8eaed;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.browser-frame.bf-selected .browser-exit {
+  display: inline-flex;
+}
+
+.browser-exit:hover {
+  background: rgba(91, 124, 250, 0.32);
 }
 
 .browser-toolbar {
@@ -1614,6 +2212,9 @@ body {
   pointer-events: none;
   opacity: 0.9;
 }
+
+/* Desktop panels (sidebar, HUD dock, inspector) stay anchored at their CSS
+ * positions — there is intentionally no grip / drag-to-reposition mechanism. */
 
 /* ============================================================ Tablet UI ====
  * Dedicated iPad / tablet interface (html.tb-active, set by TabletUI).
@@ -1780,32 +2381,7 @@ html.tb-active #tb-pentools {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
-/* ---- Freely movable floating toolbars (drag handle) ---- */
-html.tb-active .tb-float {
-  touch-action: none;
-}
-html.tb-active .tb-float-moved {
-  left: auto !important;
-  bottom: auto !important;
-  transform: none !important;
-}
-html.tb-active .tb-float-handle {
-  flex: 0 0 auto;
-  width: 18px;
-  height: 26px;
-  border-radius: 8px;
-  background: transparent;
-  cursor: grab;
-  touch-action: none;
-  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.35) 1.2px, transparent 1.4px);
-  background-size: 8px 8px;
-  background-position: center;
-  transition: background-color 0.14s ease;
-}
-html.tb-active .tb-float-handle:active {
-  cursor: grabbing;
-  background-color: rgba(255, 255, 255, 0.12);
-}
+/* ---- Freely movable floating toolbars: removed — toolbars stay anchored. ---- */
 
 /* Auto-hide while drawing so the pencil stroke is unobstructed. */
 html.tb-active #tb-pentools.tb-pt-collapsed {
@@ -2335,6 +2911,21 @@ html.tb-active .url-dialog-box button:focus-visible {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--color-text-dim);
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-check input {
+  accent-color: var(--color-accent);
+  width: 15px;
+  height: 15px;
 }
 
 .settings-about {

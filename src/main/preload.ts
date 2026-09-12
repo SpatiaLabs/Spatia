@@ -30,6 +30,14 @@ export interface SaveProjectResult {
   filePath: string | null;
 }
 
+/** Result of saving a project to its default per-project folder. */
+export interface SaveDefaultProjectResult {
+  ok: boolean;
+  filePath: string | null;
+  folder: string | null;
+  error?: string;
+}
+
 export interface AssetImportResult {
   canceled: boolean;
   asset: AssetMeta | null;
@@ -51,9 +59,12 @@ export interface ImportProjectResult {
   contents: string | null;
 }
 
-export interface AiAssetResult {
-  data: string;
-  mime: string;
+/** A crash-recovery draft stored by the main process. */
+export interface RecoveryEntry {
+  projectId: string;
+  name: string;
+  updatedAt: string;
+  contents: string;
 }
 
 export interface SpatiaApi {
@@ -61,6 +72,16 @@ export interface SpatiaApi {
   openProjectPath(filePath: string): Promise<OpenProjectResult>;
   saveProject(json: string): Promise<SaveProjectResult>;
   saveAsProject(json: string, suggestedName: string): Promise<SaveProjectResult>;
+  /** First save: store the project in its default per-project folder. */
+  projectSaveDefault(projectId: string, name: string, json: string): Promise<SaveDefaultProjectResult>;
+  /** Write a silent crash-recovery copy of the document. */
+  recoveryWrite(projectId: string, json: string): Promise<boolean>;
+  /** List crash-recovery drafts (newest first). */
+  recoveryList(): Promise<RecoveryEntry[]>;
+  /** Remove the crash-recovery draft for a project. */
+  recoveryClear(projectId: string): Promise<boolean>;
+  /** Write an exported image into the project's exports/ folder (no dialog). */
+  exportToExports(projectId: string, fileName: string, payload: string): Promise<ExportResult>;
   getRecentProjects(): Promise<RecentProject[]>;
   exportProject(projectId: string, json: string, suggestedName: string): Promise<ExportResult>;
   exportFile(kind: ExportFileKind, suggestedName: string, payload: string): Promise<ExportResult>;
@@ -97,8 +118,6 @@ export interface SpatiaApi {
   pluginsRemove(id: string): Promise<boolean>;
   collabGetIdentity(): Promise<CollabIdentity>;
   onJoinRequest(cb: (roomId: string) => void): () => void;
-  /** Read a bundled Local-AI runtime file (name whitelisted in main) as base64. */
-  aiGetAsset(name: string): Promise<AiAssetResult | null>;
 }
 
 const api: SpatiaApi = {
@@ -113,6 +132,21 @@ const api: SpatiaApi = {
   },
   saveAsProject(json: string, suggestedName: string): Promise<SaveProjectResult> {
     return ipcRenderer.invoke("project:saveAs", json, suggestedName);
+  },
+  projectSaveDefault(projectId: string, name: string, json: string): Promise<SaveDefaultProjectResult> {
+    return ipcRenderer.invoke("project:saveDefault", projectId, name, json);
+  },
+  recoveryWrite(projectId: string, json: string): Promise<boolean> {
+    return ipcRenderer.invoke("project:recoveryWrite", projectId, json);
+  },
+  recoveryList(): Promise<RecoveryEntry[]> {
+    return ipcRenderer.invoke("project:recoveryList");
+  },
+  recoveryClear(projectId: string): Promise<boolean> {
+    return ipcRenderer.invoke("project:recoveryClear", projectId);
+  },
+  exportToExports(projectId: string, fileName: string, payload: string): Promise<ExportResult> {
+    return ipcRenderer.invoke("project:exportToExports", projectId, fileName, payload);
   },
   getRecentProjects(): Promise<RecentProject[]> {
     return ipcRenderer.invoke("project:recent");
@@ -227,9 +261,6 @@ const api: SpatiaApi = {
     const listener = (_event: Electron.IpcRendererEvent, roomId: string): void => cb(String(roomId));
     ipcRenderer.on("collab:join", listener);
     return () => ipcRenderer.removeListener("collab:join", listener);
-  },
-  aiGetAsset(name: string): Promise<AiAssetResult | null> {
-    return ipcRenderer.invoke("ai:getAsset", name);
   },
 };
 

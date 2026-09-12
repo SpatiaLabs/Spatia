@@ -410,7 +410,7 @@
   // submits the report in the background to a server-side endpoint — the user
   // stays on the site, nothing navigates away.
 
-  var APP_VERSION = "0.4.9";
+  var APP_VERSION = "0.5.0";
   var REPORT_ENDPOINT = "/.netlify/functions/report";
 
   var reportDialog = document.getElementById("report-dialog");

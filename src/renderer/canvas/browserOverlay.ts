@@ -26,7 +26,7 @@ import type { CanvasObject } from "../../shared/types/object.js";
 import type { CanvasEngine } from "../canvas/engine.js";
 import type { ProjectStore } from "../project/projectStore.js";
 import type { SelectionStore } from "../state/selectionStore.js";
-import { moveObjectsCommand } from "../command/commands.js";
+import { moveObjectsCommand, resizeObjectsCommand } from "../command/commands.js";
 
 /** Zoom below which rendering the overlay is pointless but expensive. */
 const MIN_OVERLAY_ZOOM = 0.08;
@@ -60,6 +60,12 @@ interface FrameEntry {
     offX: number;
     offY: number;
     moved: boolean;
+  } | null;
+  resize: {
+    pointerId: number;
+    dir: string;
+    before: { id: string; x: number; y: number; width: number; height: number };
+    start: Point;
   } | null;
   /** Last geometry actually written to the DOM, so unchanged frames skip layout. */
   last: { left: number; top: number; width: number; height: number; zoom: number; visible: boolean } | null;
@@ -251,7 +257,16 @@ export class BrowserFrameOverlay {
     goBtn.title = "Go";
     goBtn.textContent = "Go";
 
-    toolbar.append(backBtn, fwdBtn, reloadBtn, addr, goBtn);
+    const exitBtn = document.createElement("button");
+    exitBtn.type = "button";
+    exitBtn.className = "browser-exit";
+    exitBtn.title = "Done — stop selecting this frame";
+    exitBtn.textContent = "Done";
+    exitBtn.addEventListener("click", () => {
+      this.#selection.clear();
+    });
+
+    toolbar.append(backBtn, fwdBtn, reloadBtn, addr, goBtn, exitBtn);
 
     const content = document.createElement("div");
     content.className = "browser-content";
@@ -265,7 +280,16 @@ export class BrowserFrameOverlay {
     const guest = webviewMode ? this.#createWebviewGuest(url, content, addr) : this.#createIframeGuest(url, content, addr, note);
     if (!guest) return null;
 
-    root.append(toolbar, content, note);
+    const handles = document.createElement("div");
+    handles.className = "browser-resize-handles";
+    for (const dir of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
+      const h = document.createElement("div");
+      h.className = `browser-resize-handle r-${dir}`;
+      h.dataset.dir = dir;
+      handles.appendChild(h);
+    }
+
+    root.append(toolbar, content, note, handles);
 
     const entry: FrameEntry = {
       id,
@@ -279,10 +303,12 @@ export class BrowserFrameOverlay {
       note,
       guest,
       drag: null,
+      resize: null,
       last: null,
     };
     this.#bindToolbar(entry, webviewMode);
     this.#bindDrag(entry);
+    this.#bindResize(entry);
     entry.root.addEventListener("pointerdown", () => {
       const obj = this.#project.getObject(id);
       if (obj && obj.type === "frame" && !obj.locked) this.#selection.setIds([id]);
@@ -524,6 +550,80 @@ export class BrowserFrameOverlay {
     };
     entry.toolbar.addEventListener("pointerup", endDrag);
     entry.toolbar.addEventListener("pointercancel", endDrag);
+  }
+
+  /**
+   * Resize a selected frame via the overlay's DOM corner/edge handles. The
+   * canvas grab-handles are unreachable underneath the always-interactive
+   * page, so the frame gets its own resize handles while selected. Live
+   * updates apply directly; a single undoable resize command is committed on
+   * release (mirroring how the canvas engine commits move gestures).
+   */
+  #bindResize(entry: FrameEntry): void {
+    const MIN_SIZE = 40;
+    const handleEls = entry.root.querySelectorAll<HTMLElement>(".browser-resize-handle");
+    for (const el of handleEls) {
+      const dir = el.dataset.dir ?? "";
+      if (!dir) continue;
+      el.addEventListener("pointerdown", (e) => {
+        if (entry.resize) return;
+        const obj = this.#project.getObject(entry.id);
+        if (!obj || obj.type !== "frame" || obj.locked) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const frame = this.#engine.getFrame();
+        const rect = this.layer().getBoundingClientRect();
+        const start = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top }, frame);
+        entry.resize = {
+          pointerId: e.pointerId,
+          dir,
+          before: { id: entry.id, x: obj.x, y: obj.y, width: obj.width, height: obj.height },
+          start,
+        };
+        el.setPointerCapture(e.pointerId);
+      });
+      const move = (e: PointerEvent): void => {
+        const r = entry.resize;
+        if (!r || r.pointerId !== e.pointerId) return;
+        const frame = this.#engine.getFrame();
+        const rect = this.layer().getBoundingClientRect();
+        const p = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top }, frame);
+        const before = r.before;
+        let left = before.x;
+        let right = before.x + before.width;
+        let top = before.y;
+        let bottom = before.y + before.height;
+        const dx = p.x - r.start.x;
+        const dy = p.y - r.start.y;
+        if (r.dir.includes("w")) left = before.x + dx;
+        if (r.dir.includes("e")) right = before.x + before.width + dx;
+        if (r.dir.includes("n")) top = before.y + dy;
+        if (r.dir.includes("s")) bottom = before.y + before.height + dy;
+        if (right - left < MIN_SIZE) {
+          if (r.dir.includes("w")) right = left + MIN_SIZE;
+          else left = right - MIN_SIZE;
+        }
+        if (bottom - top < MIN_SIZE) {
+          if (r.dir.includes("n")) bottom = top + MIN_SIZE;
+          else top = bottom - MIN_SIZE;
+        }
+        this.#project.resizeObject(entry.id, left, top, right - left, bottom - top);
+      };
+      const end = (e: PointerEvent): void => {
+        const r = entry.resize;
+        if (!r || r.pointerId !== e.pointerId) return;
+        entry.resize = null;
+        if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+        const obj = this.#project.getObject(entry.id);
+        if (!obj || obj.type !== "frame") return;
+        if (obj.x === r.before.x && obj.y === r.before.y && obj.width === r.before.width && obj.height === r.before.height) return;
+        const after = { id: entry.id, x: obj.x, y: obj.y, width: obj.width, height: obj.height };
+        this.#engine.commitCommand(resizeObjectsCommand(this.#project, [r.before], [after]));
+      };
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", end);
+      el.addEventListener("pointercancel", end);
+    }
   }
 
   #entryFor(el: HTMLElement): FrameEntry | undefined {

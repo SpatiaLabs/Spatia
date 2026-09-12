@@ -7,22 +7,6 @@ import type { Command } from "../command/commandManager.js";
 import { setPropsCommand } from "../command/commands.js";
 import { isEditingText } from "./textEditor.js";
 
-const FLOAT_POS_KEY = "spatia.tbFloatPos";
-type FloatPos = { left: number; top: number };
-
-function loadFloatPos(): Record<string, FloatPos> {
-  try {
-    const raw = JSON.parse(localStorage.getItem(FLOAT_POS_KEY) || "null");
-    return raw && typeof raw === "object" ? raw : {};
-  } catch {
-    return {};
-  }
-}
-
-function clamp(v: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, v));
-}
-
 /**
  * Dedicated iPad / tablet interface (web context only).
  *
@@ -94,7 +78,6 @@ export class TabletUI {
     this.patchStatus();
     this.app.setInspectorMinimized(false);
     this.wire();
-    this.restoreFloatPositions();
 
     this.app.selection.changed.subscribe(() => this.refresh());
     this.app.commands.changed.subscribe(() => this.refresh());
@@ -179,6 +162,12 @@ export class TabletUI {
     const center = this.centerWorld();
     if (kind === "frame") {
       this.invokeApp("addFrameAt", center);
+    } else if (kind === "table") {
+      this.invokeApp("addTableAt", center);
+    } else if (kind === "comparison") {
+      this.invokeApp("addTableAt", center, true);
+    } else if (kind === "chart") {
+      this.invokeApp("addChartAt", "bar", center);
     } else {
       this.invokeApp("addObjectAt", kind, center);
     }
@@ -505,87 +494,6 @@ export class TabletUI {
 
     // Tap the dimmed area around a re-skinned dialog to dismiss it.
     document.addEventListener("click", this.onDialogScrim, true);
-
-    this.bindFloatToolbars();
-  }
-
-  /**
-   * Make the floating toolbars (#tb-pentools, .tb-context) freely movable via a
-   * small drag handle. While a toolbar has been repositioned it keeps its pixel
-   * position (the centered CSS default is overridden by .tb-float-moved); the
-   * position is clamped to the viewport and persisted across sessions.
-   */
-  private bindFloatToolbars(): void {
-    const handles = Array.from(this.root.querySelectorAll<HTMLElement>("[data-tbfloat]"));
-    for (const handle of handles) {
-      handle.addEventListener("pointerdown", (e) => {
-        if (e.button !== 0) return;
-        const el = handle.closest<HTMLElement>(".tb-float");
-        if (!el) return;
-        e.preventDefault();
-        this.startFloatDrag(e, el, handle.dataset["tbfloat"]!);
-      });
-    }
-  }
-
-  private startFloatDrag(e: PointerEvent, el: HTMLElement, key: string): void {
-    e.preventDefault();
-    el.classList.add("tb-float-moved");
-    el.setPointerCapture(e.pointerId);
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const rect = el.getBoundingClientRect();
-    const origLeft = rect.left;
-    const origTop = rect.top;
-    const apply = (x: number, y: number) => {
-      const w = el.offsetWidth;
-      const h = el.offsetHeight;
-      const left = clamp(x, 8, window.innerWidth - w - 8);
-      const top = clamp(y, 8, window.innerHeight - h - 8);
-      el.style.left = `${left}px`;
-      el.style.top = `${top}px`;
-    };
-    apply(origLeft, origTop);
-    const onMove = (ev: PointerEvent) => {
-      apply(origLeft + (ev.clientX - startX), origTop + (ev.clientY - startY));
-    };
-    const onUp = () => {
-      el.releasePointerCapture(e.pointerId);
-      el.removeEventListener("pointermove", onMove);
-      el.removeEventListener("pointerup", onUp);
-      el.removeEventListener("pointercancel", onUp);
-      try {
-        const pos = { left: parseFloat(el.style.left), top: parseFloat(el.style.top) };
-        if (Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
-          const store = loadFloatPos();
-          store[key] = pos;
-          localStorage.setItem(FLOAT_POS_KEY, JSON.stringify(store));
-        }
-      } catch { /* best-effort */ }
-    };
-    el.addEventListener("pointermove", onMove);
-    el.addEventListener("pointerup", onUp);
-    el.addEventListener("pointercancel", onUp);
-  }
-
-  private restoreFloatPositions(): void {
-    let store: Record<string, { left: number; top: number }> | null = null;
-    try {
-      store = JSON.parse(localStorage.getItem(FLOAT_POS_KEY) || "null");
-    } catch { /* */ }
-    if (!store) return;
-    for (const el of Array.from(this.root.querySelectorAll<HTMLElement>(".tb-float"))) {
-      const h = el.querySelector<HTMLElement>("[data-tbfloat]");
-      const key = h ? h.dataset["tbfloat"] : "";
-      const saved = key ? store[key] : undefined;
-      if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
-        el.classList.add("tb-float-moved");
-        const w = el.offsetWidth || 0;
-        const hpx = el.offsetHeight || 0;
-        el.style.left = `${clamp(saved.left, 8, window.innerWidth - w - 8)}px`;
-        el.style.top = `${clamp(saved.top, 8, window.innerHeight - hpx - 8)}px`;
-      }
-    }
   }
 
   private onResize = (): void => {
@@ -876,7 +784,7 @@ export class TabletUI {
 
 type CallbackApp = AppLike;
 
-type AddKind = "text" | "note" | "url" | "image" | "file" | "frame";
+type AddKind = "text" | "note" | "url" | "image" | "file" | "frame" | "table" | "comparison" | "chart";
 
 interface EmitterLike {
   subscribe(fn: () => void): () => void;
@@ -1330,7 +1238,6 @@ const SHELL_HTML = `
   </nav>
 
   <div id="tb-pentools" class="tb-pentools tb-float" hidden role="toolbar" aria-label="Pen controls">
-    <span class="tb-float-handle" data-tbfloat="pentools" role="presentation" aria-hidden="true"></span>
     <button id="tb-pt-eraser" class="tb-pt-btn" data-pt="eraser" type="button" aria-label="Eraser" aria-pressed="false">${ICONS.eraser}</button>
     <span class="tb-pt-sep"></span>
     <button class="tb-pt-btn" data-pt="size-down" type="button" aria-label="Smaller pen">${ICONS["size-down"]}</button>
@@ -1349,7 +1256,6 @@ const SHELL_HTML = `
 
   <div id="tb-context" class="tb-context tb-float" hidden role="toolbar" aria-label="Selected object actions">
     <div id="tb-context-body" class="tb-context-body"></div>
-    <span class="tb-float-handle" data-tbfloat="context" role="presentation" aria-hidden="true"></span>
   </div>
 
   ${paneHtml(PANE_SHELL[0])}
@@ -1371,6 +1277,9 @@ const SHELL_HTML = `
       <button class="tb-col" data-add="frame" type="button"><span class="tb-col-icon">${ICONS.frame ?? ""}</span><span>Frame</span></button>
       <button class="tb-col" data-add="image" type="button"><span class="tb-col-icon">${ICONS.media}</span><span>Image</span></button>
       <button class="tb-col" data-add="file" type="button"><span class="tb-col-icon">${ICONS.file ?? ""}</span><span>File</span></button>
+      <button class="tb-col" data-add="table" type="button"><span class="tb-col-icon">${ICONS.table ?? ICONS.text ?? ""}</span><span>Table</span></button>
+      <button class="tb-col" data-add="comparison" type="button"><span class="tb-col-icon">${ICONS.table ?? ICONS.text ?? ""}</span><span>Compare</span></button>
+      <button class="tb-col" data-add="chart" type="button"><span class="tb-col-icon">${ICONS.chart ?? ICONS.text ?? ""}</span><span>Chart</span></button>
     </div>
     <div class="tb-pane-hint">Two-finger gestures pan and zoom. Pinch to zoom, drag to pan — or hold the Knob tool for precise work.</div>
   </div>

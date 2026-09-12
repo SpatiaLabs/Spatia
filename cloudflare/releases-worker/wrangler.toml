@@ -1,0 +1,7 @@
+name = "spatia-releases"
+main = "worker.js"
+compatibility_date = "2026-09-12"
+
+[[r2_buckets]]
+bucket_name = "spatia-releases"
+binding = "SPATIA_RELEASES"

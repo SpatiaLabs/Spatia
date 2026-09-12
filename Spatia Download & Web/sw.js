@@ -3,11 +3,11 @@
  * Installs the app shell so the site + Spatia Web keep working offline.
  *  - navigation (HTML) requests: network-first, fall back to cached shell
  *  - same-origin static assets: stale-while-revalidate
- * Large downloads (the .msi installer) are intentionally NOT cached.
+ * Large downloads (installers/archives) are intentionally NOT cached.
  */
 "use strict";
 
-var CACHE = "spatia-site-v7";
+var CACHE = "spatia-site-v8";
 var CORE = [
   "./",
   "./index.html",
@@ -53,7 +53,7 @@ self.addEventListener("fetch", function (event) {
 
   var url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.indexOf("/downloads/") !== -1 || url.pathname.endsWith(".msi")) return;
+  if (url.pathname.indexOf("/downloads/") !== -1 || /\.(msi|zip)$/i.test(url.pathname)) return;
 
   if (req.mode === "navigate") {
     event.respondWith(

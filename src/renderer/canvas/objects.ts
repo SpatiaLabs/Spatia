@@ -7,6 +7,8 @@ import {
   groupBounds,
 } from "../../shared/geometry/workspace.js";
 import { isStrokeOnly } from "../../shared/geometry/shapes.js";
+import { tableLayout } from "../../shared/geometry/tableLayout.js";
+import { isRtlLine } from "../../shared/geometry/ink.js";
 
 const STROKE = "rgba(91,124,250,0.5)";
 const SELECTION = "#5b7cfa";
@@ -89,6 +91,12 @@ function drawObject(
       break;
     case "shape":
       drawShape(ctx, frame, obj);
+      break;
+    case "table":
+      drawTable(ctx, frame, obj);
+      break;
+    case "chart":
+      drawChart(ctx, frame, obj);
       break;
     default:
       drawTestObject(ctx, frame, obj);
@@ -198,7 +206,8 @@ function drawText(ctx: CanvasRenderingContext2D, frame: ViewportFrame, obj: Text
   const fontPx = Math.max(1, obj.fontSize * frame.zoom);
   const weight = obj.bold ? "bold " : "";
   const style = obj.italic ? "italic " : "";
-  ctx.font = `${style}${weight}${fontPx}px ${FONT}`;
+  const family = obj.fontFamily ? `"${obj.fontFamily}"` : FONT;
+  ctx.font = `${style}${weight}${fontPx}px ${family}`;
   ctx.textBaseline = "top";
   ctx.fillStyle = TEXT_FILL;
   const textAlign = obj.align;
@@ -209,9 +218,12 @@ function drawText(ctx: CanvasRenderingContext2D, frame: ViewportFrame, obj: Text
   let cursorY = -h / 2 + pad;
   const alignMap = { left: "left", center: "center", right: "right" } as const;
   const a = alignMap[textAlign] ?? "left";
-  ctx.textAlign = a;
   for (let i = 0; i < lines.length; i++) {
-    const x = a === "left" ? -w / 2 + pad : a === "right" ? w / 2 - pad : 0;
+    // RTL (Arabic / Hebrew) lines grow leftward and read from the right edge;
+    // mirror the align per line so they never overflow the opposite padding.
+    const lineAlign = isRtlLine(lines[i]) ? "right" : a;
+    ctx.textAlign = lineAlign;
+    const x = lineAlign === "left" ? -w / 2 + pad : lineAlign === "right" ? w / 2 - pad : 0;
     if (cursorY + lineHeight > h / 2 - pad) break;
     ctx.fillText(lines[i], x, cursorY);
     cursorY += lineHeight;
@@ -516,6 +528,7 @@ function drawPen(
   if (!pen.points || pen.points.length === 0) return;
   ctx.save();
   ctx.strokeStyle = pen.color || "#e8eaed";
+  ctx.globalAlpha = pen.opacity ?? 1;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   strokeWorldPath(ctx, pen.points, frame, Math.max(1, (pen.strokeWidth || 3) * frame.zoom));
@@ -523,7 +536,7 @@ function drawPen(
 }
 
 /** Stroke a polyline whose per-vertex `width` (world units) may vary. */
-function strokeWorldPath(
+export function strokeWorldPath(
   ctx: CanvasRenderingContext2D,
   pts: WorldPoint[],
   frame: ViewportFrame,
@@ -603,12 +616,19 @@ function drawFrame(
   const p = worldToScreen({ x: f.x, y: f.y }, frame);
   const w = f.width * frame.zoom;
   const h = f.height * frame.zoom;
+  const shape = f.frameShape ?? "rectangle";
   ctx.save();
   ctx.fillStyle = f.color ?? "rgba(42,109,245,0.08)";
   ctx.strokeStyle = f.color ?? "#2a6df5";
   ctx.lineWidth = Math.max(1, 2 * frame.zoom);
   ctx.beginPath();
-  roundRect(ctx, p.x, p.y, w, h, 10);
+  if (shape === "ellipse") {
+    ctx.ellipse(p.x + w / 2, p.y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+  } else if (shape === "rounded") {
+    roundRect(ctx, p.x, p.y, w, h, Math.max(4, Math.min(w, h) * 0.2));
+  } else {
+    roundRect(ctx, p.x, p.y, w, h, 10);
+  }
   ctx.fill();
   ctx.stroke();
   if (f.name) {
@@ -620,6 +640,356 @@ function drawFrame(
     ctx.fillText(f.name, p.x + 8, p.y - 4);
   }
   ctx.restore();
+}
+
+// -------- Table / Chart drawing --------
+
+const CHART_COLORS = ["#5b7cfa", "#3ddc84", "#f0c33c", "#f2685c", "#c07cf2", "#4fd5d0", "#8c8cf5"];
+
+function drawTable(
+  ctx: CanvasRenderingContext2D,
+  frame: ViewportFrame,
+  obj: Extract<CanvasObject, { type: "table" }>
+): void {
+  const { p, w, h } = drawObjectFrame(ctx, frame, obj);
+  const data = obj.data;
+  const columns = data.columns.length;
+  const rows = data.rows.length;
+
+  ctx.save();
+  ctx.translate(p.x + w / 2, p.y + h / 2);
+  ctx.rotate(obj.rotation);
+
+  ctx.beginPath();
+  roundRect(ctx, -w / 2, -h / 2, w, h, corner(w, h));
+  ctx.fillStyle = "#15181c";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.16)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  if (columns === 0) {
+    ctx.fillStyle = "rgba(232,234,237,0.5)";
+    ctx.font = `400 ${Math.max(10, 12 * frame.zoom)}px ${FONT}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Empty table", 0, 0);
+    ctx.restore();
+    return;
+  }
+
+  const layout = tableLayout(data, w, h, frame.zoom);
+  const headerPx = layout.headerPx;
+  const pad = layout.pad;
+  const rowH = layout.rowH;
+  const colW = layout.colW;
+
+  const accent = obj.comparison ? "#7a5cf0" : "#3d5be8";
+  // Header.
+  ctx.fillStyle = accent;
+  ctx.fillRect(-w / 2, -h / 2, w, headerPx);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `600 ${Math.max(8, headerPx * 0.5)}px ${FONT}`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (let c = 0; c < columns; c++) {
+    const cx = -w / 2 + c * colW;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(cx + pad, -h / 2, colW - pad * 2, headerPx);
+    ctx.clip();
+    ctx.fillText(clipText(ctx, data.columns[c] || "", Math.max(4, colW - pad * 2)), cx + pad, -h / 2 + headerPx / 2);
+    ctx.restore();
+  }
+
+  // Body rows.
+  for (let r = 0; r < rows; r++) {
+    const y = -h / 2 + headerPx + r * rowH;
+    const row = data.rows[r];
+    if (r % 2 === 1) {
+      ctx.fillStyle = "rgba(255,255,255,0.035)";
+      ctx.fillRect(-w / 2, y, w, rowH);
+    }
+    const cellPx = Math.max(7, Math.min(11, headerPx * 0.58));
+    ctx.font = `400 ${cellPx}px ${FONT}`;
+    ctx.fillStyle = "rgba(232,234,237,0.85)";
+    for (let c = 0; c < columns; c++) {
+      const cx = -w / 2 + c * colW;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx + pad, y, colW - pad * 2, rowH);
+      ctx.clip();
+      ctx.fillText(clipText(ctx, row[c] ?? "", Math.max(4, colW - pad * 2)), cx + pad, y + rowH / 2);
+      ctx.restore();
+    }
+  }
+
+  // Grid lines.
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let c = 1; c < columns; c++) {
+    const x = -w / 2 + c * colW;
+    ctx.moveTo(x, -h / 2);
+    ctx.lineTo(x, h / 2);
+  }
+  for (let r = 0; r <= rows; r++) {
+    const y = -h / 2 + headerPx + r * rowH;
+    ctx.moveTo(-w / 2, y);
+    ctx.lineTo(w / 2, y);
+  }
+  ctx.stroke();
+  if (obj.comparison) {
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.lineWidth = Math.max(1, 2 * frame.zoom);
+    ctx.strokeRect(-w / 2, -h / 2, w, headerPx);
+  }
+  ctx.restore();
+}
+
+function drawChart(
+  ctx: CanvasRenderingContext2D,
+  frame: ViewportFrame,
+  obj: Extract<CanvasObject, { type: "chart" }>
+): void {
+  const { p, w, h } = drawObjectFrame(ctx, frame, obj);
+
+  ctx.save();
+  ctx.translate(p.x + w / 2, p.y + h / 2);
+  ctx.rotate(obj.rotation);
+
+  ctx.beginPath();
+  roundRect(ctx, -w / 2, -h / 2, w, h, corner(w, h));
+  ctx.fillStyle = "#15181c";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.16)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const titlePx = obj.title ? Math.max(10, Math.min(15, h * 0.09)) : 0;
+  if (obj.title) {
+    ctx.fillStyle = "#e8eaed";
+    ctx.font = `600 ${titlePx}px ${FONT}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText(clipText(ctx, obj.title, w - Math.max(8, 12 * frame.zoom)), 0, -h / 2 + Math.max(5, 7 * frame.zoom));
+  }
+  const plotPad = Math.max(4, 8 * frame.zoom);
+  const plotY = -h / 2 + (obj.title ? titlePx + plotPad : plotPad);
+  const plotH = h - (obj.title ? titlePx : 0) - plotPad * 2;
+
+  if (obj.kind === "pie") {
+    drawPie(ctx, obj, w, plotY, plotH, frame.zoom);
+  } else {
+    drawCartesianChart(ctx, obj, w, h, plotY, plotH, frame.zoom);
+  }
+  ctx.restore();
+}
+
+function drawCartesianChart(
+  ctx: CanvasRenderingContext2D,
+  obj: Extract<CanvasObject, { type: "chart" }>,
+  w: number,
+  h: number,
+  plotY: number,
+  plotH: number,
+  zoom: number
+): void {
+  const data = obj.data;
+  const seriesCols = Math.max(1, Math.min(data.columns.length, data.columns.length - 1));
+  const valueCols: number[] = [];
+  for (let c = 1; c <= seriesCols; c++) valueCols.push(c);
+  if (valueCols.length === 0) valueCols.push(0);
+
+  const all: number[] = [];
+  for (const row of data.rows) {
+    for (const c of valueCols) {
+      const n = Number(row[c]);
+      if (Number.isFinite(n) && row[c].trim() !== "") all.push(Math.abs(n));
+    }
+  }
+  const maxVal = Math.max(1, ...all);
+  const categories = data.rows.length > 0 ? data.rows.length : 1;
+  const pad = Math.max(4, 6 * zoom);
+  const labelSpace = Math.max(6, Math.min(18, h * 0.1)); // x category labels
+  const axisSpace = Math.max(10, Math.min(26, w * 0.12)); // y value labels
+  const plotW = Math.max(30, w - axisSpace - pad * 2);
+  const plotH2 = Math.max(20, plotH - labelSpace - pad - 8 * zoom);
+  const left = -w / 2 + axisSpace + pad;
+  const bottom = plotY + plotH2 + pad;
+  const top = plotY + pad;
+
+  // Gridlines + y labels.
+  ctx.font = `400 ${Math.max(7, 9 * zoom)}px ${FONT}`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  const steps = 4;
+  for (let i = 0; i <= steps; i++) {
+    const v = (maxVal / steps) * i;
+    if (i > 0 && i < steps) {
+      const y = bottom - (plotH2 * i) / steps;
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(left + plotW, y);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(232,234,237,0.45)";
+    ctx.fillText(formatNumber(v), left - 3, bottom - (plotH2 * i) / steps);
+  }
+  ctx.strokeStyle = "rgba(232,234,237,0.7)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(left, bottom);
+  ctx.lineTo(left + plotW, bottom);
+  ctx.moveTo(left, top);
+  ctx.lineTo(left, bottom);
+  ctx.stroke();
+
+  const colW = plotW / categories;
+  const catW = viewableWidth(ctx, (obj.data.columns[0] || "Category"), Math.max(4, colW - 4));
+  const seriesCount = valueCols.length;
+
+  if (obj.kind === "bar") {
+    const barGap = Math.max(1, colW * 0.1);
+    const barW = Math.max(2, (colW - barGap * 2 - (seriesCount - 1) * 2) / seriesCount);
+    for (const row of data.rows) {
+      for (let s = 0; s < seriesCount; s++) {
+        const c = valueCols[s];
+        const n = Number(row[c]);
+        const val = Number.isFinite(n) && row[c].trim() !== "" ? n : 0;
+        const bh = (Math.abs(val) / maxVal) * plotH2;
+        const x = left + colW * 0 + rowIndex(row, data.rows) * colW + barGap + s * (barW + 2);
+        const y = val >= 0 ? bottom - bh : bottom;
+        ctx.fillStyle = CHART_COLORS[s % CHART_COLORS.length];
+        ctx.fillRect(x, y, barW, Math.max(1, bh));
+      }
+    }
+  } else {
+    for (let s = 0; s < seriesCount; s++) {
+      const c = valueCols[s];
+      ctx.strokeStyle = CHART_COLORS[s % CHART_COLORS.length];
+      ctx.lineWidth = Math.max(1, 2 * zoom);
+      ctx.beginPath();
+      data.rows.forEach((row, i) => {
+        const n = Number(row[c]);
+        const val = Number.isFinite(n) && row[c].trim() !== "" ? n : 0;
+        const x = left + colW * (i + 0.5);
+        const y = bottom - (val / maxVal) * plotH2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.fillStyle = CHART_COLORS[s % CHART_COLORS.length];
+      data.rows.forEach((row, i) => {
+        const n = Number(row[c]);
+        const val = Number.isFinite(n) && row[c].trim() !== "" ? n : 0;
+        const x = left + colW * (i + 0.5);
+        const y = bottom - (val / maxVal) * plotH2;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(1.5, 3 * zoom), 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+  }
+
+  // Category labels.
+  ctx.font = `400 ${Math.max(7, 9 * zoom)}px ${FONT}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "rgba(232,234,237,0.6)";
+  data.rows.forEach((row, i) => {
+    const x = left + colW * (i + 0.5);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x - catW / 2, bottom + 2, catW, labelSpace);
+    ctx.clip();
+    ctx.fillText(row[0] || "", x, bottom + 4);
+    ctx.restore();
+  });
+}
+
+function rowIndex(row: readonly string[], rows: readonly (readonly string[])[]): number {
+  for (let i = 0; i < rows.length; i++) if (rows[i] === row) return i;
+  return 0;
+}
+
+function viewableWidth(ctx: CanvasRenderingContext2D, label: string, maxW: number): number {
+  return Math.min(maxW, ctx.measureText(label).width + 2);
+}
+
+function formatNumber(v: number): string {
+  if (Math.abs(v) >= 10000) return v.toExponential(1).replace(".0", "");
+  if (Math.abs(v) >= 100) return Math.round(v).toString();
+  return String(Math.round(v * 10) / 10);
+}
+
+function drawPie(
+  ctx: CanvasRenderingContext2D,
+  obj: Extract<CanvasObject, { type: "chart" }>,
+  w: number,
+  plotY: number,
+  plotH: number,
+  zoom: number
+): void {
+  const slices: { label: string; value: number }[] = obj.data.rows
+    .map((row) => ({ label: row[0] || "", value: Number(row[1]) }))
+    .filter((s) => Number.isFinite(s.value) && s.value > 0);
+  const total = slices.reduce((sum, s) => sum + s.value, 0);
+  if (slices.length === 0 || total <= 0) {
+    ctx.fillStyle = "rgba(232,234,237,0.5)";
+    ctx.font = `400 ${Math.max(10, 12 * zoom)}px ${FONT}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("No data", 0, plotY + plotH / 2);
+    return;
+  }
+  const legendW = Math.min(w * 0.34, 160 * zoom);
+  const pad = Math.max(4, 8 * zoom);
+  const size = Math.min(w - legendW - pad * 2, plotH - pad * 2);
+  const cx = -w / 2 + pad + size / 2;
+  const cy = plotY + (plotH - size) / 2 + size / 2;
+  const r = size / 2;
+
+  let angle = -Math.PI / 2;
+  for (let i = 0; i < slices.length; i++) {
+    const sweep = (slices[i].value / total) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, angle, angle + sweep);
+    ctx.closePath();
+    ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
+    ctx.fill();
+    ctx.strokeStyle = "#15181c";
+    ctx.lineWidth = Math.max(1, 1.5 * zoom);
+    ctx.stroke();
+    if (sweep > Math.PI / 8) {
+      const mid = angle + sweep / 2;
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `600 ${Math.max(8, 10 * zoom)}px ${FONT}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(Math.round((slices[i].value / total) * 100) + "%", cx + Math.cos(mid) * r * 0.6, cy + Math.sin(mid) * r * 0.6);
+    }
+    angle += sweep;
+  }
+
+  // Legend.
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.font = `400 ${Math.max(8, 10 * zoom)}px ${FONT}`;
+  const lx = cx + r + pad + Math.max(4, 8 * zoom);
+  const rowH = Math.max(10, 14 * zoom);
+  let ly = plotY + pad;
+  for (let i = 0; i < slices.length; i++) {
+    if (ly + rowH > plotY + plotH) break;
+    ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
+    ctx.fillRect(lx, ly, Math.max(5, 8 * zoom), Math.max(5, 8 * zoom));
+    ctx.fillStyle = "rgba(232,234,237,0.85)";
+    ctx.fillText(clipText(ctx, slices[i].label, Math.max(10, w - (lx + w / 2) - 6)), lx + Math.max(7, 11 * zoom), ly + rowH / 2);
+    ly += rowH;
+  }
 }
 
 // -------- Selection overlay --------
@@ -687,6 +1057,59 @@ function drawSelection(
 // -------- Helpers --------
 
 const FONT = `"Segoe UI", system-ui, sans-serif`;
+
+/**
+ * Estimate the height a text object needs for its content at the current font
+ * size / width, so the editor can auto-grow the object on commit instead of
+ * clipping the last line. `measure` (optional) widths come from a preconfigured
+ * 2D context; without one a per-character heuristic is used, which is exact for
+ * whitespace-free content and approximate elsewhere. Height never shrinks below
+ * a usable editor minimum.
+ */
+export function estimateTextHeight(
+  text: string,
+  fontSize: number,
+  width: number,
+  measure?: (s: string) => number
+): number {
+  const lineHeight = Math.max(1, fontSize) * 1.25;
+  const pad = 12;
+  const min = Math.max(40, lineHeight + pad * 2);
+  if (!text) return min;
+  const maxWidth = Math.max(10, width - pad * 2);
+  const lines: string[] = [];
+  const paragraphs = String(text).split("\n");
+  if (measure) {
+    for (const para of paragraphs) {
+      if (!para) {
+        lines.push("");
+        continue;
+      }
+      const words = para.split(/\s+/);
+      let line = "";
+      for (const word of words) {
+        const test = line ? `${line} ${word}` : word;
+        if (measure(test) > maxWidth && line !== "") {
+          lines.push(line);
+          line = word;
+        } else {
+          line = test;
+        }
+      }
+      if (line) lines.push(line);
+    }
+  } else {
+    const perLine = Math.max(1, Math.floor(maxWidth / Math.max(1, fontSize * 0.55)));
+    for (const para of paragraphs) {
+      if (!para) {
+        lines.push("");
+        continue;
+      }
+      for (let i = 0; i < para.length; i += perLine) lines.push(para.slice(i, i + perLine));
+    }
+  }
+  return Math.max(min, lines.length * lineHeight + pad * 2);
+}
 
 function corner(w: number, h: number): number {
   return Math.min(10, Math.max(2, w * 0.08), Math.max(2, h * 0.08));

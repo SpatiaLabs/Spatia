@@ -6,7 +6,8 @@ import {
   anchoredZoom,
   panByScreenDelta,
 } from "../../shared/geometry/viewport.js";
-import type { CanvasObject, ObjectKind, ShapeKind } from "../../shared/types/object.js";
+import type { CanvasObject, ObjectKind, ShapeKind, FrameShape, ChartKind, PenObject } from "../../shared/types/object.js";
+import { createTableData, createComparisonTableData, createChartTableData } from "../../shared/data/table.js";
 import type { ViewportStore } from "../state/viewportStore.js";
 import type { ProjectStore } from "../project/projectStore.js";
 import type { SelectionStore } from "../state/selectionStore.js";
@@ -22,20 +23,26 @@ import { drawGrid } from "./grid.js";
 import { drawObjects, screenPointInObj, type ObjectDrawContext } from "./objects.js";
 import { CanvasInput } from "./input.js";
 import { ImageCache } from "./imageCache.js";
+import { InkController, type InkSettings, type PenToolMode } from "./inkController.js";
 import { resizeRect, rotateKnobWorld, type Handle } from "../../shared/geometry/selection.js";
 import { SpatialGrid } from "../../shared/geometry/spatialIndex.js";
 import type { InteractionHost } from "./interactionHost.js";
 import { connectionEndpoints, connectionHit, expandMembers, unionRect, snapMove, snapResize, edgeAnchor, pointToSegment, type SnapGuide } from "../../shared/geometry/workspace.js";
 import { SHAPE_DEFAULTS, pointInShape } from "../../shared/geometry/shapes.js";
 
-const DEFAULT_SIZES: Record<"test-object" | "text" | "note", { width: number; height: number }> = {
+const DEFAULT_SIZES: Record<"test-object" | "text" | "note" | "table" | "chart", { width: number; height: number }> = {
   "test-object": { width: 160, height: 160 },
   text: { width: 200, height: 120 },
   note: { width: 180, height: 140 },
+  table: { width: 320, height: 220 },
+  chart: { width: 360, height: 260 },
 };
 
 const IMAGE_DEFAULT = { width: 240, height: 180 };
 const FILE_DEFAULT = { width: 160, height: 120 };
+const TABLE_DEFAULT = { width: 320, height: 220 };
+const COMPARISON_DEFAULT = { width: 400, height: 240 };
+const CHART_DEFAULT = { width: 360, height: 260 };
 
 /** World-space snap distance, scaled so snapping feels consistent at any zoom. */
 const SNAP_PX = 6;
@@ -83,7 +90,6 @@ export class CanvasEngine implements InteractionHost {
   private width = 0;
   private height = 0;
   private renderQueued = false;
-  private input: CanvasInput;
   private resizeObserver: ResizeObserver;
   private images = new ImageCache();
   private spatial = new SpatialGrid();
@@ -95,15 +101,17 @@ export class CanvasEngine implements InteractionHost {
   private marqueeRect: Rect | null = null;
   private guides: SnapGuide[] = [];
   private draftConn: { from: string; end: Point; valid: boolean } | null = null;
-  private draftPen: PenDraftPoint[] | null = null;
+  private ink: InkController;
   private penActive = false;
-  private penColor = "#e8eaed";
-  private penSize = 3;
-  private penEraser = false;
+  private penToolMode: PenToolMode = "pen";
+  private lastPenActivity = 0;
   /** Touch hosts get larger selection handles + a rotation knob; desktop is unchanged. */
   private coarse = false;
   /** Object ids allowed while a group or frame is isolated; null means full workspace. */
   private isolationIds: ReadonlySet<string> | null = null;
+
+  /** Set by the App to route undoable commands into the history stack. */
+  private input: CanvasInput;
 
   /** Set by the App to route undoable commands into the history stack. */
   private history: (cmd: Command) => void = () => undefined;
@@ -115,6 +123,12 @@ export class CanvasEngine implements InteractionHost {
     private selection: SelectionStore
   ) {
     this.input = new CanvasInput(this);
+    this.ink = new InkController({
+      getFrame: () => this.frame,
+      project: this.project,
+      commitCommand: (cmd) => this.commitCommand(cmd),
+      requestRender: () => this.requestRender(),
+    });
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.onWindowResize = this.onWindowResize.bind(this);
   }
@@ -347,10 +361,11 @@ export class CanvasEngine implements InteractionHost {
   setPenTool(on: boolean): void {
     if (this.penActive === on) return;
     this.penActive = on;
-    this.setInteractionCursor(on ? "default" : "default");
-    if (!on && this.draftPen) {
-      this.draftPen = null;
-      this.requestRender();
+    this.setInteractionCursor("default");
+    if (!on) {
+      this.ink.cancelStroke();
+      this.ink.cancelLasso();
+      this.ink.setEraserPreview(null);
     }
   }
 
@@ -367,87 +382,144 @@ export class CanvasEngine implements InteractionHost {
 
   /** Current pen style (stroke color + base width in world units). */
   getPenStyle(): { color: string; size: number } {
-    return { color: this.penColor, size: this.penSize };
+    const s = this.ink.getSettings();
+    return { color: s.color, size: s.width };
   }
 
   setPenStyle(style: { color?: string; size?: number }): void {
-    if (style.color !== undefined && typeof style.color === "string" && style.color !== this.penColor) {
-      this.penColor = style.color;
-    }
-    if (style.size !== undefined && Number.isFinite(style.size)) {
-      this.penSize = Math.min(24, Math.max(1, style.size));
-    }
-    this.requestRender();
+    this.ink.setSettings({ color: style.color, width: style.size });
   }
 
-  /** Put the pen into eraser mode (strokes delete objects instead of drawing). */
-  setPenEraser(on: boolean): void {
-    if (this.penEraser === on) return;
-    this.penEraser = on;
-    this.requestRender();
+  /** Full live pen settings for the tool inspector. */
+  getPenSettings(): InkSettings {
+    return this.ink.getSettings();
   }
 
+  setPenSettings(patch: Partial<InkSettings>): void {
+    this.ink.setSettings(patch);
+  }
+
+  /** Whether the pen tool is currently in eraser mode (legacy tablet UI). */
   isPenEraser(): boolean {
-    return this.penEraser;
+    return this.penToolMode === "eraser";
+  }
+
+  /** Put the pen into eraser mode (strokes draw/erase instead of draw ink). */
+  setPenEraser(on: boolean): void {
+    this.setPenToolMode(on ? "eraser" : "pen");
+  }
+
+  /** Active pen-tool mode: pen / eraser / lasso. */
+  getPenToolMode(): PenToolMode {
+    return this.penToolMode;
+  }
+
+  setPenToolMode(mode: PenToolMode): void {
+    if (this.penToolMode === mode) {
+      this.requestRender();
+      return;
+    }
+    const prev = this.penToolMode;
+    this.penToolMode = mode;
+    this.ink.setToolMode(mode);
+    if (prev === "lasso" && mode !== "lasso") this.ink.cancelLasso();
+    this.ink.cancelStroke();
+    if (mode !== "eraser") this.ink.setEraserPreview(null);
+    this.requestRender();
   }
 
   startPenStroke(screen: Point, pressure?: number): void {
-    const w = screenToWorld(screen, this.frame);
-    this.draftPen = [{ x: w.x, y: w.y, width: this.pressureWidth(pressure) }];
-    this.requestRender();
+    if (this.penToolMode === "eraser") this.ink.setEraserPreview(null);
+    this.ink.beginStroke(screen, pressure);
   }
 
   penStrokeTo(screen: Point, pressure?: number): void {
-    if (!this.draftPen) return;
-    const w = screenToWorld(screen, this.frame);
-    const last = this.draftPen[this.draftPen.length - 1];
-    if (last && Math.hypot(w.x - last.x, w.y - last.y) < 1e-4) return;
-    this.draftPen.push({ x: w.x, y: w.y, width: this.pressureWidth(pressure) });
-    this.requestRender();
-  }
-
-  /** Per-vertex stroke width for a stylus pressure (or fixed size otherwise). */
-  private pressureWidth(pressure?: number): number | undefined {
-    if (pressure === undefined || !(pressure > 0)) return undefined;
-    const p = Math.min(1, Math.max(0, pressure));
-    return this.penSize * (0.5 + p);
+    this.ink.strokeTo(screen, pressure);
   }
 
   endPenStroke(): void {
-    const stroke = this.draftPen;
-    this.draftPen = null;
-    if (!stroke || stroke.length < 2) {
-      this.requestRender();
-      return;
-    }
-    if (this.penEraser) {
-      this.commitCommand(deleteObjectsCommand(this.project, this.hitByEraser(stroke)));
-      this.requestRender();
-      return;
-    }
-    this.commitCommand(addObjectCommand(this.project, buildPenObject(stroke, this.project.nextZIndex(), this.penColor, this.penSize)));
-    this.requestRender();
+    this.ink.endStroke(this.penToolMode);
+    this.ink.setEraserPreview(null);
   }
 
-  /**
-   * Collect object ids the eraser stroke touches, approximating the eraser as a
-   * thick polyline over the swept path. Connections are skipped: they are
-   * derived from their endpoints and would be surprising to delete with a
-   * quick sweep.
-   */
-  private hitByEraser(stroke: PenDraftPoint[]): string[] {
-    const radius = this.penSize * 2.4;
-    const pts: Point[] = stroke.map((s) => ({ x: s.x, y: s.y }));
-    const ids: string[] = [];
-    for (const o of this.project.getObjects()) {
-      if (o.type === "connection" || o.locked) continue;
-      if (o.type === "pen") {
-        if (polylineDistance(pts, o.points.map((p) => ({ x: p.x, y: p.y })), radius + (o.strokeWidth || 3) / 2)) ids.push(o.id);
-        continue;
-      }
-      if (distanceRectPath(aabb(o), pts) <= radius) ids.push(o.id);
-    }
-    return ids;
+  /** Topmost stroke under the pointer (select-tool ink clicks). */
+  hitInk(screen: Point): string | null {
+    return this.ink.hitInk(screen);
+  }
+
+  // -------- Ink selection / drag / lasso (first-class strokes) --------
+
+  isInkId(id: string): boolean {
+    const o = this.project.getObject(id);
+    return o !== undefined && o.type === "pen";
+  }
+
+  selectInkAt(screen: Point, additive: boolean): boolean {
+    return this.ink.selectInkAt(screen, additive);
+  }
+
+  clearInkSelection(): void {
+    this.ink.clearInkSelection();
+  }
+
+  hasInkSelection(): boolean {
+    return this.ink.hasInkSelection();
+  }
+
+  setInkSelection(ids: readonly string[]): void {
+    this.ink.setInkSelection(ids);
+  }
+
+  selectAllInk(): void {
+    this.ink.selectAllInk();
+  }
+
+  setInkStyle(style: { color?: string; width?: number; opacity?: number }): void {
+    this.ink.setInkStyle(style);
+  }
+
+  getInkSelectedObjects(): PenObject[] {
+    return this.ink.inkSelectedObjects();
+  }
+
+  prepareInkDrag(screen: Point): void {
+    this.ink.prepareInkDrag(screen);
+  }
+
+  inkDragTo(screen: Point): void {
+    this.ink.inkDragTo(screen);
+  }
+
+  endInkDrag(): void {
+    this.ink.endInkDrag();
+  }
+
+  beginLasso(screen: Point, additive: boolean): void {
+    this.ink.beginLasso(screen, additive);
+  }
+
+  lassoTo(screen: Point): void {
+    this.ink.lassoTo(screen);
+  }
+
+  endLasso(): void {
+    this.ink.endLasso();
+  }
+
+  cancelLasso(): void {
+    this.ink.cancelLasso();
+  }
+
+  setEraserPreview(screen: Point | null): void {
+    this.ink.setEraserPreview(screen);
+  }
+
+  notePenActivity(): void {
+    this.lastPenActivity = performance.now();
+  }
+
+  recentPenActivity(): boolean {
+    return performance.now() - this.lastPenActivity < 700;
   }
 
   /** Create a free-endpoint connection from `fromId` ending at `end` (world). */
@@ -828,10 +900,14 @@ export class CanvasEngine implements InteractionHost {
     const ids: string[] = [];
     for (const id of this.spatial.queryRect(rect)) {
       const o = this.project.getObject(id);
-      if (o && this.isObjectVisible(o.id) && rectsIntersect(aabb(o), rect)) ids.push(o.id);
+      if (!o || !this.isObjectVisible(o.id)) continue;
+      if (o.type === "pen") continue;
+      if (rectsIntersect(aabb(o), rect)) ids.push(o.id);
     }
     if (additive) this.selection.add(ids);
     else this.selection.setIds(ids);
+    // Freehand strokes are selected through the ink selection set instead.
+    this.ink.selectInkByRect(rect, additive);
   }
 
   /** Restrict rendering and pointer queries to an isolation scope. */
@@ -873,19 +949,29 @@ export class CanvasEngine implements InteractionHost {
   }
 
   selectAll(): void {
-    this.setSelection(this.project.getObjects().map((o) => o.id));
+    const ids = this.project
+      .getObjects()
+      .filter((o) => o.type !== "pen")
+      .map((o) => o.id);
+    this.setSelection(ids);
+    this.ink.selectAllInk();
   }
 
   duplicateSelection(): void {
-    const source = this.project
+    const sourceObjects = this.project
       .getObjects()
-      .filter((o) => this.selection.has(o.id));
+      .filter((o) => this.selection.has(o.id) && o.type !== "pen");
+    const sourceInk = this.ink.inkSelectedObjects();
+    const source: CanvasObject[] = [...sourceObjects, ...sourceInk];
     if (source.length === 0) return;
     const dup: CanvasObject[] = source.map((o) => ({
       ...o,
       id: createObjectId(),
       x: o.x + 20,
       y: o.y + 20,
+      // Freehand strokes carry a points array that must not be shared between
+      // the original and the clone (a later move/restyle must stay independent).
+      ...(o.type === "pen" ? { points: o.points.map((p) => ({ ...p })) } : {}),
     }));
     const self = this;
     this.commitCommand({
@@ -897,14 +983,19 @@ export class CanvasEngine implements InteractionHost {
         for (const d of dup) self.project.removeObjects([d.id]);
       },
     });
-    this.selection.setIds(dup.map((d) => d.id));
+    this.selection.setIds(dup.filter((d) => d.type !== "pen").map((d) => d.id));
+    this.ink.setInkSelection(dup.filter((d) => d.type === "pen").map((d) => d.id));
   }
 
   deleteSelection(): void {
-    const ids = this.selection.get();
+    const objectIds = this.selection.get().filter((id) => !this.isInkId(id));
+    const inkIds = this.ink.inkSelectedIds();
+    const ids = [...objectIds, ...inkIds];
     if (ids.length === 0) return;
-    this.commitCommand(deleteObjectsCommand(this.project, [...ids]));
+    this.commitCommand(deleteObjectsCommand(this.project, ids));
     this.selection.clear();
+    this.ink.clearInkSelection();
+    this.requestRender();
   }
 
   raiseSelection(): void {
@@ -1001,7 +1092,7 @@ export class CanvasEngine implements InteractionHost {
     this.selection.setIds(ids.filter((id) => this.project.getObject(id) !== undefined));
   }
 
-  createFrame(worldCenter: Point): string | null {
+  createFrame(worldCenter: Point, frameShape: FrameShape = "rectangle"): string | null {
     const obj: CanvasObject = {
       type: "frame",
       id: createObjectId(),
@@ -1015,7 +1106,50 @@ export class CanvasEngine implements InteractionHost {
       metadata: {},
       name: "",
       color: "#2a6df5",
+      frameShape,
     };
+    this.commitCommand(addObjectCommand(this.project, obj));
+    return obj.id;
+  }
+
+  /** Create a data/side-by-side comparison table centered on `worldCenter`. */
+  createTableObject(worldCenter: Point, comparison = false): string {
+    const d = comparison ? COMPARISON_DEFAULT : TABLE_DEFAULT;
+    const obj: CanvasObject = {
+      type: "table",
+      id: createObjectId(),
+      x: worldCenter.x - d.width / 2,
+      y: worldCenter.y - d.height / 2,
+      width: d.width,
+      height: d.height,
+      rotation: 0,
+      zIndex: this.project.nextZIndex(),
+      locked: false,
+      metadata: {},
+      comparison,
+      data: comparison ? createComparisonTableData() : createTableData(),
+    } as CanvasObject;
+    this.commitCommand(addObjectCommand(this.project, obj));
+    return obj.id;
+  }
+
+  /** Create a chart of the given kind centered on `worldCenter`. */
+  createChartObject(kind: ChartKind, worldCenter: Point): string {
+    const obj: CanvasObject = {
+      type: "chart",
+      id: createObjectId(),
+      x: worldCenter.x - CHART_DEFAULT.width / 2,
+      y: worldCenter.y - CHART_DEFAULT.height / 2,
+      width: CHART_DEFAULT.width,
+      height: CHART_DEFAULT.height,
+      rotation: 0,
+      zIndex: this.project.nextZIndex(),
+      locked: false,
+      metadata: {},
+      kind,
+      title: "",
+      data: createChartTableData(),
+    } as CanvasObject;
     this.commitCommand(addObjectCommand(this.project, obj));
     return obj.id;
   }
@@ -1073,15 +1207,17 @@ export class CanvasEngine implements InteractionHost {
   // -------- Rendering --------
 
   /**
-   * Rasterize the full document (all objects, no culling beyond the requested
-   * bounds) to an offscreen canvas and return its data URL. This drives PNG /
-   * JPEG / PDF export while reusing the exact same drawing pipeline the
-   * interactive canvas uses.
+   * Rasterize the document (optionally restricted to a set of object ids) to
+   * an offscreen canvas and return its data URL. This drives PNG / JPEG / PDF
+   * export while reusing the exact same drawing pipeline the interactive
+   * canvas uses. `onlyIds` (when provided) limits drawing to those objects so
+   * a frame or selection export renders just that scope.
    */
   async rasterizeExport(
     bounds: Rect,
     scale = 2,
-    mime: "image/png" | "image/jpeg" = "image/png"
+    mime: "image/png" | "image/jpeg" = "image/png",
+    onlyIds: ReadonlySet<string> | null = null
   ): Promise<{ dataUrl: string; width: number; height: number } | null> {
     let s = scale;
     const maxDim = Math.max(bounds.width, bounds.height);
@@ -1111,7 +1247,8 @@ export class CanvasEngine implements InteractionHost {
       assetExtOf: (assetId) => this.project.getAsset(assetId)?.ext,
       objectById: (id) => this.project.getObject(id),
     };
-    const objects = this.project.getObjectsSorted();
+    const all = this.project.getObjectsSorted();
+    const objects = onlyIds === null ? all : all.filter((o) => onlyIds.has(o.id));
     drawObjects(ctx, frame, objects, new Set(), drawCtx);
     // Wait for image assets so the raster reflects the loaded binaries, then
     // re-draw once (the first pass may still contain placeholder fills).
@@ -1141,9 +1278,14 @@ export class CanvasEngine implements InteractionHost {
       assetExtOf: (assetId) => this.project.getAsset(assetId)?.ext,
       objectById: (id) => this.project.getObject(id),
     };
-    const objects = this.isolationIds === null
+    const srcObjects = this.isolationIds === null
       ? this.project.getObjectsSorted()
       : this.project.getObjectsSorted().filter((obj) => this.isObjectVisible(obj.id));
+    // While an eraser sweep is live, drop the committed pens from the object
+    // pass — inkController.renderDraft repaints the post-erase ink in its place.
+    const objects = this.ink.eraserDraftActive()
+      ? srcObjects.filter((o) => o.type !== "pen")
+      : srcObjects;
     drawObjects(ctx, this.frame, objects, selected, drawCtx, this.coarse);
 
     if (this.draftConn) {
@@ -1177,14 +1319,7 @@ export class CanvasEngine implements InteractionHost {
       }
     }
 
-    if (this.draftPen && this.draftPen.length >= 2) {
-      ctx.save();
-      ctx.strokeStyle = this.penEraser ? "rgba(232,234,237,0.45)" : this.penColor;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      strokePathVariable(ctx, this.draftPen, this.frame, Math.max(1, this.penSize * this.frame.zoom));
-      ctx.restore();
-    }
+    this.ink.renderDraft(ctx, this.frame);
 
     if (this.marqueeRect) {
       const tl = worldToScreen({ x: this.marqueeRect.x, y: this.marqueeRect.y }, this.frame);
@@ -1216,6 +1351,10 @@ export class CanvasEngine implements InteractionHost {
       }
       ctx.restore();
     }
+
+    this.ink.renderInkSelection(ctx, this.frame);
+    this.ink.renderLasso(ctx, this.frame);
+    this.ink.renderEraserGuide(ctx);
   }
 
   private requestRender(): void {
@@ -1272,34 +1411,6 @@ function createObjectId(): string {
   return "obj_" + Math.random().toString(36).slice(2, 10);
 }
 
-function buildPenObject(points: PenDraftPoint[], zIndex: number, color: string, width: number): CanvasObject {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const p of points) {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-  }
-  return {
-    type: "pen",
-    id: createObjectId(),
-    points: points.map((p) => (p.width === undefined ? { x: p.x, y: p.y } : { x: p.x, y: p.y, width: p.width })),
-    color,
-    strokeWidth: width,
-    x: Number.isFinite(minX) ? minX : 0,
-    y: Number.isFinite(minY) ? minY : 0,
-    width: Number.isFinite(minX) ? maxX - minX : 0,
-    height: Number.isFinite(minY) ? maxY - minY : 0,
-    rotation: 0,
-    zIndex,
-    locked: false,
-    metadata: {},
-  } as CanvasObject;
-}
-
 function handleWorldRect(rect: Rect, handle: Handle): Point {
   const pos = {
     nw: { x: rect.x, y: rect.y },
@@ -1323,149 +1434,6 @@ function normalizeAngle(a: number): number {
 
 function aabb(o: CanvasObject): Rect {
   return { x: o.x, y: o.y, width: o.width, height: o.height };
-}
-
-/* --- freehand pen helpers (pressure strokes, erasing) --------------------- */
-
-interface PenDraftPoint {
-  x: number;
-  y: number;
-  width?: number;
-}
-
-/**
- * Stroke a polyline whose width may change per vertex. `width` is in world
- * units and is scaled by the frame; when no vertex carries a width the whole
- * stroke renders as a single uniform path (the common, fast case).
- */
-function strokePathVariable(
-  ctx: CanvasRenderingContext2D,
-  pts: PenDraftPoint[],
-  frame: ViewportFrame,
-  uniformScreenWidth: number
-): void {
-  const n = pts.length;
-  if (n < 2) return;
-  let anyWidth = false;
-  for (const p of pts) {
-    if (p.width !== undefined) {
-      anyWidth = true;
-      break;
-    }
-  }
-  if (!anyWidth) {
-    ctx.lineWidth = uniformScreenWidth;
-    ctx.beginPath();
-    const s0 = worldToScreen(pts[0], frame);
-    ctx.moveTo(s0.x, s0.y);
-    for (let i = 1; i < n; i++) {
-      const s = worldToScreen(pts[i], frame);
-      ctx.lineTo(s.x, s.y);
-    }
-    ctx.stroke();
-    return;
-  }
-  for (let i = 1; i < n; i++) {
-    const prev = pts[i - 1];
-    const cur = pts[i];
-    if (!prev || !cur) continue;
-    const a = worldToScreen(prev, frame);
-    const b = worldToScreen(cur, frame);
-    const wa = prev.width === undefined ? uniformScreenWidth : Math.max(1, prev.width * frame.zoom);
-    const wb = cur.width === undefined ? uniformScreenWidth : Math.max(1, cur.width * frame.zoom);
-    ctx.lineWidth = (wa + wb) / 2;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-  }
-}
-
-function distancePointToSegment(p: Point, a: Point, b: Point): number {
-  const abx = b.x - a.x;
-  const aby = b.y - a.y;
-  const len2 = abx * abx + aby * aby;
-  let t = 0;
-  if (len2 > 0) t = Math.min(1, Math.max(0, ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2));
-  const cx = a.x + t * abx;
-  const cy = a.y + t * aby;
-  return Math.hypot(p.x - cx, p.y - cy);
-}
-
-function segTouchesRect(a: Point, b: Point, r: Rect): boolean {
-  const loX = r.x;
-  const hiX = r.x + r.width;
-  const loY = r.y;
-  const hiY = r.y + r.height;
-  if (Math.max(a.x, b.x) < loX || Math.min(a.x, b.x) > hiX) return false;
-  if (Math.max(a.y, b.y) < loY || Math.min(a.y, b.y) > hiY) return false;
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  let tmin = 0;
-  let tmax = 1;
-  const slabs: [number, number, number, number][] = [
-    [a.x, dx, loX, hiX],
-    [a.y, dy, loY, hiY],
-  ];
-  for (const [p, d, lo, hi] of slabs) {
-    if (Math.abs(d) < 1e-12) {
-      if (p < lo || p > hi) return false;
-      continue;
-    }
-    let t1 = (lo - p) / d;
-    let t2 = (hi - p) / d;
-    if (t1 > t2) {
-      const tmp = t1;
-      t1 = t2;
-      t2 = tmp;
-    }
-    tmin = Math.max(tmin, t1);
-    tmax = Math.min(tmax, t2);
-    if (tmin > tmax) return false;
-  }
-  return true;
-}
-
-function distanceRectPath(r: Rect, path: Point[]): number {
-  if (path.length === 0) return Infinity;
-  let a = path[0];
-  for (let i = 1; i < path.length; i++) {
-    const b = path[i];
-    if (segTouchesRect(a, b, r)) return 0;
-    a = b;
-  }
-  let best = Infinity;
-  for (const end of path) {
-    best = Math.min(best, Math.max(0, Math.hypot(Math.max(r.x - end.x, 0, end.x - (r.x + r.width)), Math.max(r.y - end.y, 0, end.y - (r.y + r.height)))));
-  }
-  const corners: Point[] = [
-    { x: r.x, y: r.y },
-    { x: r.x + r.width, y: r.y },
-    { x: r.x, y: r.y + r.height },
-    { x: r.x + r.width, y: r.y + r.height },
-  ];
-  a = path[0];
-  for (let i = 1; i < path.length; i++) {
-    const b = path[i];
-    for (const c of corners) best = Math.min(best, distancePointToSegment(c, a, b));
-    a = b;
-  }
-  return best;
-}
-
-function polylineDistance(a: Point[], b: Point[], threshold: number): boolean {
-  if (a.length === 0 || b.length === 0) return false;
-  for (let i = 1; i < a.length; i++) {
-    for (let j = 0; j < b.length; j++) {
-      if (distancePointToSegment(b[j], a[i - 1], a[i]) <= threshold) return true;
-    }
-  }
-  for (let i = 1; i < b.length; i++) {
-    for (let j = 0; j < a.length; j++) {
-      if (distancePointToSegment(a[j], b[i - 1], b[i]) <= threshold) return true;
-    }
-  }
-  return false;
 }
 
 /** All eligible snap targets: every object not in `exclude`, minus decorative types. */

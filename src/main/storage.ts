@@ -19,6 +19,7 @@ import {
   type LibraryData,
   type LibraryFolder,
 } from "../shared/library/library.js";
+import { isSSON, projectFileToSSON, projectFileFromSSON } from "../shared/project/sson.js";
 
 /**
  * Filesystem + dialog operations used for local-first project persistence.
@@ -62,7 +63,30 @@ export async function getCollabIdentity(): Promise<CollabIdentity> {
   return fresh;
 }
 
-const PROJECT_FILE_FILTERS = [{ name: "Spatia Project", extensions: ["spatia.json", "json"] }];
+const PROJECT_FILE_FILTERS = [{ name: "Spatia Project", extensions: ["spatia.json", "spatia", "json"] }];
+
+/**
+ * Encode JSON project contents as SSON for `.spatia` files. Falls back to the
+ * original JSON text if the payload is ever unparsable so a save never fails
+ * (legacy readers still accept JSON content via the auto-detect on open).
+ */
+function encodeProjectContents(json: string): string {
+  try {
+    return projectFileToSSON(JSON.parse(json));
+  } catch {
+    return json;
+  }
+}
+
+/**
+ * Decode `.spatia` file text into the JSON form the renderer deserializes.
+ * Legacy JSON files (which a previous version of Spatia wrote, and JSON project
+ * bundles exported by `exportProjectToFolder`) pass through untouched.
+ */
+function decodeProjectContents(contents: string): string {
+  if (!isSSON(contents)) return contents;
+  return JSON.stringify(projectFileFromSSON(contents));
+}
 
 /**
  * Atomically write file contents to disk. Writes to a sibling temp file first,
@@ -109,7 +133,7 @@ export async function openProjectDialog(): Promise<ProjectFileResult> {
   }
 
   const filePath = result.filePaths[0];
-  const contents = await fs.readFile(filePath, "utf8");
+  const contents = decodeProjectContents(await fs.readFile(filePath, "utf8"));
   return { filePath, contents };
 }
 
@@ -129,13 +153,210 @@ export async function saveWithDialog(
   }
 
   const filePath = result.filePath;
-  await atomicWriteFile(filePath, contents);
+  await atomicWriteFile(filePath, encodeProjectContents(contents));
   return { filePath };
 }
 
 /** Write existing contents back to the currently active project file. */
 export async function writeToPath(filePath: string, contents: string): Promise<void> {
-  await atomicWriteFile(filePath, contents);
+  await atomicWriteFile(filePath, encodeProjectContents(contents));
+}
+
+// -------- Default project location (per-project folders) --------
+
+/**
+ * Where new projects live by default. Projects are stored one folder each:
+ * `<root>/<Project Name>/project.spatia` + `assets/` + `exports/`. Kept as a
+ * flat drive-rooted path (not user-profile dependent) so every local account
+ * resolves the same location; a future Settings option will make it editable.
+ */
+export const DEFAULT_PROJECTS_ROOT = path.join("C:", "Spatia", "SpatiaProjects");
+
+/**
+ * Whether a project file lives inside a per-project folder layout (i.e. the
+ * canonical `project.spatia` file name). Legacy standalone `.spatia.json`
+ * files are not folder projects.
+ */
+export function isFolderProject(filePath: string): boolean {
+  return path.basename(filePath).toLowerCase() === "project.spatia";
+}
+
+/** The containing project folder for a folder-style project, else null. */
+export function projectFolderFor(filePath: string): string | null {
+  return isFolderProject(filePath) ? path.dirname(filePath) : null;
+}
+
+// The active project's folder (if any). The main process owns this so asset
+// binaries migrate into the project folder and silent exports can write to its
+// `exports/` directory without the renderer knowing absolute paths.
+let activeProject: { projectId: string; folder: string | null } | null = null;
+
+export function setActiveProject(projectId: string, folder: string | null): void {
+  activeProject = { projectId, folder };
+}
+
+export function activeProjectFolder(projectId: string): string | null {
+  return activeProject !== null && activeProject.projectId === projectId ? activeProject.folder : null;
+}
+
+/**
+ * Save a project to its default per-project folder under DEFAULT_PROJECTS_ROOT,
+ * creating `<root>/<name>/` with `project.spatia`, `assets/` and `exports/`.
+ * Any asset binaries previously staged under the user-data store for this
+ * project are migrated into the folder so media travels with the project.
+ */
+export async function saveProjectToDefaultFolder(
+  projectId: string,
+  name: string,
+  json: string
+): Promise<{ ok: boolean; filePath: string | null; folder: string | null; error?: string }> {
+  const folder = path.join(DEFAULT_PROJECTS_ROOT, safeFolderName(name));
+  try {
+    await fs.mkdir(path.join(folder, "assets"), { recursive: true });
+    await fs.mkdir(path.join(folder, "exports"), { recursive: true });
+    const filePath = path.join(folder, "project.spatia");
+    await atomicWriteFile(filePath, encodeProjectContents(json));
+    await migrateLegacyAssets(projectId, folder);
+    return { ok: true, filePath, folder };
+  } catch (err) {
+    return { ok: false, filePath: null, folder: null, error: "Could not create the project folder." };
+  }
+}
+
+/**
+ * Copy asset binaries staged under the app's user-data store (used while a new
+ * project was still unsaved) into the project folder's `assets/` directory.
+ * Existing files are preserved; a missing source store is a no-op.
+ */
+export async function migrateLegacyAssets(projectId: string, folder: string): Promise<void> {
+  try {
+    const srcDir = path.join(app.getPath("userData"), "spatia-assets", sanitizeFileName(projectId));
+    const destDir = path.join(folder, "assets");
+    await fs.mkdir(destDir, { recursive: true });
+    const files = await fs.readdir(srcDir);
+    for (const f of files) {
+      const dest = path.join(destDir, f);
+      if (await pathExists(dest)) continue;
+      await fs.copyFile(path.join(srcDir, f), dest);
+    }
+  } catch {
+    /* nothing to migrate */
+  }
+}
+
+// -------- Crash recovery (userData/recovery) --------
+
+export interface RecoveryEntry {
+  projectId: string;
+  name: string;
+  updatedAt: string;
+  contents: string;
+}
+
+function recoveryDir(): string {
+  return path.join(app.getPath("userData"), "recovery");
+}
+
+/** Write a silent, atomic recovery copy of an unsaved/dirty document. */
+export async function writeRecovery(projectId: string, json: string): Promise<boolean> {
+  const id = String(projectId ?? "").trim();
+  if (!id || typeof json !== "string") return false;
+  try {
+    const dir = recoveryDir();
+    await fs.mkdir(dir, { recursive: true });
+    await atomicWriteFile(path.join(dir, sanitizeFileName(id) + ".json"), json);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** List valid recovery drafts, newest first, so a crash offers an in-app restore. */
+export async function listRecovery(): Promise<RecoveryEntry[]> {
+  try {
+    const dir = recoveryDir();
+    const files = await fs.readdir(dir);
+    const out: RecoveryEntry[] = [];
+    for (const f of files) {
+      if (!f.toLowerCase().endsWith(".json")) continue;
+      try {
+        const contents = await fs.readFile(path.join(dir, f), "utf8");
+        const d = JSON.parse(contents) as { project?: { id?: unknown; name?: unknown; updatedAt?: unknown } };
+        const proj = d?.project;
+        if (proj && typeof proj.id === "string" && proj.id) {
+          out.push({
+            projectId: proj.id,
+            name: typeof proj.name === "string" && proj.name ? proj.name : "Untitled",
+            updatedAt: typeof proj.updatedAt === "string" ? proj.updatedAt : "",
+            contents,
+          });
+        }
+      } catch {
+        /* skip corrupt recovery files */
+      }
+    }
+    out.sort((a, b) => (b.updatedAt < a.updatedAt ? -1 : b.updatedAt > a.updatedAt ? 1 : 0));
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Remove a recovery draft (after it is recovered, saved or dismissed). */
+export async function clearRecovery(projectId: string): Promise<boolean> {
+  const id = String(projectId ?? "").trim();
+  if (!id) return false;
+  try {
+    await fs.rm(path.join(recoveryDir(), sanitizeFileName(id) + ".json"), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// -------- Silent file export (project's exports/ folder) --------
+
+// Directory chosen once for multi-file exports when no project folder exists.
+let lastExportDir: string | null = null;
+
+/**
+ * Write an exported payload (base64 binary) into the active project's
+ * `exports/` folder without any dialog. When no per-project folder exists,
+ * a directory is picked once and reused for the batch. Existing files are
+ * never overwritten: a numeric suffix is appended instead.
+ */
+export async function exportToProjectExports(
+  projectId: string,
+  fileName: string,
+  payload: string
+): Promise<ExportResult> {
+  const projectFolder = activeProjectFolder(projectId);
+  let targetDir: string | null = null;
+  if (projectFolder) {
+    targetDir = path.join(projectFolder, "exports");
+    await fs.mkdir(targetDir, { recursive: true });
+  } else {
+    targetDir = lastExportDir;
+    if (!targetDir) {
+      const picked = await dialog.showOpenDialog({
+        title: "Choose export folder",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (picked.canceled || picked.filePaths.length === 0) return { canceled: true, filePath: null };
+      lastExportDir = picked.filePaths[0];
+      targetDir = lastExportDir;
+    }
+  }
+  const ext = path.extname(fileName);
+  const stem = path.basename(fileName, ext) || "spatia-export";
+  let target = path.join(targetDir, sanitizeFileName(stem) + ext);
+  let n = 2;
+  while (await pathExists(target).catch(() => false)) {
+    target = path.join(targetDir, `${sanitizeFileName(stem)} (${n})${ext}`);
+    n += 1;
+  }
+  await fs.writeFile(target, Buffer.from(payload, "base64"));
+  return { canceled: false, filePath: target };
 }
 
 // -------- Recent projects --------
@@ -184,7 +405,7 @@ export async function recordRecentProject(filePath: string, name: string): Promi
 /** Read a project by absolute file path (used by recent-project reopen). */
 export async function readProjectFile(filePath: string): Promise<string | null> {
   try {
-    return await fs.readFile(filePath, "utf8");
+    return decodeProjectContents(await fs.readFile(filePath, "utf8"));
   } catch {
     return null;
   }
@@ -344,6 +565,30 @@ export async function libraryRename(
 ): Promise<{ ok: boolean; filePath?: string; error?: string }> {
   const clean = String(newName ?? "").trim().replace(/\.spatia\.json$/i, "");
   if (!clean) return { ok: false, error: "Name cannot be empty." };
+
+  // Folder-style projects are renamed by moving their whole per-project folder
+  // (project.spatia, assets/, exports/) so media and exports move with them.
+  if (isFolderProject(filePath)) {
+    const folder = safeFolderName(clean);
+    const current = path.dirname(filePath);
+    const parent = path.dirname(current);
+    const target = path.join(parent, folder);
+    if (path.dirname(target) !== parent) return { ok: false, error: "Invalid target path." };
+    if (target === current) return { ok: true, filePath };
+    if (await pathExists(target)) return { ok: false, error: "A project with that name already exists." };
+    try {
+      await fs.rename(current, target);
+    } catch {
+      return { ok: false, error: "Could not rename the project folder (is it open elsewhere?)." };
+    }
+    const targetPath = path.join(target, "project.spatia");
+    const lib = await readLibrary();
+    const next = renameProject(lib, filePath, targetPath);
+    if (next !== lib) await writeLibrary(next);
+    await recordRecentProjectRename(filePath, targetPath, folder);
+    return { ok: true, filePath: targetPath };
+  }
+
   if (/[\\/:*?"<>|]/.test(clean)) return { ok: false, error: "Name contains invalid characters." };
   const parent = path.dirname(filePath);
   const targetPath = path.join(parent, clean + ".spatia.json");
@@ -486,15 +731,21 @@ export function parseProjectIdentity(
   contents: string,
   fallbackPath: string
 ): { id: string; name: string; updatedAt: string } {
+  let raw: string;
   try {
-    const d = JSON.parse(contents) as {
+    raw = decodeProjectContents(contents);
+  } catch {
+    raw = contents;
+  }
+  try {
+    const d = JSON.parse(raw) as {
       project?: { id?: unknown; name?: unknown; updatedAt?: unknown };
     };
     const proj = d?.project;
     if (proj && typeof proj.id === "string" && proj.id) {
       return {
         id: proj.id,
-        name: typeof proj.name === "string" && proj.name ? proj.name : path.basename(fallbackPath).replace(/\.spatia\.json$/i, ""),
+        name: typeof proj.name === "string" && proj.name ? proj.name : path.basename(fallbackPath).replace(/\.(spatia\.json|spatia)$/i, ""),
         updatedAt: typeof proj.updatedAt === "string" ? proj.updatedAt : new Date().toISOString(),
       };
     }
@@ -503,7 +754,7 @@ export function parseProjectIdentity(
   }
   return {
     id: "proj_" + Math.random().toString(36).slice(2, 10),
-    name: path.basename(fallbackPath).replace(/\.spatia\.json$/i, ""),
+    name: path.basename(fallbackPath).replace(/\.(spatia\.json|spatia)$/i, ""),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -543,7 +794,10 @@ export async function exportProjectToFolder(
   const assetsOut = path.join(targetBase, "assets");
   await fs.mkdir(assetsOut, { recursive: true });
   const { readdir } = await import("fs/promises");
-  const sourceDir = path.join(app.getPath("userData"), "spatia-assets", sanitizeFileName(projectId));
+  // Prefer the active project's own assets/ directory (folder-style projects
+  // keep media there); fall back to the legacy user-data store.
+  const sourceDir =
+    activeProjectFolder(projectId) ?? path.join(app.getPath("userData"), "spatia-assets", sanitizeFileName(projectId));
   try {
     const files = await readdir(sourceDir);
     for (const f of files) {
@@ -553,18 +807,26 @@ export async function exportProjectToFolder(
     /* assets dir may not exist; still export the project file */
   }
   const projectFile = path.join(targetBase, suggestedName.endsWith(".json") ? suggestedName : suggestedName + ".spatia.json");
-  await atomicWriteFile(projectFile, json);
+  await atomicWriteFile(projectFile, encodeProjectContents(json));
   return { canceled: false, filePath: targetBase };
 }
 
+/** Pick the on-disk extension for an export kind and ensure the path uses it. */
+function normalizeExportPath(kind: ExportFileKind, filePath: string): string {
+  const ext = kind === "jpeg" ? "jpg" : kind;
+  const pattern = new RegExp("\\.(" + ext + ")$", "i");
+  return pattern.test(filePath) ? filePath : filePath + "." + ext;
+}
+
 /**
- * Save a standalone exported file (PNG / PDF / Markdown) through a save
+ * Save a standalone exported file (PNG / JPEG / PDF / Markdown) through a save
  * dialog. Binary formats come in Base64 and are decoded here; Markdown is
  * plain text. Never touches the active project file on disk.
  */
 export async function exportItem(kind: ExportFileKind, suggestedName: string, payload: string): Promise<ExportResult> {
   const filters: Record<ExportFileKind, Electron.FileFilter[]> = {
     png: [{ name: "PNG image", extensions: ["png"] }],
+    jpeg: [{ name: "JPEG image", extensions: ["jpg"] }],
     pdf: [{ name: "PDF document", extensions: ["pdf"] }],
     md: [{ name: "Markdown", extensions: ["md"] }],
   };
@@ -576,7 +838,7 @@ export async function exportItem(kind: ExportFileKind, suggestedName: string, pa
   if (result.canceled || !result.filePath) {
     return { canceled: true, filePath: null };
   }
-  const target = result.filePath.endsWith("." + kind) ? result.filePath : result.filePath + "." + kind;
+  const target = normalizeExportPath(kind, result.filePath);
   if (kind === "md") {
     await atomicWriteFile(target, payload);
   } else {
@@ -608,7 +870,7 @@ export async function importProjectFromFolder(): Promise<ImportFromFolderResult>
     return { canceled: true, contents: null, assetFiles: {} };
   }
   const jsonPath = path.join(folder, jsonFile);
-  const contents = await fs.readFile(jsonPath, "utf8");
+  const contents = decodeProjectContents(await fs.readFile(jsonPath, "utf8"));
   const assetsIn = path.join(folder, "assets");
   const assetFiles: Record<string, string> = {};
   try {
@@ -622,6 +884,19 @@ export async function importProjectFromFolder(): Promise<ImportFromFolderResult>
   return { canceled: false, contents, assetFiles };
 }
 
-function sanitizeFileName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9 _.-]/g, "_");
+export function sanitizeFileName(name: string): string {
+  const cleaned = String(name ?? "")
+    .replace(/[^a-zA-Z0-9 _.-]/g, "_")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 120);
+  return cleaned || "spatia-export";
+}
+
+/** A collision-free Windows-safe name for a per-project folder. */
+export function safeFolderName(name: string): string {
+  let s = sanitizeFileName(String(name ?? "").trim());
+  if (!s) s = "Untitled Project";
+  // Reserved Windows device names can't be folder/file names.
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(s)) s = "spatia-" + s;
+  return s;
 }

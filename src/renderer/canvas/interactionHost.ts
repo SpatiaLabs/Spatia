@@ -2,6 +2,8 @@ import type { ViewportFrame, Point, Rect } from "../../shared/geometry/viewport.
 import type { Handle } from "../../shared/geometry/selection.js";
 import type { ObjectKind } from "../../shared/types/object.js";
 import type { Command } from "../command/commandManager.js";
+import type { PenToolMode, InkSettings } from "./inkController.js";
+import type { PenObject } from "../../shared/types/object.js";
 
 /**
  * Contract between the pointer state machine (CanvasInput) and the canvas
@@ -36,6 +38,11 @@ export interface InteractionHost {
   dragTo(screen: Point): void;
   dropGrab(): void;
 
+  // Ink move gesture (freehand strokes are dragged through the ink controller)
+  prepareInkDrag(screen: Point): void;
+  inkDragTo(screen: Point): void;
+  endInkDrag(): void;
+
   // Resize gesture
   beginResize(handle: Handle, screen: Point): void;
   resizeTo(screen: Point): void;
@@ -65,6 +72,33 @@ export interface InteractionHost {
   startPenStroke(screen: Point, pressure?: number): void;
   penStrokeTo(screen: Point, pressure?: number): void;
   endPenStroke(): void;
+
+  // Ink (dedicated freehand-stroke selection, distinct from object selection)
+  isInkId(id: string): boolean;
+  selectInkAt(screen: Point, additive: boolean): boolean;
+  clearInkSelection(): void;
+  hasInkSelection(): boolean;
+  setInkSelection(ids: readonly string[]): void;
+  selectAllInk(): void;
+  setInkStyle(style: { color?: string; width?: number; opacity?: number }): void;
+  getInkSelectedObjects(): PenObject[];
+  /** The active pen-tool mode (pen / eraser / lasso), used by input + UI. */
+  getPenToolMode(): PenToolMode;
+  setPenToolMode(mode: PenToolMode): void;
+  getPenSettings(): InkSettings;
+  setPenSettings(patch: Partial<InkSettings>): void;
+  /** Record recent stylus contact for palm rejection. */
+  notePenActivity(): void;
+  recentPenActivity(): boolean;
+
+  // Lasso (pen tool, mode "lasso")
+  beginLasso(screen: Point, additive: boolean): void;
+  lassoTo(screen: Point): void;
+  endLasso(): void;
+  cancelLasso(): void;
+
+  // Eraser hover guide (screen px)
+  setEraserPreview(screen: Point | null): void;
 
   // Callbacks
   onContextMenu(screen: Point, world: Point): void;

@@ -5,6 +5,7 @@
  * union without changing existing shape consumers — renderers and commands key
  * off the shared base fields and switch on `type` only where behaviour differs.
  */
+import type { TableData } from "../data/table.js";
 
 export type ObjectKind =
   | "test-object"
@@ -17,9 +18,14 @@ export type ObjectKind =
   | "frame"
   | "pen"
   | "url"
-  | "shape";
+  | "shape"
+  | "table"
+  | "chart";
 
 export type TextAlign = "left" | "center" | "right";
+
+/** Frame shell shape (Phase 0.5: rounded/ellipse variants of the default box). */
+export type FrameShape = "rectangle" | "rounded" | "ellipse";
 
 /**
  * Concrete diagram shape kind carried by `ShapeObject`. Lines and arrows are
@@ -63,6 +69,8 @@ export interface TextObject extends BaseObject {
   bold: boolean;
   italic: boolean;
   align: TextAlign;
+  /** Optional font family override (defaults to the canvas UI font). */
+  fontFamily?: string;
 }
 
 export interface NoteObject extends BaseObject {
@@ -137,6 +145,8 @@ export interface FrameObject extends BaseObject {
   type: "frame";
   name: string;
   color: string;
+  /** Optional shell variant; defaults to "rectangle" in the renderer. */
+  frameShape?: FrameShape;
 }
 
 /**
@@ -152,6 +162,8 @@ export interface PenObject extends BaseObject {
   points: WorldPoint[];
   color: string;
   strokeWidth: number;
+  /** Ink opacity (0..1); absent means fully opaque. */
+  opacity?: number;
 }
 
 export interface WorldPoint {
@@ -177,6 +189,33 @@ export interface ShapeObject extends BaseObject {
   strokeWidth: number;
 }
 
+/**
+ * A structured data grid rendered on the canvas. Editing happens through the
+ * inspector's table editor; the shared `TableData` model keeps the grid
+ * rectangular and bounded. `comparison` toggles the side-by-side variant
+ * (styling + starter template) without forking the data schema.
+ */
+export interface TableObject extends BaseObject {
+  type: "table";
+  data: TableData;
+  comparison: boolean;
+}
+
+export type ChartKind = "bar" | "line" | "pie";
+
+/**
+ * A data-driven chart. `data` reuses the table grid (first column = category
+ * label, following columns = series) so a user can switch between chart kinds
+ * without re-entering numbers.
+ */
+export interface ChartObject extends BaseObject {
+  type: "chart";
+  kind: ChartKind;
+  /** Optional title drawn above the plot. */
+  title: string;
+  data: TableData;
+}
+
 export type CanvasObject =
   | TestObject
   | TextObject
@@ -188,7 +227,9 @@ export type CanvasObject =
   | GroupObject
   | FrameObject
   | PenObject
-  | ShapeObject;
+  | ShapeObject
+  | TableObject
+  | ChartObject;
 
 /** Metadata about a project local asset (never stores binary data). */
 export interface AssetMeta {

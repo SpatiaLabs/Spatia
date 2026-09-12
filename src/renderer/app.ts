@@ -1,10 +1,11 @@
 import { createNewDocument, ProjectStore, serialize } from "./project/projectStore.js";
 import type { ProjectDocument } from "../shared/types/project.js";
-import type { CanvasObject, ObjectKind, AssetMeta, ShapeKind } from "../shared/types/object.js";
+import type { CanvasObject, ObjectKind, AssetMeta, ShapeKind, FrameShape, ChartKind } from "../shared/types/object.js";
+import type { TableData } from "../shared/data/table.js";
 import { objectTags, sameTags } from "../shared/types/object.js";
 import type { LibraryData } from "../shared/library/library.js";
 import { filterProjects, sortProjects } from "../shared/library/library.js";
-import type { VersionSnapshotMeta } from "./types/bridge.js";
+import type { VersionSnapshotMeta, RecoveryEntry } from "./types/bridge.js";
 import type { SearchableItem, RankedHit } from "../shared/search/search.js";
 import { SearchStore } from "./state/searchStore.js";
 import { SearchUI } from "./ui/searchUI.js";
@@ -13,15 +14,24 @@ import { ViewportStore } from "./state/viewportStore.js";
 import { SelectionStore } from "./state/selectionStore.js";
 import { CommandManager } from "./command/commandManager.js";
 import { CanvasEngine } from "./canvas/engine.js";
+import { estimateTextHeight } from "./canvas/objects.js";
 import { BrowserFrameOverlay } from "./canvas/browserOverlay.js";
 import { browserUrlOf, normalizeBrowserUrl } from "../shared/plugins/browserFrame.js";
 import { AppUI } from "./ui/appUI.js";
 import { AssetStore } from "./assets/assetStore.js";
 import { showContextMenu, hideContextMenu, type ContextMenuItem } from "./ui/contextMenu.js";
 import { openTextEditor, closeTextEditor, isEditingText } from "./ui/textEditor.js";
+import { openDataEditor, closeDataEditor, isEditingData } from "./ui/dataEditor.js";
+import { openTableCellEditor, closeTableCellEditor, isEditingTableCell } from "./ui/tableCellEditor.js";
+import { isEditableEventTarget } from "./ui/editTarget.js";
+import { CommandPalette, type PaletteRow } from "./ui/commandPalette.js";
+import { fuzzyFilter } from "../shared/search/fuzzy.js";
+import { tableLayout, tableCellAt, tableCellRect } from "../shared/geometry/tableLayout.js";
+import { selectionBounds } from "../shared/geometry/selection.js";
+import { setCell, renameColumn } from "../shared/data/table.js";
 import { Minimap } from "./ui/minimap.js";
 import type { Point } from "../shared/geometry/viewport.js";
-import { screenToWorld, worldToScreen, viewportForRect, type Rect, type ViewportFrame } from "../shared/geometry/viewport.js";
+import { screenToWorld, worldToScreen, viewportForRect, type Rect } from "../shared/geometry/viewport.js";
 import { addObjectCommand, resizeObjectsCommand, setPropsCommand, type PropChange } from "./command/commands.js";
 import { deleteObjectsCommand } from "./command/commands.js";
 import { PluginManager, type PluginApiGateway, type PluginObjectView } from "./plugins/pluginManager.js";
@@ -29,7 +39,7 @@ import { PluginsUI } from "./plugins/pluginsUI.js";
 import { SHAPE_KINDS, shapeLabel } from "../shared/geometry/shapes.js";
 import { exportBounds } from "../shared/export/bounds.js";
 import { buildMarkdown } from "../shared/export/markdown.js";
-import { buildPdfFromJpeg } from "../shared/export/pdf.js";
+import { buildPdfFromJpegs, type PdfPage } from "../shared/export/pdf.js";
 import { bytesToBase64 } from "../shared/export/base64.js";
 import { TEMPLATES, templateById } from "../shared/templates/templates.js";
 import { CollaborationStore } from "./state/collaborationStore.js";
@@ -39,6 +49,22 @@ import { sanitizeRoomId, DEFAULT_COLLAB_URL, type CollabUser } from "../shared/c
 import { createId } from "../shared/core/id.js";
 import { AssetsUI } from "./ui/assetsUI.js";
 import { APP_VERSION } from "../shared/core/version.js";
+
+const EFFECTS_KEY = "spatia:reduced-effects";
+
+/** Font families offered in the text-object inspector (CSS-safe names). */
+const FONT_CHOICES = ["Arial", "Calibri", "Courier New", "Georgia", "Segoe UI", "Times New Roman", "Trebuchet MS", "Verdana"];
+
+/** One entry in the Command Palette registry (Ctrl+K). */
+interface PaletteCommand {
+  id: string;
+  category: string;
+  label: string;
+  keywords: string;
+  shortcut?: string;
+  enabled: () => boolean;
+  run: () => void;
+}
 
 /**
  * Top-level controller composing state stores, the canvas engine, the command
@@ -55,6 +81,12 @@ export class App {
   private assets = new AssetStore();
   private ui = new AppUI();
   private minimap: Minimap;
+  private palette = new CommandPalette();
+  private paletteCommands: PaletteCommand[] = [];
+  private paletteRows: PaletteCommand[] = [];
+  private paletteActive = 0;
+  private recentPaletteIds: string[] = [];
+  private recentRows = 0;
 
   private clipboard: CanvasObject[] = [];
   private isolation: { containerId: string; visibleIds: string[] } | null = null;
@@ -73,6 +105,15 @@ export class App {
   private pendingJoinRoom = "";
   private inspectorMinimized = false;
 
+  /** File path of the current project once a save location exists. */
+  private activeFilePath: string | null = null;
+  /** The format the export details panel is currently configured for. */
+  private pendingExportFormat: AppExportFormat | null = null;
+  private autoSaveTimer: number | null = null;
+  private autoSaveInFlight = false;
+  private recoveryTimer: number | null = null;
+  private recoveryBound = false;
+
   /** Public plugin manager — used by the UI, the mobile shell and tests. */
   get plugins(): PluginManager {
     return this.pluginsManager;
@@ -81,6 +122,7 @@ export class App {
   constructor(canvas: HTMLCanvasElement) {
     this.project.replace(createNewDocument());
     this.engine = new CanvasEngine(canvas, this.viewport, this.project, this.selection);
+    this.ui.setFocusReturn(this.engine.canvas());
     this.browserOverlay = new BrowserFrameOverlay(this.engine, this.project, this.selection);
     const minimapEl = document.getElementById("minimap");
     if (minimapEl instanceof HTMLCanvasElement) {
@@ -97,8 +139,6 @@ export class App {
     this.engine.setHistory((cmd) => this.commands.execute(cmd));
     this.engine.emitContextMenu = (screen, world) => this.showContextMenu(screen, world);
 
-    this.ui.setWorldReader((screen) => ({ x: screen.x / this.engine.getFrame().zoom + this.engine.getFrame().cameraX, y: screen.y / this.engine.getFrame().zoom + this.engine.getFrame().cameraY }));
-
     this.bindUI();
     this.bindEvents();
     this.bindDragDrop(canvas);
@@ -110,6 +150,7 @@ export class App {
     this.bindSearch();
     this.bindCollab();
     this.bindAssets();
+    this.bindPalette();
     void this.refreshRecent();
 
     this.pluginsUi = new PluginsUI();
@@ -127,6 +168,178 @@ export class App {
       zoom,
     });
     this.setStatus(`Navigated to ${Math.round(world.x)}, ${Math.round(world.y)}.`);
+  }
+
+  /** Return keyboard focus to the canvas so global shortcuts keep working. */
+  private focusCanvas(): void {
+    this.engine.canvas().focus({ preventScroll: true });
+  }
+
+  // -------- Command Palette (Ctrl+K) --------
+
+  private bindPalette(): void {
+    this.paletteCommands = this.buildPaletteCommands();
+    this.palette.onQuery = () => this.refreshPalette();
+    this.palette.onDismiss = () => this.closeCommandPalette();
+    this.palette.onPick = (delta) => this.paletteMove(delta);
+  }
+
+  openCommandPalette(): void {
+    if (this.palette.isOpen()) return;
+    this.palette.open();
+    this.refreshPalette();
+    this.setStatus("Type to filter commands — Enter to run, Esc to close.");
+  }
+
+  closeCommandPalette(): void {
+    this.palette.close();
+    this.focusCanvas();
+  }
+
+  toggleCommandPalette(): void {
+    if (this.palette.isOpen()) {
+      this.closeCommandPalette();
+      return;
+    }
+    this.openCommandPalette();
+  }
+
+  /** Toggle the pen tool (HUD button, sidebar button and command palette). */
+  private togglePenTool(): void {
+    const on = !this.engine.isPenTool();
+    this.engine.setPenTool(on);
+    this.ui.setTools(on);
+    if (on) this.selection.setIds([]);
+    this.refreshUI();
+  }
+
+  /** Recomputed on every query change so enabled state is always current. */
+  private refreshPalette(): void {
+    const query = this.palette.query();
+    const activeQuery = query.trim().length > 0;
+    const matched = fuzzyFilter(query, this.paletteCommands, (c) => `${c.label} ${c.keywords}`);
+    let rows = matched.map((m) => m.item).filter((c) => c.enabled());
+    this.recentRows = 0;
+    // With a blank query, surface recently used commands first under "Recent".
+    if (!activeQuery && this.recentPaletteIds.length > 0) {
+      const recent = this.recentPaletteIds
+        .map((id) => this.paletteCommands.find((c) => c.id === id))
+        .filter((c): c is PaletteCommand => !!c && c.enabled());
+      if (recent.length > 0) {
+        rows = [...recent, ...rows.filter((c) => !this.recentPaletteIds.includes(c.id))];
+        this.recentRows = recent.length;
+      }
+    }
+    this.paletteRows = rows;
+    this.paletteActive = 0;
+    this.renderPaletteRows();
+  }
+
+  private renderPaletteRows(): void {
+    const recentCount = this.recentRows;
+    const rows: PaletteRow[] = this.paletteRows.map((c, i) => ({
+      index: i,
+      category: i < recentCount ? "Recent" : c.category,
+      label: c.label,
+      shortcut: c.shortcut,
+      active: i === this.paletteActive,
+    }));
+    this.palette.render(rows, this.palette.query());
+  }
+
+  private paletteMove(delta: number): void {
+    const n = this.paletteRows.length;
+    if (n === 0) return;
+    if (delta === 0) {
+      const command = this.paletteRows[this.paletteActive % n];
+      this.closeCommandPalette();
+      this.markPaletteRecent(command.id);
+      command.run();
+      return;
+    }
+    this.paletteActive = (this.paletteActive + delta + n) % n;
+    this.renderPaletteRows();
+  }
+
+  /** Lightweight, session-only history of recently run commands. */
+  private markPaletteRecent(id: string): void {
+    this.recentPaletteIds = [id, ...this.recentPaletteIds.filter((x) => x !== id)].slice(0, 5);
+  }
+
+  private buildPaletteCommands(): PaletteCommand[] {
+    const addAt = (kind: ObjectKind): void => {
+      this.addObjectAt(kind, this.centerWorld());
+    };
+    const addShape = (kind: ShapeKind): void => {
+      this.addShapeAt(kind, this.centerWorld());
+    };
+    const canUndo = () => this.commands.canUndo;
+    const canRedo = () => this.commands.canRedo;
+    const hasSel = () => this.selection.size > 0;
+    const selAtLeast = (n: number) => () => this.selection.size >= n;
+    const notPen = () => !this.engine.isPenTool();
+    return [
+      // -------- Canvas --------
+      { id: "zoom-in", category: "Canvas", label: "Zoom In", keywords: "magnify closer", shortcut: "Ctrl+=", enabled: () => true, run: () => this.zoomIn() },
+      { id: "zoom-out", category: "Canvas", label: "Zoom Out", keywords: "shrink farther", shortcut: "Ctrl+-", enabled: () => true, run: () => this.zoomOut() },
+      { id: "zoom-reset", category: "Canvas", label: "Reset Zoom", keywords: "fit view 100 percent", enabled: () => true, run: () => this.resetView() },
+      { id: "focus-selection", category: "Canvas", label: "Focus Selection", keywords: "center on selected", shortcut: "F", enabled: hasSel, run: () => this.focusSelection() },
+      // -------- Objects --------
+      { id: "add-text", category: "Objects", label: "Add Text", keywords: "text label type", enabled: () => true, run: () => addAt("text") },
+      { id: "add-note", category: "Objects", label: "Add Note", keywords: "sticky note annotation", enabled: () => true, run: () => addAt("note") },
+      { id: "add-image", category: "Objects", label: "Add Image…", keywords: "picture photo file", enabled: () => true, run: () => addAt("image") },
+      { id: "add-file", category: "Objects", label: "Add File…", keywords: "attachment pdf doc", enabled: () => true, run: () => addAt("file") },
+      { id: "add-url", category: "Objects", label: "Add URL / Link…", keywords: "link website web", enabled: () => true, run: () => addAt("url") },
+      { id: "add-frame", category: "Objects", label: "Add Frame", keywords: "container board", enabled: () => true, run: () => this.addFrameAt(this.centerWorld()) },
+      { id: "add-table", category: "Objects", label: "Add Table", keywords: "rows columns grid", enabled: () => true, run: () => this.addTableAt(this.centerWorld()) },
+      { id: "add-comparison-table", category: "Objects", label: "Add Comparison Table", keywords: "compare matrix pros cons", enabled: () => true, run: () => this.addTableAt(this.centerWorld(), true) },
+      { id: "add-chart", category: "Objects", label: "Add Chart", keywords: "graph data", enabled: () => true, run: () => this.addChartAt("bar", this.centerWorld()) },
+      { id: "add-connection", category: "Objects", label: "Connect Selection", keywords: "link arrow between two", shortcut: "Ctrl+Shift+C", enabled: () => this.selection.size === 2, run: () => this.connectSelection() },
+      { id: "add-pen", category: "Objects", label: "Add Pen", keywords: "freehand sketch draw", enabled: notPen, run: () => this.togglePenTool() },
+      { id: "add-group", category: "Objects", label: "Add Group", keywords: "combine group selection", enabled: selAtLeast(2), run: () => this.groupSelection() },
+      // -------- Shapes --------
+      { id: "shape-rectangle", category: "Shapes", label: "Add Rectangle", keywords: "shape box square", enabled: () => true, run: () => addShape("rectangle") },
+      { id: "shape-rounded", category: "Shapes", label: "Add Rounded Rectangle", keywords: "shape round corners box", enabled: () => true, run: () => addShape("rounded-rectangle") },
+      { id: "shape-ellipse", category: "Shapes", label: "Add Ellipse", keywords: "shape circle oval", enabled: () => true, run: () => addShape("ellipse") },
+      { id: "shape-diamond", category: "Shapes", label: "Add Diamond", keywords: "shape rhombus", enabled: () => true, run: () => addShape("diamond") },
+      { id: "shape-triangle", category: "Shapes", label: "Add Triangle", keywords: "shape polygon", enabled: () => true, run: () => addShape("triangle") },
+      { id: "shape-line", category: "Shapes", label: "Add Line", keywords: "shape straight segment", enabled: () => true, run: () => addShape("line") },
+      { id: "shape-arrow", category: "Shapes", label: "Add Arrow", keywords: "shape direction pointer", enabled: () => true, run: () => addShape("arrow") },
+      // -------- Charts --------
+      { id: "chart-bar", category: "Charts", label: "Add Bar Chart", keywords: "chart bar columns data", enabled: () => true, run: () => this.addChartAt("bar", this.centerWorld()) },
+      { id: "chart-line", category: "Charts", label: "Add Line Chart", keywords: "chart line trend data", enabled: () => true, run: () => this.addChartAt("line", this.centerWorld()) },
+      { id: "chart-pie", category: "Charts", label: "Add Pie Chart", keywords: "chart pie donut data", enabled: () => true, run: () => this.addChartAt("pie", this.centerWorld()) },
+      // -------- Editing -------
+      { id: "undo", category: "Editing", label: "Undo", keywords: "revert back", shortcut: "Ctrl+Z", enabled: canUndo, run: () => this.undo() },
+      { id: "redo", category: "Editing", label: "Redo", keywords: "reapply forward", shortcut: "Ctrl+Shift+Z", enabled: canRedo, run: () => this.redo() },
+      { id: "copy", category: "Editing", label: "Copy", keywords: "duplicate clone", shortcut: "Ctrl+C", enabled: hasSel, run: () => this.copySelection() },
+      { id: "paste", category: "Editing", label: "Paste", keywords: "clipboard insert", shortcut: "Ctrl+V", enabled: () => true, run: () => this.pasteClipboard() },
+      { id: "duplicate", category: "Editing", label: "Duplicate", keywords: "clone copy", shortcut: "Ctrl+D", enabled: hasSel, run: () => this.duplicateSelection() },
+      { id: "delete", category: "Editing", label: "Delete", keywords: "remove clear erase", shortcut: "Del", enabled: hasSel, run: () => this.deleteSelection() },
+      { id: "select-all", category: "Editing", label: "Select All", keywords: "all objects", shortcut: "Ctrl+A", enabled: () => true, run: () => this.engine.selectAll() },
+      // -------- Transform --------
+      { id: "rotate-cw", category: "Transform", label: "Rotate Clockwise", keywords: "rotate right turn", shortcut: "R", enabled: hasSel, run: () => this.rotateSelection(15) },
+      { id: "rotate-ccw", category: "Transform", label: "Rotate Counterclockwise", keywords: "rotate left turn", shortcut: "Shift+R", enabled: hasSel, run: () => this.rotateSelection(-15) },
+      { id: "group", category: "Transform", label: "Group", keywords: "combine group", shortcut: "Ctrl+G", enabled: selAtLeast(2), run: () => this.groupSelection() },
+      { id: "ungroup", category: "Transform", label: "Ungroup", keywords: "split group", shortcut: "Ctrl+Shift+G", enabled: hasSel, run: () => this.ungroupSelection() },
+      // -------- Projects --------
+      { id: "save", category: "Projects", label: "Save", keywords: "store persist", shortcut: "Ctrl+S", enabled: () => true, run: () => void this.saveProject() },
+      { id: "save-as", category: "Projects", label: "Save As…", keywords: "store persist copy", enabled: () => true, run: () => void this.saveAsProject() },
+      { id: "open-projects", category: "Projects", label: "Open Projects…", keywords: "library recent list", enabled: () => true, run: () => void this.openProjectsDialog() },
+      { id: "version-history", category: "Projects", label: "Version History", keywords: "undo history snapshots", enabled: () => true, run: () => void this.openVersionsDialog() },
+      { id: "recover", category: "Projects", label: "Recover Project…", keywords: "unsaved crash backup recovery", enabled: () => true, run: () => void this.refreshRecoveryBanner() },
+      // -------- Export --------
+      { id: "export-png", category: "Export", label: "Export PNG…", keywords: "image raster", enabled: () => true, run: () => this.exportFormat("png") },
+      { id: "export-jpeg", category: "Export", label: "Export JPEG…", keywords: "image raster jpg", enabled: () => true, run: () => this.exportFormat("jpeg") },
+      { id: "export-pdf", category: "Export", label: "Export PDF…", keywords: "document print", enabled: () => true, run: () => this.exportFormat("pdf") },
+      { id: "export-markdown", category: "Export", label: "Export Markdown…", keywords: "md text", enabled: () => true, run: () => this.exportFormat("md") },
+      { id: "export-spatia", category: "Export", label: "Export Spatia…", keywords: "spatia folder project file", enabled: () => true, run: () => this.exportFormat("spatia-folder") },
+      // -------- Application --------
+      { id: "plugins", category: "Application", label: "Plugins", keywords: "extensions addons", enabled: () => true, run: () => this.openPluginsDialog() },
+      { id: "settings", category: "Application", label: "Settings", keywords: "preferences options", enabled: () => true, run: () => this.openSettingsDialog() },
+      { id: "templates", category: "Application", label: "Templates…", keywords: "start new blank", enabled: () => true, run: () => this.openTemplatesDialog() },
+      { id: "search-canvas", category: "Application", label: "Search Canvas", keywords: "find objects", shortcut: "Ctrl+F", enabled: () => true, run: () => this.openSearch() },
+    ];
   }
 
   // -------- Search (Find modal) --------
@@ -154,6 +367,7 @@ export class App {
   closeSearch(): void {
     this.search.close();
     this.searchUi.close();
+    this.focusCanvas();
   }
 
   private buildSearchCorpus(): SearchableItem[] {
@@ -505,12 +719,7 @@ export class App {
   private applyRemoteFile(file: Record<string, unknown>): void {
     try {
       const parsed = deserialize(JSON.stringify(file));
-      const doc: ProjectDocument = {
-        meta: parsed.project,
-        viewport: parsed.viewport,
-        objects: parsed.objects,
-        assets: parsed.assets,
-      };
+      const doc: ProjectDocument = { ...fileToDocument(parsed) };
       this.applyingRemote = true;
       try {
         this.applyDocument(doc);
@@ -524,10 +733,12 @@ export class App {
   }
 
   start(): void {
+    this.initReducedEffects();
     this.engine.attach();
     this.refreshUI();
     this.viewport.changed.emit(this.viewport.get());
     this.ui.setStatus("Ready.");
+    void this.refreshRecoveryBanner();
   }
 
   // -------- Project operations --------
@@ -535,6 +746,7 @@ export class App {
   async newProject(): Promise<void> {
     if (!(await this.confirmDiscard())) return;
     this.applyDocument(createNewDocument());
+    this.activeFilePath = null;
     this.setStatus("Created a new project.");
   }
 
@@ -547,13 +759,9 @@ export class App {
     }
     try {
       const file = deserialize(result.contents);
-      const doc: ProjectDocument = {
-        meta: file.project,
-        viewport: file.viewport,
-        objects: file.objects,
-        assets: file.assets,
-      };
+      const doc: ProjectDocument = fileToDocument(file);
       this.applyDocument(doc);
+      this.activeFilePath = result.filePath;
       void this.refreshRecent();
       this.setStatus(`Opened ${file.project.name}.`);
     } catch (err) {
@@ -563,6 +771,10 @@ export class App {
   }
 
   async saveProject(): Promise<void> {
+    if (!this.activeFilePath) {
+      await this.saveProjectAsNew();
+      return;
+    }
     const json = this.serialize();
     const result = await window.spatia.saveProject(json);
     if (result.canceled) {
@@ -573,7 +785,32 @@ export class App {
     this.refreshUI();
     void this.refreshRecent();
     this.autoSnapshotAfterSave();
+    this.clearRecoveryForCurrent();
     this.setStatus(`Saved to ${result.filePath}.`);
+  }
+
+  /** First save: name the project, then create its default per-project folder. */
+  private async saveProjectAsNew(): Promise<void> {
+    const current = this.project.getMeta().name || "Untitled Project";
+    const name = await this.ui.promptText("Name your project", current, "Project name", "Save");
+    if (!name || !name.trim()) {
+      this.setStatus("Save canceled.");
+      return;
+    }
+    this.project.rename(name.trim());
+    const json = this.serialize();
+    const out = await window.spatia.projectSaveDefault(this.project.getMeta().id, name.trim(), json);
+    if (!out.ok) {
+      this.setStatus(out.error ?? "Could not save the project.");
+      return;
+    }
+    this.activeFilePath = out.filePath;
+    this.commands.markSaved();
+    this.refreshUI();
+    void this.refreshRecent();
+    this.autoSnapshotAfterSave();
+    this.clearRecoveryForCurrent();
+    this.setStatus(`Saved "${name.trim()}" to its project folder.`);
   }
 
   async saveAsProject(): Promise<void> {
@@ -584,11 +821,110 @@ export class App {
       this.setStatus("Save As canceled.");
       return;
     }
+    this.activeFilePath = result.filePath;
     this.commands.markSaved();
     this.refreshUI();
     void this.refreshRecent();
     this.autoSnapshotAfterSave();
+    this.clearRecoveryForCurrent();
     this.setStatus(`Saved project as ${result.filePath}.`);
+  }
+
+  /** Remove this project's crash-recovery draft after a successful save. */
+  private clearRecoveryForCurrent(): void {
+    const id = this.project.getMeta().id;
+    if (!id) return;
+    void window.spatia.recoveryClear(id).then(() => void this.refreshRecoveryBanner());
+  }
+
+  /**
+   * Debounced silent autosave once a save location exists. Only fires on
+   * actual changes (commands emit once per gesture), skips while a save is in
+   * flight, and never marks the document saved when the write fails.
+   */
+  private scheduleAutoSave(): void {
+    if (this.autoSaveInFlight) return;
+    if (!this.commands.isDirty() || !this.activeFilePath) return;
+    if (this.autoSaveTimer !== null) window.clearTimeout(this.autoSaveTimer);
+    this.autoSaveTimer = window.setTimeout(() => {
+      this.autoSaveTimer = null;
+      void this.autoSave();
+    }, 900);
+  }
+
+  private async autoSave(): Promise<void> {
+    if (this.autoSaveInFlight || !this.commands.isDirty() || !this.activeFilePath) return;
+    this.autoSaveInFlight = true;
+    try {
+      const result = await window.spatia.saveProject(this.serialize());
+      if (!result.canceled && result.filePath) this.commands.markSaved();
+    } catch {
+      /* keep the document dirty; a later change will retry */
+    } finally {
+      this.autoSaveInFlight = false;
+      this.refreshUI();
+    }
+  }
+
+  /**
+   * Crash recovery: while a document is dirty (or has never been saved) its
+   * serialized state is mirrored to a recovery store. On launch the banner
+   * offers to restore any drafts left behind.
+   */
+  private scheduleRecovery(): void {
+    if (!this.commands.isDirty() && this.activeFilePath !== null) return;
+    if (this.recoveryTimer !== null) window.clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = window.setTimeout(() => {
+      this.recoveryTimer = null;
+      void this.writeRecoveryDraft();
+    }, 1500);
+  }
+
+  private async writeRecoveryDraft(): Promise<void> {
+    try {
+      await window.spatia.recoveryWrite(this.project.getMeta().id, this.serialize());
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  private async refreshRecoveryBanner(): Promise<void> {
+    let entries: RecoveryEntry[] = [];
+    try {
+      entries = await window.spatia.recoveryList();
+    } catch {
+      entries = [];
+    }
+    const current = this.project.getMeta().id;
+    this.ui.setRecovery(entries.filter((e) => e.projectId !== current).slice(0, 6));
+    if (!this.recoveryBound) {
+      this.recoveryBound = true;
+      this.ui.onRecover = (id) => void this.recoverDraft(id);
+      this.ui.onDiscardRecovery = (id) => void this.discardRecoveryDraft(id);
+    }
+  }
+
+  private async recoverDraft(projectId: string): Promise<void> {
+    if (!(await this.confirmDiscard())) return;
+    const entries = await window.spatia.recoveryList().catch((): RecoveryEntry[] => []);
+    const draft = entries.find((e) => e.projectId === projectId);
+    if (!draft) return;
+    try {
+      const file = deserialize(draft.contents);
+      this.applyDocument(fileToDocument(file));
+      this.activeFilePath = null;
+      this.setStatus(`Recovered "${file.project.name}".`);
+    } catch (err) {
+      const msg = err instanceof ProjectFormatError ? err.message : "That recovery draft is not a valid project.";
+      this.setStatus(msg);
+    }
+    await window.spatia.recoveryClear(projectId);
+    void this.refreshRecoveryBanner();
+  }
+
+  private async discardRecoveryDraft(projectId: string): Promise<void> {
+    await window.spatia.recoveryClear(projectId);
+    void this.refreshRecoveryBanner();
   }
 
   async exportProject(): Promise<void> {
@@ -611,34 +947,254 @@ export class App {
   }
 
   /** Run one of the export formats picked from the dialog. */
-  exportFormat(format: "spatia-folder" | "spatia-json" | "png" | "pdf" | "md"): void {
-    this.closeExportDialog();
+  exportFormat(format: AppExportFormat): void {
     switch (format) {
       case "spatia-folder":
+        this.closeExportDialog();
         void this.exportProject();
         return;
       case "spatia-json":
+        this.closeExportDialog();
         void this.saveAsProject();
         return;
       case "png":
-        void this.exportPng();
-        return;
+      case "jpeg":
       case "pdf":
-        void this.exportPdf();
+        this.configureExport(format);
         return;
       case "md":
+        this.closeExportDialog();
         void this.exportMarkdown();
         return;
     }
   }
 
+  /**
+   * Open the export details step (scope + resolution + summary). The dialog
+   * stays open so the user can tune options before confirming; PNG/JPEG raster
+   * scopes include selection and all-frames, PDF skips the single selection.
+   */
+  private configureExport(format: AppExportFormat): void {
+    this.pendingExportFormat = format;
+    const isRaster = format === "png" || format === "jpeg";
+    const isPdf = format === "pdf";
+    this.ui.showExportDetails({
+      title: isRaster ? `Export ${format.toUpperCase()}` : "Export PDF",
+      scopes: isPdf ? ["canvas", "frame", "frames"] : ["canvas", "selection", "frame", "frames"],
+      showScale: isRaster,
+    });
+    this.updateExportSummary();
+  }
+
   private closeExportDialog(): void {
     this.ui.closeExportDialog();
+    this.focusCanvas();
   }
 
   /** World-space bounds covering every object, used by raster exports. */
   exportBounds(): Rect {
     return exportBounds(this.project.getObjects());
+  }
+
+  /** The document scope used by the currently configured export. */
+  private exportScope(scope: string): { bounds: Rect; onlyIds: Set<string> | null } {
+    if (scope === "selection") {
+      const ids = new Set(this.selection.get());
+      const objects = this.project.getObjectsByIds([...ids]);
+      if (objects.length === 0) return { bounds: this.exportBounds(), onlyIds: null };
+      const rects = objects.map((o) => ({ x: o.x, y: o.y, width: o.width, height: o.height }));
+      // selectionBounds returns null only when the input rects are empty.
+      const bounds = selectionBounds(rects) ?? this.exportBounds();
+      return { bounds, onlyIds: ids };
+    }
+    if (scope === "frame") {
+      const frame = this.selectedFrame();
+      if (frame) {
+        return {
+          bounds: { x: frame.x, y: frame.y, width: frame.width, height: frame.height },
+          onlyIds: new Set(this.isolationContents(frame)),
+        };
+      }
+    }
+    return { bounds: this.exportBounds(), onlyIds: null };
+  }
+
+  /** The currently selected frame object, if any. */
+  private selectedFrame(): Extract<CanvasObject, { type: "frame" }> | null {
+    const ids = this.selection.get();
+    if (ids.length === 1) {
+      const obj = this.project.getObject(ids[0]);
+      if (obj && obj.type === "frame") return obj;
+    }
+    return null;
+  }
+
+  /** All frame objects (export scope "frames"), each with its member id set. */
+  private frameExportTargets(): { frame: Extract<CanvasObject, { type: "frame" }>; onlyIds: Set<string> }[] {
+    return this.project
+      .getObjects()
+      .filter((o): o is Extract<CanvasObject, { type: "frame" }> => o.type === "frame")
+      .map((frame) => ({ frame, onlyIds: new Set(this.isolationContents(frame)) }));
+  }
+
+  private selectedFrameLabel(): string {
+    const frame = this.selectedFrame();
+    return frame ? frame.name || "Untitled" : "";
+  }
+
+  /** Live summary of the configured export scope/resolution. */
+  updateExportSummary(): void {
+    const format = this.pendingExportFormat;
+    if (!format) return;
+    const scope = this.ui.getExportScope();
+    const isRaster = format === "png" || format === "jpeg";
+    let summary = "";
+    let canRun = true;
+    if (scope === "selection") {
+      const count = this.selection.size;
+      canRun = count > 0;
+      summary = count > 0 ? `${count} selected object${count === 1 ? "" : "s"}.` : "Nothing selected.";
+    } else if (scope === "frame") {
+      const frame = this.selectedFrame();
+      canRun = frame !== null;
+      summary = frame ? `Selected frame "${this.selectedFrameLabel()}" (${Math.round(frame.width)} \u00d7 ${Math.round(frame.height)}).` : "Select a frame on the canvas.";
+    } else if (scope === "frames") {
+      const frames = this.frameExportTargets();
+      canRun = frames.length > 0;
+      summary =
+        frames.length > 0
+          ? `${frames.length} frame${frames.length === 1 ? "" : "s"}: ${isRaster ? "one image per frame, saved to the project exports folder." : "one PDF page per frame."}`
+          : "The document has no frames.";
+    } else {
+      const b = this.exportBounds();
+      summary = `Entire canvas (${Math.round(b.width)} \u00d7 ${Math.round(b.height)} world units).`;
+    }
+    if (isRaster && canRun) {
+      const scale = this.ui.getExportScale();
+      summary = `${summary} Resolution ${scale}\u00d7 (${Math.round(this.exportScope(scope).bounds.width * scale)} \u00d7 ${Math.round(this.exportScope(scope).bounds.height * scale)} px).`;
+    }
+    this.ui.setExportSummary(summary);
+    this.ui.exportRun.disabled = !canRun;
+  }
+
+  /** Run the currently configured PNG/JPEG export at the chosen scope/resolution. */
+  private async runImageExport(kind: "png" | "jpeg"): Promise<void> {
+    const scope = this.ui.getExportScope();
+    const scale = this.ui.getExportScale();
+    const mime = kind === "jpeg" ? "image/jpeg" : "image/png";
+    const ext = kind === "jpeg" ? "jpg" : "png";
+    const base = this.exportBaseName();
+    if (scope === "frames") {
+      const targets = this.frameExportTargets();
+      if (targets.length === 0) {
+        this.setStatus("The document has no frames.");
+        return;
+      }
+      let done = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        const rect: Rect = { x: t.frame.x, y: t.frame.y, width: t.frame.width, height: t.frame.height };
+        const raster = await this.engine.rasterizeExport(rect, scale, mime, t.onlyIds);
+        if (!raster) continue;
+        const payload = raster.dataUrl.split(",")[1] ?? "";
+        const fileName = `${base} - Frame ${i + 1}.${ext}`;
+        const result = await window.spatia.exportToExports(this.project.getMeta().id, fileName, payload);
+        if (result.canceled) {
+          this.setStatus("Export canceled.");
+          return;
+        }
+        done += 1;
+      }
+      this.setStatus(`Exported ${done} ${kind.toUpperCase()} image${done === 1 ? "" : "s"} to the project exports folder.`);
+      return;
+    }
+    const { bounds, onlyIds } = this.exportScope(scope);
+    const raster = await this.engine.rasterizeExport(bounds, scale, mime, onlyIds);
+    if (!raster) {
+      this.setStatus("Could not rasterize the canvas.");
+      return;
+    }
+    const payload = raster.dataUrl.split(",")[1] ?? "";
+    const result = await window.spatia.exportFile(kind, `${base}.${ext}`, payload);
+    if (result.canceled) {
+      this.setStatus("Export canceled.");
+      return;
+    }
+    this.setStatus(`Exported ${kind.toUpperCase()} to ${result.filePath}.`);
+  }
+
+  /** Run the currently configured PDF export (canvas or frame/frames scope). */
+  private async runPdfExport(): Promise<void> {
+    const scope = this.ui.getExportScope();
+    const base = this.exportBaseName();
+    let targets = [] as { frame: Extract<CanvasObject, { type: "frame" }>; onlyIds: Set<string> }[];
+    if (scope === "frames") {
+      targets = this.frameExportTargets();
+    } else if (scope === "frame") {
+      const frame = this.selectedFrame();
+      if (frame) targets = [{ frame, onlyIds: new Set(this.isolationContents(frame)) }];
+    }
+    if (scope === "frame" || scope === "frames") {
+      if (targets.length === 0) {
+        this.setStatus(scope === "frame" ? "Select a frame on the canvas." : "The document has no frames.");
+        return;
+      }
+      const pages = [] as PdfPage[];
+      for (const t of targets) {
+        const rect: Rect = { x: t.frame.x, y: t.frame.y, width: t.frame.width, height: t.frame.height };
+        // Scale 2 + dpi 144 → page size equals the frame's logical units in points.
+        const raster = await this.engine.rasterizeExport(rect, 2, "image/jpeg", t.onlyIds);
+        if (!raster) continue;
+        pages.push({
+          jpegBase64: raster.dataUrl.split(",")[1] ?? "",
+          pixelWidth: raster.width,
+          pixelHeight: raster.height,
+          dpi: 144,
+        });
+      }
+      if (pages.length === 0) {
+        this.setStatus("Could not rasterize the frame(s).");
+        return;
+      }
+      void this.writePdf(pages, `${base}.pdf`);
+      return;
+    }
+    const bounds = this.exportBounds();
+    const raster = await this.engine.rasterizeExport(bounds, 2, "image/jpeg");
+    if (!raster) {
+      this.setStatus("Could not rasterize the canvas.");
+      return;
+    }
+    void this.writePdf(
+      [
+        {
+          jpegBase64: raster.dataUrl.split(",")[1] ?? "",
+          pixelWidth: raster.width,
+          pixelHeight: raster.height,
+          dpi: 96,
+        },
+      ],
+      `${base}.pdf`
+    );
+  }
+
+  private async writePdf(pages: PdfPage[], fileName: string): Promise<void> {
+    const pdf = buildPdfFromJpegs(pages);
+    const result = await window.spatia.exportFile("pdf", fileName, bytesToBase64(pdf));
+    if (result.canceled) {
+      this.setStatus("Export canceled.");
+      return;
+    }
+    this.setStatus(`Exported PDF to ${result.filePath}.`);
+  }
+
+  /** Run the currently configured export (from the details panel). */
+  private runConfiguredExport(): void {
+    const format = this.pendingExportFormat;
+    if (!format) return;
+    this.closeExportDialog();
+    if (format === "png" || format === "jpeg") void this.runImageExport(format);
+    else if (format === "pdf") void this.runPdfExport();
   }
 
   /** Markdown down-export of the current document (notes/text/links). */
@@ -660,39 +1216,6 @@ export class App {
       return;
     }
     this.setStatus(`Exported Markdown to ${result.filePath}.`);
-  }
-
-  private async exportPng(): Promise<void> {
-    const bounds = this.exportBounds();
-    const raster = await this.engine.rasterizeExport(bounds, 2, "image/png");
-    if (!raster) {
-      this.setStatus("Could not rasterize the canvas.");
-      return;
-    }
-    const base64 = raster.dataUrl.split(",")[1] ?? "";
-    const result = await window.spatia.exportFile("png", `${this.exportBaseName()}.png`, base64);
-    if (result.canceled) {
-      this.setStatus("Export canceled.");
-      return;
-    }
-    this.setStatus(`Exported PNG to ${result.filePath}.`);
-  }
-
-  private async exportPdf(): Promise<void> {
-    const bounds = this.exportBounds();
-    const raster = await this.engine.rasterizeExport(bounds, 2, "image/jpeg");
-    if (!raster) {
-      this.setStatus("Could not rasterize the canvas.");
-      return;
-    }
-    const jpegBase64 = raster.dataUrl.split(",")[1] ?? "";
-    const pdf = buildPdfFromJpeg(jpegBase64, raster.width, raster.height);
-    const result = await window.spatia.exportFile("pdf", `${this.exportBaseName()}.pdf`, bytesToBase64(pdf));
-    if (result.canceled) {
-      this.setStatus("Export canceled.");
-      return;
-    }
-    this.setStatus(`Exported PDF to ${result.filePath}.`);
   }
 
   // -------- Templates --------
@@ -719,6 +1242,7 @@ export class App {
 
   private closeTemplatesDialog(): void {
     this.ui.closeTemplatesDialog();
+    this.focusCanvas();
   }
 
   /** Replace the current document with the given template's starter canvas. */
@@ -754,6 +1278,7 @@ export class App {
 
   private closeProjectsDialog(): void {
     this.ui.closeProjectsDialog();
+    this.focusCanvas();
   }
 
   private async reloadLibrary(): Promise<boolean> {
@@ -915,6 +1440,7 @@ export class App {
 
   private closeVersionsDialog(): void {
     this.ui.closeVersionsDialog();
+    this.focusCanvas();
   }
 
   private async refreshVersionsDialog(): Promise<void> {
@@ -971,12 +1497,7 @@ export class App {
         }
         try {
           const file = deserialize(json);
-          this.applyDocument({
-            meta: file.project,
-            viewport: file.viewport,
-            objects: file.objects,
-            assets: file.assets,
-          });
+          this.applyDocument(fileToDocument(file));
           this.setStatus(`Restored snapshot "${btn.textContent}".`);
         } catch {
           this.setStatus("That snapshot is not a valid project.");
@@ -1001,7 +1522,7 @@ export class App {
       });
   }
 
-  async importProject(): Promise<void> {
+async importProject(): Promise<void> {
     const result = await window.spatia.importProject();
     if (result.canceled || result.contents === null) {
       this.setStatus("Import canceled.");
@@ -1009,13 +1530,11 @@ export class App {
     }
     try {
       const file = deserialize(result.contents);
-      const doc: ProjectDocument = {
-        meta: file.project,
-        viewport: file.viewport,
-        objects: file.objects,
-        assets: file.assets,
-      };
+      const doc: ProjectDocument = fileToDocument(file);
       this.applyDocument(doc);
+      // Imported documents start unpersisted under their new project id; the
+      // first manual save creates a per-project folder for them.
+      this.activeFilePath = null;
       void this.refreshRecent();
       this.setStatus(`Imported "${file.project.name}".`);
     } catch (err) {
@@ -1033,13 +1552,9 @@ export class App {
     }
     try {
       const file = deserialize(result.contents);
-      const doc: ProjectDocument = {
-        meta: file.project,
-        viewport: file.viewport,
-        objects: file.objects,
-        assets: file.assets,
-      };
+      const doc: ProjectDocument = fileToDocument(file);
       this.applyDocument(doc);
+      this.activeFilePath = result.filePath;
       void this.refreshRecent();
       this.setStatus(`Opened ${file.project.name}.`);
     } catch (err) {
@@ -1080,10 +1595,17 @@ export class App {
       this.addUrlAt(worldCenter);
       return;
     }
+    if (kind === "table") {
+      this.addTableAt(worldCenter);
+      return;
+    }
+    if (kind === "chart") {
+      this.addChartAt("bar", worldCenter);
+      return;
+    }
     const id = this.engine.addObjectAt(kind, worldCenter);
     if (id) this.selection.setIds([id]);
     this.refreshUI();
-    this.setStatus(`Added ${kindLabel(kind)}.`);
   }
 
   /**
@@ -1114,7 +1636,6 @@ export class App {
     this.selection.setIds([obj.id]);
     this.refreshUI();
     this.editTextObject(obj);
-    this.setStatus("Adding text — start typing.");
   }
 
   private async addUrlAt(worldCenter: Point): Promise<void> {
@@ -1129,7 +1650,6 @@ export class App {
     const id = this.engine.createUrlObject(url, title || trimmed, worldCenter);
     this.selection.setIds([id]);
     this.refreshUI();
-    this.setStatus(`Added link "${title || trimmed}".`);
   }
 
   /**
@@ -1158,7 +1678,6 @@ export class App {
     this.selection.setIds([obj.id]);
     this.refreshUI();
     this.editTextObject(obj);
-    this.setStatus("Adding note — start typing.");
   }
 
   /** Create a diagram shape centered on `worldCenter` and select it. */
@@ -1167,7 +1686,6 @@ export class App {
     if (id) {
       this.selection.setIds([id]);
       this.refreshUI();
-      this.setStatus(`Added ${shapeLabel(kind)}.`);
     }
   }
 
@@ -1195,16 +1713,19 @@ export class App {
       this.selection.setIds([id]);
     }
     this.refreshUI();
-    this.setStatus(`Added "${asset.name}".`);
   }
 
   // -------- Selection / clipboard / z-order --------
 
   private copySelection(): void {
-    const objects = this.project.getObjects().filter((o) => this.selection.has(o.id));
-    if (objects.length === 0) return;
-    this.clipboard = objects.map((o) => structuredClone(o) as CanvasObject);
-    this.setStatus(`Copied ${objects.length} object${objects.length > 1 ? "s" : ""}.`);
+    const inkIds = new Set(this.engine.getInkSelectedObjects().map((o) => o.id));
+    const objects = this.project
+      .getObjects()
+      .filter((o) => this.selection.has(o.id) && !this.engine.isInkId(o.id));
+    if (objects.length === 0 && inkIds.size === 0) return;
+    const all = [...objects, ...this.engine.getInkSelectedObjects()];
+    this.clipboard = all.map((o) => structuredClone(o) as CanvasObject);
+    this.setStatus(`Copied ${all.length} object${all.length > 1 ? "s" : ""}.`);
   }
 
   private pasteClipboard(): void {
@@ -1214,6 +1735,7 @@ export class App {
     }
     const center = screenToWorld({ x: this.engine.getFrame().originWidth / 2, y: this.engine.getFrame().originHeight / 2 }, this.engine.getFrame());
     const pasted: string[] = [];
+    const pastedInk: string[] = [];
     const self = this;
     const clones = this.clipboard.map((o, i) => ({
       ...structuredClone(o),
@@ -1227,7 +1749,8 @@ export class App {
       redo() {
         for (const c of clones) {
           self.project.addObject(c as CanvasObject);
-          pasted.push(c.id);
+          if ((c as CanvasObject).type === "pen") pastedInk.push(c.id);
+          else pasted.push(c.id);
         }
       },
       undo() {
@@ -1236,11 +1759,12 @@ export class App {
     });
     void center;
     this.selection.setIds(pasted);
+    this.engine.setInkSelection(pastedInk);
     this.refreshUI();
   }
 
   private deleteSelection(): void {
-    if (this.selection.size === 0) return;
+    if (this.selection.size === 0 && !this.engine.hasInkSelection()) return;
     this.engine.deleteSelection();
     this.refreshUI();
   }
@@ -1273,6 +1797,7 @@ export class App {
     const w = obj.width * frame.zoom;
     const h = obj.height * frame.zoom;
     const fontSize = (obj.type === "text" ? obj.fontSize : obj.width * 0.07) * frame.zoom;
+    const fontFamily = obj.type === "text" ? obj.fontFamily : undefined;
 
     openTextEditor({
       left: tl.x,
@@ -1282,19 +1807,103 @@ export class App {
       fontSize,
       value: obj.text,
       multiline: true,
+      fontFamily,
       onCommit: (text) => {
         if (text === obj.text) {
           this.refreshUI();
           return;
         }
-        const change: PropChange = { id: obj.id, key: "text", before: obj.text, after: text };
-        this.commands.execute(setPropsCommand(this.project, [change]));
+        const changes: PropChange[] = [{ id: obj.id, key: "text", before: obj.text, after: text }];
+        // Grow the text object with its content so long text never clips after
+        // commit (a rough pass when no canvas measure is available).
+        if (obj.type === "text") {
+          const ctx = this.engine.canvas().getContext("2d");
+          let measure: ((s: string) => number) | undefined;
+          if (ctx) {
+            const fam = obj.fontFamily ? `"${obj.fontFamily}"` : `"Segoe UI", system-ui, sans-serif`;
+            ctx.font = `${obj.italic ? "italic " : ""}${obj.bold ? "bold " : ""}${obj.fontSize}px ${fam}`;
+            measure = (s) => ctx.measureText(s).width;
+          }
+          const nextHeight = estimateTextHeight(text, obj.fontSize, obj.width, measure);
+          if (Math.abs(nextHeight - obj.height) > 4) {
+            changes.push({ id: obj.id, key: "height", before: obj.height, after: nextHeight });
+          }
+        }
+        this.commands.execute(setPropsCommand(this.project, changes));
         this.refreshUI();
       },
     });
   }
 
   // -------- Context menu --------
+
+  private editDataObject(obj: CanvasObject): void {
+    if (obj.type !== "table" && obj.type !== "chart") return;
+    const isChart = obj.type === "chart";
+    openDataEditor({
+      title: isChart ? "Chart data" : obj.comparison ? "Comparison data" : "Table data",
+      data: obj.data,
+      onCommit: (data: TableData) => {
+        const change: PropChange = { id: obj.id, key: "data", before: obj.data, after: data };
+        this.commands.execute(setPropsCommand(this.project, [change]));
+        this.refreshUI();
+      },
+    });
+  }
+
+  /**
+   * Open the inline editor over the table cell under a screen point. Uses the
+   * same layout math as the renderer, so the input always sits on the cell.
+   * Commits through the command stack (undoable) on the `data` property.
+   */
+  private editTableCell(obj: CanvasObject, screen: Point): void {
+    if (obj.type !== "table") return;
+    const frame = this.engine.getFrame();
+    const world = screenToWorld(screen, frame);
+    const cx = obj.x + obj.width / 2;
+    const cy = obj.y + obj.height / 2;
+
+    const invCos = Math.cos(-obj.rotation);
+    const invSin = Math.sin(-obj.rotation);
+    const dx = world.x - cx;
+    const dy = world.y - cy;
+    const lx = dx * invCos - dy * invSin;
+    const ly = dx * invSin + dy * invCos;
+
+    const layout = tableLayout(obj.data, obj.width, obj.height, frame.zoom);
+    const cell = tableCellAt(obj.data, layout, obj.width, obj.height, { x: lx, y: ly });
+    if (!cell) return;
+    const rect = tableCellRect(obj.data, layout, obj.width, obj.height, cell.row, cell.col);
+
+    const cos = Math.cos(obj.rotation);
+    const sin = Math.sin(obj.rotation);
+    const topLeft = worldToScreen({ x: cx + rect.x * cos - rect.y * sin, y: cy + rect.x * sin + rect.y * cos }, frame);
+
+    const current =
+      cell.row < 0 ? (obj.data.columns[cell.col] ?? "") : (obj.data.rows[cell.row]?.[cell.col] ?? "");
+    const fontSize = Math.max(7, Math.min(11, layout.headerPx * 0.58));
+
+    closeTableCellEditor();
+    openTableCellEditor({
+      left: topLeft.x,
+      top: topLeft.y,
+      width: rect.width * frame.zoom,
+      height: rect.height * frame.zoom,
+      fontSize,
+      value: current,
+      onCommit: (value) => {
+        if (value === current) {
+          this.refreshUI();
+          return;
+        }
+        const before = obj.data;
+        const after = cell.row < 0 ? renameColumn(before, cell.col, value) : setCell(before, cell.row, cell.col, value);
+        const change: PropChange = { id: obj.id, key: "data", before, after };
+        this.commands.execute(setPropsCommand(this.project, [change]));
+        this.refreshUI();
+      },
+    });
+  }
 
   private showContextMenu(screen: Point, world: Point): void {
     const hit = this.engine.hitTest(screen);
@@ -1333,6 +1942,14 @@ export class App {
       items.push({ label: "Isolate container", shortcut: "Shift+I", enabled: single && (obj?.type === "group" || obj?.type === "frame"), action: () => this.isolateSelection() });
       items.push({ separatorBefore: true, label: "Duplicate", shortcut: "Ctrl+D", enabled: canEdit, action: () => this.duplicateSelection() });
       items.push({ label: "Delete", shortcut: "Del", enabled: canEdit, action: () => this.deleteSelection() });
+      if (obj && (obj.type === "table" || obj.type === "chart")) {
+        items.push({
+          separatorBefore: true,
+          label: "Edit data…",
+          enabled: canEdit,
+          action: () => this.editDataObject(obj),
+        });
+      }
       if (obj && (obj.type === "file" || obj.type === "image")) {
         items.push({
           separatorBefore: true,
@@ -1369,11 +1986,27 @@ export class App {
     items.push({ label: "Add image", action: () => this.addObjectAt("image", world) });
     items.push({ label: "Add file", action: () => this.addObjectAt("file", world) });
     items.push({ label: "Add link", action: () => this.addObjectAt("url", world) });
-    items.push({ label: "Add frame", action: () => this.addFrameAt(world) });
-    items.push({ separatorBefore: true, label: "Add shapes", enabled: false, action: () => {} });
-    for (const sk of SHAPE_KINDS) {
-      items.push({ label: `Add ${shapeLabel(sk)}`, action: () => this.addShapeAt(sk, world) });
-    }
+    items.push({ label: "Add frame", action: () => this.addFrameAt(world), items: [
+      { label: "Rectangle", action: () => this.addFrameAt(world, "rectangle") },
+      { label: "Rounded", action: () => this.addFrameAt(world, "rounded") },
+      { label: "Ellipse", action: () => this.addFrameAt(world, "ellipse") },
+      ] });
+    items.push({ separatorBefore: true, label: "Add data", enabled: false, action: () => {} });
+    items.push({ label: "Add table", action: () => this.addTableAt(world) });
+    items.push({ label: "Add comparison", action: () => this.addTableAt(world, true) });
+    items.push({ label: "Add chart", action: () => this.addChartAt("bar", world), items: [
+      { label: "Bar", action: () => this.addChartAt("bar", world) },
+      { label: "Line", action: () => this.addChartAt("line", world) },
+      { label: "Pie", action: () => this.addChartAt("pie", world) },
+    ] });
+    items.push({
+      separatorBefore: true,
+      label: "Shapes",
+      items: SHAPE_KINDS.map((sk) => ({
+        label: `Add ${shapeLabel(sk)}`,
+        action: () => this.addShapeAt(sk, world),
+      })),
+    });
     items.push({ separatorBefore: true, label: "Paste here", enabled: this.clipboard.length > 0, action: () => this.pasteClipboard() });
 
     const pluginCommands = this.pluginsManager.commandsList();
@@ -1445,12 +2078,27 @@ export class App {
     this.setStatus("Ungrouped.");
   }
 
-  private addFrameAt(world: Point): void {
-    const id = this.engine.createFrame(world);
+  private addFrameAt(world: Point, frameShape: FrameShape = "rectangle"): void {
+    const id = this.engine.createFrame(world, frameShape);
     if (id) {
       this.selection.setIds([id]);
       this.refreshUI();
-      this.setStatus("Added frame.");
+    }
+  }
+
+  private addTableAt(world: Point, comparison = false): void {
+    const id = this.engine.createTableObject(world, comparison);
+    if (id) {
+      this.selection.setIds([id]);
+      this.refreshUI();
+    }
+  }
+
+  private addChartAt(kind: ChartKind, world: Point): void {
+    const id = this.engine.createChartObject(kind, world);
+    if (id) {
+      this.selection.setIds([id]);
+      this.refreshUI();
     }
   }
 
@@ -1458,6 +2106,14 @@ export class App {
     if (this.selection.size === 0) return;
     this.engine.duplicateSelection();
     this.refreshUI();
+  }
+
+  /** Rotate the selection by `deg` degrees; R = 15°, Shift+R = -15°. */
+  private rotateSelection(deg: number): void {
+    if (this.selection.size === 0) return;
+    this.engine.rotateSelection(deg);
+    this.refreshUI();
+    this.setStatus(`Rotated by ${deg}° (${deg > 0 ? "R" : "Shift+R"}).`);
   }
 
   // -------- Focus / isolation --------
@@ -1802,36 +2458,38 @@ export class App {
     this.ui.setSidebarOpen(open);
   }
 
-  // -------- Settings & Local AI --------
+  // -------- Reduced visual effects --------
+
+  /** Apply the persisted reduced-effects preference to <html>. */
+  private initReducedEffects(): void {
+    let on = false;
+    try {
+      on = localStorage.getItem(EFFECTS_KEY) === "1";
+    } catch {
+      /* storage unavailable; default to full effects */
+    }
+    document.documentElement.classList.toggle("spatia-reduced-effects", on);
+    this.ui.settingsEffects.checked = on;
+  }
+
+  private bindReducedEffects(): void {
+    this.ui.settingsEffects.addEventListener("change", () => {
+      const on = this.ui.settingsEffects.checked;
+      document.documentElement.classList.toggle("spatia-reduced-effects", on);
+      try {
+        localStorage.setItem(EFFECTS_KEY, on ? "1" : "0");
+      } catch {
+        /* best-effort persistence */
+      }
+    });
+  }
+
+  // -------- Settings --------
 
   /** Open the in-app Settings dialog. */
   openSettingsDialog(): void {
     this.ui.openSettingsDialog();
     this.setStatus(`Spatia v${APP_VERSION} — local-first, offline by default.`);
-  }
-
-  /** Load the Local-AI module (floating bubble + panel). Only runs on the
-   *  desktop build where `window.spatia.aiGetAsset` is wired by the preload.
-   *  On the web build mountAi is never reached, keeping the bundle clean. The
-   *  agent-tools module is loaded lazily here (never statically) so it only
-   *  ever ships inside the desktop package, never to the web site. */
-  private mountAi(): Promise<void> {
-    if (typeof window.spatia?.aiGetAsset !== "function") return Promise.resolve();
-    const url = new URL("./ai/ai.js", document.baseURI).href;
-    const toolsPath = "./renderer/ai/agentTools.js";
-    const toolsUrl = new URL(toolsPath, document.baseURI).href;
-    return Promise.all([import(url), import(toolsUrl)])
-      .then(([mod, toolsMod]) => {
-        const anyMod = mod as { attachHost?: (h: unknown) => void };
-        if (typeof anyMod.attachHost === "function") {
-          const AgentTools = (toolsMod as { AgentTools: new (project: ProjectStore, commands: CommandManager, selection: SelectionStore, getFrame: () => ViewportFrame) => { toolsMeta(): unknown; run(name: string, args: unknown): Promise<unknown> } }).AgentTools;
-          const tools = new AgentTools(this.project, this.commands, this.selection, () => this.engine.getFrame());
-          anyMod.attachHost({ toolsMeta: () => tools.toolsMeta(), runTool: (n: string, a: unknown) => tools.run(n, a as Record<string, unknown> | null | undefined) });
-        }
-      })
-      .catch(() => {
-        this.ui.notify("Local AI did not load — this copy may be out of date.");
-      });
   }
 
   private confirmDiscard(): Promise<boolean> {
@@ -1843,12 +2501,18 @@ export class App {
   }
 
   private bindEvents(): void {
-    this.commands.changed.subscribe(() => this.refreshUI());
+    this.commands.changed.subscribe(() => {
+      this.refreshUI();
+      this.scheduleAutoSave();
+      this.scheduleRecovery();
+    });
     this.project.changed.subscribe(() => {
       if (this.isolation && !this.project.getObject(this.isolation.containerId)) this.exitIsolation();
       this.refreshUI();
       this.scheduleOverlayUpdate();
       this.scheduleCollabSnapshot();
+      this.scheduleAutoSave();
+      this.scheduleRecovery();
     });
     this.project.replaced.subscribe(() => {
       this.refreshUI();
@@ -1868,6 +2532,7 @@ export class App {
     // A normal workspace click dismisses the sidebar. The sidebar is a sibling
     // of the canvas, so pointer events inside it never reach this listener.
     this.engine.canvas().addEventListener("pointerdown", () => {
+      this.focusCanvas();
       if (this.ui.isSidebarOpen()) this.setSidebar(false);
     });
     // Collaborative cursor presence: send the world-space pointer on move.
@@ -1883,13 +2548,11 @@ export class App {
   /** Handle OS pasted files/text (images, files); internal objects use Ctrl+V. */
   private onPaste = (e: ClipboardEvent): void => {
     if (isEditingText()) return;
+    if (isEditingTableCell()) return;
     // When a real editable field (e.g. the Add Link URL input or an inspector
     // input) has focus, the OS paste must go into that field, not the canvas.
     // ClipboardEvent.target is the focused editable element in that case.
-    const target = e.target as HTMLElement | null;
-    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-      return;
-    }
+    if (isEditableEventTarget(e)) return;
     const files = e.clipboardData?.files;
     if (files && files.length > 0) {
       const file = files[0];
@@ -1941,6 +2604,14 @@ export class App {
       this.ui.setInspector(this.penToolInspector());
       return;
     }
+    // Ink selection (freehand strokes) takes priority over the object view
+    // when strokes are selected, since stroke objects are rarely edited through
+    // the object inspector.
+    if (this.engine.hasInkSelection()) {
+      this.ui.setInspectorOpen(true);
+      this.ui.setInspector(this.inkInspector());
+      return;
+    }
     const ids = this.selection.get();
     if (ids.length === 0) {
       this.ui.setInspectorOpen(false);
@@ -1962,16 +2633,77 @@ export class App {
 
   /** Inspector view shown while the pen tool is active (live tool style). */
   private penToolInspector(): string {
-    const style = this.engine.getPenStyle();
-    const eraser = this.engine.isPenEraser();
+    const s = this.engine.getPenSettings();
+    const mode = this.engine.getPenToolMode();
+    const smoothing = Number(s.smoothing);
+    const stabilizer = s.stabilizer === "strong" ? "strong" : s.stabilizer === "mild" ? "mild" : "off";
+    const eraserMode = s.eraserMode === "stroke" ? "stroke" : "partial";
+    const num = (v: number) => round(v);
+    const checked = (v: boolean) => (v ? " checked" : "");
     return (
-      `<div class="inspector-row"><span class="inspector-label">Type</span><span>Pen</span></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Mode</span>` +
+        `<select class="inspector-input" data-pen="mode">` +
+          `<option value="pen"${mode === "pen" ? " selected" : ""}>Pen</option>` +
+          `<option value="eraser"${mode === "eraser" ? " selected" : ""}>Eraser</option>` +
+          `<option value="lasso"${mode === "lasso" ? " selected" : ""}>Lasso</option>` +
+        `</select></div>` +
       `<div class="inspector-row"><span class="inspector-label">Size</span>` +
-        `<input class="inspector-input" data-pen="size" type="number" min="1" max="24" step="1" value="${round(style.size)}"></div>` +
+        `<input class="inspector-input" data-pen="size" type="number" min="0.5" max="64" step="0.5" value="${num(s.width)}"></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Opacity</span>` +
+        `<input class="inspector-input" data-pen="opacity" type="number" min="0.05" max="1" step="0.05" value="${num(s.opacity)}"></div>` +
       `<div class="inspector-row"><span class="inspector-label">Color</span>` +
-        `<input class="inspector-input share-color" data-pen="color" type="color" value="${escapeAttr(style.color)}"></div>` +
+        `<input class="inspector-input share-color" data-pen="color" type="color" value="${escapeAttr(s.color)}"></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Smoothing</span>` +
+        `<select class="inspector-input" data-pen="smoothing">` +
+          `<option value="0"${smoothing === 0 ? " selected" : ""}>0</option>` +
+          `<option value="1"${smoothing === 1 ? " selected" : ""}>1</option>` +
+          `<option value="2"${smoothing === 2 ? " selected" : ""}>2</option>` +
+        `</select></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Stabilizer</span>` +
+        `<select class="inspector-input" data-pen="stabilizer">` +
+          `<option value="off"${stabilizer === "off" ? " selected" : ""}>Off</option>` +
+          `<option value="mild"${stabilizer === "mild" ? " selected" : ""}>Mild</option>` +
+          `<option value="strong"${stabilizer === "strong" ? " selected" : ""}>Strong</option>` +
+        `</select></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Pressure</span>` +
+        `<input class="inspector-input" data-pen="pressure" type="checkbox"${checked(s.pressure)}></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Eraser mode</span>` +
+        `<select class="inspector-input" data-pen="eraser-mode">` +
+          `<option value="partial"${eraserMode === "partial" ? " selected" : ""}>Partial</option>` +
+          `<option value="stroke"${eraserMode === "stroke" ? " selected" : ""}>Whole stroke</option>` +
+        `</select></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Eraser size</span>` +
+        `<input class="inspector-input" data-pen="eraser-size" type="number" min="6" max="80" step="1" value="${Math.round(s.eraserRadius)}"></div>` +
       `<div class="inspector-row"><span class="inspector-label">Eraser</span>` +
-        `<input class="inspector-input" data-pen="eraser" type="checkbox"${eraser ? " checked" : ""}></div>`
+        `<input class="inspector-input" data-pen="eraser" type="checkbox"${mode === "eraser" ? " checked" : ""}></div>`
+    );
+  }
+
+  /** Ink selection inspector (freehand strokes selected through ink selection). */
+  private inkInspector(): string {
+    const ids = this.engine.getInkSelectedObjects();
+    if (ids.length === 0) return `<span class="inspector-empty">No strokes selected</span>`;
+    const head =
+      ids.length > 1
+        ? `<div class="inspector-row"><span class="inspector-label">Type</span><span>Ink (${ids.length} strokes)</span></div>`
+        : `<div class="inspector-row"><span class="inspector-label">Type</span><span>Ink stroke</span></div>`;
+    const color = ids.length === 1 ? ids[0].color : "#e8eaed";
+    const width = ids.length === 1 ? ids[0].strokeWidth : 3;
+    const opacity = ids.length === 1 ? (ids[0].opacity ?? 1) : 1;
+    const buttons =
+      `<div class="inspector-buttons">` +
+      `<button class="inspector-btn" data-action="duplicate">Duplicate</button>` +
+      `<button class="inspector-btn" data-action="delete">Delete</button>` +
+      `</div>`;
+    return (
+      head +
+      `<div class="inspector-row"><span class="inspector-label">Color</span>` +
+        `<input class="inspector-input share-color" data-ink="color" type="color" value="${escapeAttr(color)}"></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Width</span>` +
+        `<input class="inspector-input" data-ink="width" type="number" min="0.5" step="0.5" value="${round(width)}"></div>` +
+      `<div class="inspector-row"><span class="inspector-label">Opacity</span>` +
+        `<input class="inspector-input" data-ink="opacity" type="number" min="0.05" max="1" step="0.05" value="${round(opacity)}"></div>` +
+      buttons
     );
   }
 
@@ -1994,9 +2726,30 @@ export class App {
           `<input class="inspector-input" data-prop="url" value="${escapeAttr((obj as { url: string }).url)}"></div>`
       );
     } else if (obj.type === "text") {
+      const text = obj as Extract<CanvasObject, { type: "text" }>;
+      const family = text.fontFamily || "";
       rows.push(
         `<div class="inspector-row"><span class="inspector-label">Text</span>` +
-          `<textarea class="inspector-input" data-prop="text" rows="3">${escapeHtml((obj as { text: string }).text)}</textarea></div>`
+          `<textarea class="inspector-input" data-prop="text" rows="3">${escapeHtml(text.text)}</textarea></div>`
+      );
+      rows.push(
+        `<div class="inspector-row"><span class="inspector-label">Font size</span>` +
+          `<input class="inspector-input" data-prop="fontSize" type="number" min="8" step="1" value="${round(text.fontSize)}"></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Font</span>` +
+          `<select class="inspector-input" data-prop="fontFamily">` +
+          FONT_CHOICES.map((f) => `<option value="${f}"${family === f ? " selected" : ""}>${f}</option>`).join("") +
+          `<option value=""${family === "" ? " selected" : ""}>Default</option>` +
+          `</select></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Bold</span>` +
+          `<input class="inspector-input" data-prop="bold" type="checkbox"${text.bold ? " checked" : ""}></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Italic</span>` +
+          `<input class="inspector-input" data-prop="italic" type="checkbox"${text.italic ? " checked" : ""}></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Align</span>` +
+          `<select class="inspector-input" data-prop="align">` +
+          `<option value="left"${text.align === "left" ? " selected" : ""}>Left</option>` +
+          `<option value="center"${text.align === "center" ? " selected" : ""}>Center</option>` +
+          `<option value="right"${text.align === "right" ? " selected" : ""}>Right</option>` +
+          `</select></div>`
       );
     } else if (obj.type === "pen") {
       // Committed strokes: color + base stroke width are editable. The stroke
@@ -2015,6 +2768,26 @@ export class App {
         `<div class="inspector-row"><span class="inspector-label">Fill</span><input class="inspector-input share-color" data-prop="fill" type="color" value="${escapeAttr(shape.fill || "#ffffff")}"></div>`,
         `<div class="inspector-row"><span class="inspector-label">Stroke</span><input class="inspector-input share-color" data-prop="stroke" type="color" value="${escapeAttr(shape.stroke)}"></div>`,
         `<div class="inspector-row"><span class="inspector-label">Stroke W</span><input class="inspector-input" data-prop="strokeWidth" type="number" min="0.5" step="0.5" value="${round(shape.strokeWidth)}"></div>`
+      );
+    } else if (obj.type === "table") {
+      const table = obj as Extract<CanvasObject, { type: "table" }>;
+      rows.push(
+        `<div class="inspector-row"><span class="inspector-label">Rows</span><span>${table.data.rows.length}</span></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Columns</span><span>${table.data.columns.length}</span></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Comparison</span>` +
+          `<input class="inspector-input" data-prop="comparison" type="checkbox"${table.comparison ? " checked" : ""}></div>`
+      );
+    } else if (obj.type === "chart") {
+      const chart = obj as Extract<CanvasObject, { type: "chart" }>;
+      rows.push(
+        `<div class="inspector-row"><span class="inspector-label">Title</span>` +
+          `<input class="inspector-input" data-prop="title" value="${escapeAttr(chart.title || "")}"></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Chart type</span>` +
+          `<select class="inspector-input" data-prop="chart-kind">` +
+          `<option value="bar"${chart.kind === "bar" ? " selected" : ""}>Bar</option>` +
+          `<option value="line"${chart.kind === "line" ? " selected" : ""}>Line</option>` +
+          `<option value="pie"${chart.kind === "pie" ? " selected" : ""}>Pie</option>` +
+          `</select></div>`
       );
     }
     rows.push(numField("X", "x", obj.x, 1));
@@ -2072,20 +2845,19 @@ export class App {
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
-    if (isEditingText()) {
-      // Let the text editor handle keys (except shortcuts we intentionally pass).
-      return;
-    }
-    // Let real editable fields (e.g. the Link/URL input dialog or inspector
-    // inputs) handle typing, Backspace, Ctrl+A/C/C/V and cursor movement.
-    // Intercepting these here would block paste/edit in those fields.
-    const target = e.target as HTMLElement | null;
-    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-      return;
-    }
+    // Text editing and IME composition always win. Any editable control (the
+    // inline text editor, table cell editor, inspector inputs, dialog fields,
+    // search box, plugin/collab inputs…) owns its keys: typing, Backspace,
+    // Ctrl+A/C/C/V, cursor movement and Space must never be intercepted here.
+    if (isEditingText() || isEditingTableCell() || isEditableEventTarget(e)) return;
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
 
+    if (mod && key === "s" && !e.shiftKey) {
+      e.preventDefault();
+      void this.saveProject();
+      return;
+    }
     if (mod && key === "z") {
       e.preventDefault();
       if (e.shiftKey) this.redo();
@@ -2095,6 +2867,11 @@ export class App {
     if (mod && key === "y") {
       e.preventDefault();
       this.redo();
+      return;
+    }
+    if (mod && key === "k") {
+      e.preventDefault();
+      this.toggleCommandPalette();
       return;
     }
     if ((key === "delete" || key === "backspace")) {
@@ -2121,6 +2898,40 @@ export class App {
       e.preventDefault();
       this.engine.selectAll();
       return;
+    }
+    // Pen-tool quick keys (only while the pen tool is active; they must never
+    // steal typing — e.g. a lone "E" in a future search box).
+    if (this.engine.isPenTool() && !mod) {
+      if (key === "e") {
+        e.preventDefault();
+        this.engine.setPenToolMode("eraser");
+        this.refreshUI();
+        return;
+      }
+      if (key === "p") {
+        e.preventDefault();
+        this.engine.setPenToolMode("pen");
+        this.refreshUI();
+        return;
+      }
+      if (key === "l") {
+        e.preventDefault();
+        this.engine.setPenToolMode("lasso");
+        this.refreshUI();
+        return;
+      }
+      if (key === "=" || key === "+") {
+        e.preventDefault();
+        this.engine.setPenSettings({ width: Math.min(64, this.engine.getPenSettings().width + 1) });
+        this.refreshUI();
+        return;
+      }
+      if (key === "-" || key === "_") {
+        e.preventDefault();
+        this.engine.setPenSettings({ width: Math.max(0.5, this.engine.getPenSettings().width - 1) });
+        this.refreshUI();
+        return;
+      }
     }
     if (mod && key === "g") {
       e.preventDefault();
@@ -2158,10 +2969,24 @@ export class App {
       this.isolateSelection();
       return;
     }
+    if (key === "r" && !mod) {
+      e.preventDefault();
+      this.rotateSelection(e.shiftKey ? -15 : 15);
+      return;
+    }
     if (e.key === "Escape") {
+      if (isEditingData()) {
+        closeDataEditor();
+        return;
+      }
       hideContextMenu();
+      // Ink selection is its own set: Escape clears it before falling back to
+      // the object selection, so one tap always dismisses the strokes.
       if (this.isolation) this.exitIsolation();
-      else this.selection.clear();
+      else if (this.engine.hasInkSelection()) {
+        this.engine.clearInkSelection();
+        this.refreshUI();
+      } else this.selection.clear();
       return;
     }
   };
@@ -2262,6 +3087,9 @@ export class App {
     this.ui.btnAddShapeTriangle.addEventListener("click", () => this.addShapeAt("triangle", this.centerWorld()));
     this.ui.btnAddShapeLine.addEventListener("click", () => this.addShapeAt("line", this.centerWorld()));
     this.ui.btnAddShapeArrow.addEventListener("click", () => this.addShapeAt("arrow", this.centerWorld()));
+    this.ui.btnAddTable.addEventListener("click", () => this.addTableAt(this.centerWorld()));
+    this.ui.btnAddComparison.addEventListener("click", () => this.addTableAt(this.centerWorld(), true));
+    this.ui.btnAddChart.addEventListener("click", () => this.addChartAt("bar", this.centerWorld()));
 
     // Export dialog format buttons + close / backdrop.
     this.ui.exportDialog.querySelectorAll("[data-export]").forEach((el) => {
@@ -2274,6 +3102,12 @@ export class App {
     this.ui.exportDialog.addEventListener("mousedown", (e) => {
       if (e.target === this.ui.exportDialog) this.closeExportDialog();
     });
+    this.ui.exportRun.addEventListener("click", () => this.runConfiguredExport());
+    this.ui.exportBack.addEventListener("click", () => {
+      this.pendingExportFormat = null;
+      this.ui.showExportFormats();
+    });
+    this.ui.onExportConfigChange = () => this.updateExportSummary();
 
     // Templates dialog.
     this.ui.templatesClose.addEventListener("click", () => this.closeTemplatesDialog());
@@ -2305,26 +3139,24 @@ export class App {
 
     // Tool panel toggle (hamburger)
     this.ui.btnMenu.addEventListener("click", () => this.setSidebar(!this.ui.isSidebarOpen()));
+    this.ui.btnSidebarClose.addEventListener("click", () => this.setSidebar(false));
 
     // Settings dialog.
-    this.ui.settingsClose.addEventListener("click", () => this.ui.closeSettingsDialog());
+    this.ui.settingsClose.addEventListener("click", () => {
+      this.ui.closeSettingsDialog();
+      this.focusCanvas();
+    });
     this.ui.settingsDialog.addEventListener("mousedown", (e) => {
-      if (e.target === this.ui.settingsDialog) this.ui.closeSettingsDialog();
+      if (e.target === this.ui.settingsDialog) {
+        this.ui.closeSettingsDialog();
+        this.focusCanvas();
+      }
     });
     this.ui.btnSettings.addEventListener("click", () => this.openSettingsDialog());
-
-    // Local AI assistant (floating bubble + panel). The engine (wllama) is
-    // only initialized once the user picks a .gguf model file.
-    void this.mountAi();
+    this.bindReducedEffects();
 
     // Pen tool (both HUD button and sidebar button) — toggle ON/OFF
-    const togglePen = () => {
-      const on = !this.engine.isPenTool();
-      this.engine.setPenTool(on);
-      this.ui.setTools(on);
-      if (on) this.selection.setIds([]);
-      this.refreshUI();
-    };
+    const togglePen = () => this.togglePenTool();
     const enableSelect = () => {
       this.engine.setPenTool(false);
       this.ui.setTools(false);
@@ -2397,9 +3229,20 @@ export class App {
     const applyPenControl = (t: HTMLInputElement): void => {
       const key = t.dataset["pen"];
       if (!key) return;
-      if (key === "size") this.engine.setPenStyle({ size: Number(t.value) });
-      else if (key === "color") this.engine.setPenStyle({ color: t.value });
-      else if (key === "eraser") this.engine.setPenEraser(t.checked);
+      if (key === "size") this.engine.setPenSettings({ width: Number(t.value) });
+      else if (key === "color") this.engine.setPenSettings({ color: t.value });
+      else if (key === "opacity") this.engine.setPenSettings({ opacity: Number(t.value) });
+      else if (key === "smoothing") this.engine.setPenSettings({ smoothing: Number(t.value) as 0 | 1 | 2 });
+      else if (key === "stabilizer") {
+        const v = t.value;
+        this.engine.setPenSettings({ stabilizer: v === "mild" || v === "strong" ? v : "off" });
+      } else if (key === "pressure") this.engine.setPenSettings({ pressure: t.checked });
+      else if (key === "eraser-mode") this.engine.setPenSettings({ eraserMode: t.value === "stroke" ? "stroke" : "partial" });
+      else if (key === "eraser-size") this.engine.setPenSettings({ eraserRadius: Number(t.value) });
+      else if (key === "mode") {
+        const m = t.value;
+        if (m === "pen" || m === "eraser" || m === "lasso") this.engine.setPenToolMode(m);
+      } else if (key === "eraser") this.engine.setPenEraser(t.checked);
       this.refreshUI();
     };
     body.addEventListener("input", (e) => {
@@ -2409,6 +3252,23 @@ export class App {
     body.addEventListener("change", (e) => {
       const t = e.target;
       if (t instanceof HTMLElement && t.dataset["pen"]) applyPenControl(t as HTMLInputElement);
+    });
+    // Ink selection panel: restyles commit as a single undoable step (only on
+    // explicit change, never on intermediate keystrokes).
+    body.addEventListener("change", (e) => {
+      const t = e.target as HTMLElement;
+      const key = t.dataset["ink"];
+      if (!key) return;
+      const input = t as HTMLInputElement;
+      if (key === "color") this.engine.setInkStyle({ color: input.value });
+      else if (key === "width") {
+        const w = Number(input.value);
+        if (Number.isFinite(w) && w > 0) this.engine.setInkStyle({ width: w });
+      } else if (key === "opacity") {
+        const o = Number(input.value);
+        if (Number.isFinite(o) && o >= 0.05 && o <= 1) this.engine.setInkStyle({ opacity: o });
+      }
+      this.refreshUI();
     });
     // Committed object properties are applied only on explicit commit (Enter,
     // blur, a checkbox/color change) — never on intermediate keystrokes — so
@@ -2432,6 +3292,7 @@ export class App {
       else if (action === "delete") this.deleteSelection();
       else if (action === "edit" && obj) {
         if (obj.type === "text" || obj.type === "note") this.editTextObject(obj);
+        else if (obj.type === "table" || obj.type === "chart") this.editDataObject(obj);
       }
     });
   }
@@ -2479,9 +3340,18 @@ export class App {
     }
     const current = (obj as unknown as Record<string, unknown>)[key];
     let next: unknown;
-    if (key === "locked") {
+    if (key === "locked" || key === "comparison" || key === "bold" || key === "italic") {
       next = (el as HTMLInputElement).checked;
-    } else if (key === "x" || key === "y" || key === "width" || key === "height" || key === "zIndex" || key === "strokeWidth") {
+    } else if (key === "chart-kind") {
+      const kind = el.value;
+      if (kind !== "bar" && kind !== "line" && kind !== "pie") return;
+      if ((obj as Extract<CanvasObject, { type: "chart" }>).kind === kind) return;
+      this.commands.execute(
+        setPropsCommand(this.project, [{ id: obj.id, key: "kind", before: (obj as Extract<CanvasObject, { type: "chart" }>).kind, after: kind }])
+      );
+      this.refreshUI();
+      return;
+    } else if (key === "x" || key === "y" || key === "width" || key === "height" || key === "zIndex" || key === "strokeWidth" || key === "fontSize") {
       // Reject empty/NaN input a commit would otherwise turn into 0 — a blank
       // or bogus partial value must never corrupt the object's geometry.
       if (el.value.trim() === "" || !Number.isFinite(Number(el.value))) return;
@@ -2518,6 +3388,10 @@ export class App {
       if (!obj) return;
       if (obj.type === "text" || obj.type === "note") {
         this.editSelectedText();
+      } else if (obj.type === "table") {
+        this.editTableCell(obj, screen);
+      } else if (obj.type === "chart") {
+        this.editDataObject(obj);
       } else if (obj.type === "file" || obj.type === "url") {
         void this.openObject(obj);
       }
@@ -2595,26 +3469,6 @@ function outlineFor(typeLabel: string): string {
   return /^[aeiou]/i.test(typeLabel) ? `an ${typeLabel}` : `a ${typeLabel}`;
 }
 
-function kindLabel(kind: ObjectKind): string {
-  switch (kind) {
-    case "text":
-      return "text";
-    case "note":
-      return "note";
-    case "image":
-      return "image";
-    case "file":
-      return "file";
-    case "url":
-      return "link";
-    case "shape":
-      return "shape";
-    default:
-      return "object";
-  }
-}
-
-/** Normalize a user-entered link to a navigable URL for external opening. */
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return "";
@@ -2627,6 +3481,16 @@ function round(v: number): string {
   return Number.isInteger(r) ? String(r) : r.toFixed(1);
 }
 
+/** Turn a parsed project file into the in-memory document model. */
+function fileToDocument(file: ReturnType<typeof deserialize>): ProjectDocument {
+  return {
+    meta: file.project,
+    viewport: file.viewport,
+    objects: file.objects,
+    assets: file.assets,
+  };
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -2637,7 +3501,7 @@ function escapeAttr(s: string): string {
 
 export type { AssetMeta };
 
-export type AppExportFormat = "spatia-folder" | "spatia-json" | "png" | "pdf" | "md";
+export type AppExportFormat = "spatia-folder" | "spatia-json" | "png" | "jpeg" | "pdf" | "md";
 
 function isContainedBy(obj: CanvasObject, bounds: Rect): boolean {
   return obj.x >= bounds.x && obj.y >= bounds.y &&

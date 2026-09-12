@@ -1,6 +1,6 @@
 {
   "name": "spatia",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "Spatia — a local-first visual infinite workspace.",
   "author": "Spatia",
   "license": "UNLICENSED",
@@ -57,9 +57,5 @@
     "electron-builder": "^26.15.3",
     "sharp": "^0.35.4",
     "typescript": "^5.4.5"
-  },
-  "dependencies": {
-    "@wllama/wllama": "^3.6.1",
-    "@wllama/wllama-compat": "^3.6.1"
   }
 }

@@ -1,7 +1,7 @@
 import type { Point, Rect } from "../../shared/geometry/viewport.js";
 import { screenToWorld } from "../../shared/geometry/viewport.js";
 import type { InteractionHost } from "./interactionHost.js";
-import { isEditingText } from "../ui/textEditor.js";
+import { isEditableEventTarget } from "../ui/editTarget.js";
 
 /**
  * Pointer/keyboard state machine translating pointer, wheel, and (for
@@ -12,7 +12,7 @@ import { isEditingText } from "../ui/textEditor.js";
  * point + fixed grab offset), never by accumulating per-event deltas.
  */
 
-type Mode = "none" | "pending" | "move" | "resize" | "marquee" | "pan" | "connect" | "pen" | "rotate";
+type Mode = "none" | "pending" | "move" | "resize" | "marquee" | "pan" | "connect" | "pen" | "rotate" | "inkmove" | "lasso";
 
 const WHEEL_FACTOR_PER_NOTCH = 1.1;
 const DRAG_THRESHOLD = 3;
@@ -26,6 +26,10 @@ export class CanvasInput {
   private last = { x: 0, y: 0 };
   private startWorld = { x: 0, y: 0 };
   private dragArmed = false;
+  private inkDragArmed = false;
+  /** Only the primary pointer drives gestures (a second finger on a touch
+   *  surface must never interrupt a stroke or start a marquee). */
+  private activePointerId: number | null = null;
   private ctrlHeld = false;
   private pos = { x: 0, y: 0 };
 
@@ -37,6 +41,7 @@ export class CanvasInput {
     el.addEventListener("pointermove", this.onPointerMove);
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointercancel", this.onPointerUp);
+    el.addEventListener("pointerleave", this.onPointerLeave);
     el.addEventListener("wheel", this.onWheel, { passive: false });
     el.addEventListener("contextmenu", this.onContextMenu);
     el.addEventListener("lostpointercapture", this.onLostPointerCapture);
@@ -51,6 +56,7 @@ export class CanvasInput {
     el.removeEventListener("pointermove", this.onPointerMove);
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointercancel", this.onPointerUp);
+    el.removeEventListener("pointerleave", this.onPointerLeave);
     el.removeEventListener("wheel", this.onWheel);
     el.removeEventListener("contextmenu", this.onContextMenu);
     el.removeEventListener("lostpointercapture", this.onLostPointerCapture);
@@ -61,15 +67,28 @@ export class CanvasInput {
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
-    // Text editing has priority: while typing, the canvas must not intercept
-    // space / shortcuts (so the text input receives space and other keys).
-    if (isEditingText()) return;
+    // Text editing has priority: while the user is typing in any editable
+    // control (or an IME composition is in progress), the canvas must not
+    // intercept space / shortcuts, so the input receives everything natively.
+    if (isEditableEventTarget(e)) return;
 
-    if (e.key === CONTROL_KEY) {
+if (e.key === CONTROL_KEY) {
       if (e.repeat || this.ctrlHeld) return;
       this.ctrlHeld = true;
       e.preventDefault();
       this.maybeStartConnection();
+      return;
+    }
+
+    // Cancel an in-progress ink lasso (Escape); the app handles the rest.
+    if (e.key === "Escape" && this.mode === "lasso") {
+      e.preventDefault();
+      this.host.cancelLasso();
+      this.mode = "none";
+      this.dragArmed = false;
+      this.inkDragArmed = false;
+      this.activePointerId = null;
+      this.updateCursor();
       return;
     }
 
@@ -80,23 +99,19 @@ export class CanvasInput {
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {
-    if (isEditingText()) {
-      if (e.key === CONTROL_KEY) this.ctrlHeld = false;
-      return;
-    }
-
-    if (e.key === CONTROL_KEY) {
-      this.ctrlHeld = false;
-      if (this.mode === "connect") {
-        this.host.finishConnection(this.pos);
-        this.cancelConnect();
-      }
+    // Key releases must always clear held state (even when focus moved into an
+    // editable control mid-press) so no stale space/ctrl state survives.
+    if (e.code === "Space") {
+      this.spaceHeld = false;
       this.updateCursor();
       return;
     }
-
-    if (e.code !== "Space") return;
-    this.spaceHeld = false;
+    if (e.key !== CONTROL_KEY) return;
+    this.ctrlHeld = false;
+    if (this.mode === "connect") {
+      this.host.finishConnection(this.pos);
+      this.cancelConnect();
+    }
     this.updateCursor();
   };
 
@@ -130,6 +145,13 @@ export class CanvasInput {
     const isRight = e.button === 2;
     if (!isPanButton && !isLeft && !isRight) return;
 
+    // Multi-touch + palm rejection: ignore secondary pointers entirely, and
+    // ignore a second touch arriving right after stylus contact (the resting
+    // palm often lands a few hundred ms after the pen tip).
+    if (this.activePointerId !== null && e.pointerId !== this.activePointerId) return;
+    if (!e.isPrimary && e.pointerType === "touch") return;
+    if (e.pointerType === "touch" && this.host.recentPenActivity()) return;
+
     const p = this.localPoint(e);
     this.additive = e.shiftKey || e.ctrlKey || e.metaKey;
 
@@ -140,13 +162,18 @@ export class CanvasInput {
     if (isPanButton || this.spaceHeld) {
       this.mode = "pan";
       this.last = p;
+      this.activePointerId = e.pointerId;
       this.host.setMarquee(null);
       this.host.setInteractionCursor("pan");
       return;
     }
 
     if (isLeft) {
+      // Record stylus contact for palm rejection and to keep the eraser guide
+      // honest before the first move event.
+      if (e.pointerType === "pen") this.host.notePenActivity();
       this.handlePrimaryDown(p, e);
+      if (this.mode !== "none") this.activePointerId = e.pointerId;
     }
   };
 
@@ -162,9 +189,17 @@ export class CanvasInput {
   private handlePrimaryDown(p: Point, e: PointerEvent): void {
     this.start = p;
     this.last = p;
+    this.inkDragArmed = false;
 
     // Pen tool: left-drag draws anywhere (objects or empty space).
     if (this.host.isPenTool()) {
+      const toolMode = this.host.getPenToolMode();
+      if (toolMode === "lasso") {
+        this.mode = "lasso";
+        this.host.beginLasso(p, this.additive);
+        this.host.setMarquee(null);
+        return;
+      }
       this.mode = "pen";
       this.host.startPenStroke(p, this.penPressure(e));
       return;
@@ -189,7 +224,26 @@ export class CanvasInput {
 
     const hit = this.host.hitTest(p);
 
+    // Freehand strokes are first-class ink: a click selects them through the
+    // dedicated ink selection (never the generic object selection), and a drag
+    // moves the whole selection through the ink controller.
+    if (hit && this.host.isInkId(hit)) {
+      if (!this.additive) this.host.setSelection([]);
+      const selected = this.host.selectInkAt(p, this.additive);
+      if (selected) {
+        this.host.prepareInkDrag(p);
+        this.dragArmed = true;
+        this.inkDragArmed = true;
+      } else {
+        this.dragArmed = false;
+      }
+      this.mode = "pending";
+      this.host.setMarquee(null);
+      return;
+    }
+
     if (hit) {
+      if (!this.additive) this.host.clearInkSelection();
       if (this.additive) {
         this.host.toggleSelection(hit);
       } else if (!this.host.inSelection(hit)) {
@@ -204,6 +258,7 @@ export class CanvasInput {
       this.dragArmed = false;
       if (!this.additive) {
         this.host.setSelection([]);
+        this.host.clearInkSelection();
       }
     }
     this.host.setMarquee(null);
@@ -214,6 +269,16 @@ export class CanvasInput {
     const prev = this.last;
     this.last = p;
     this.pos = p;
+
+    // Only the pointer that started the gesture drives it; stray fingers must
+    // never steer a stroke.
+    if (this.activePointerId !== null && e.pointerId !== this.activePointerId) return;
+
+    // Eraser hover guide (pen tool, eraser mode): show the erase radius even
+    // before the user presses, so a sweep lands exactly where intended.
+    if (this.host.isPenTool() && this.host.getPenToolMode() === "eraser" && this.mode !== "pen") {
+      this.host.setEraserPreview(p);
+    }
 
     switch (this.mode) {
       case "pan":
@@ -234,6 +299,12 @@ export class CanvasInput {
       case "pen":
         this.host.penStrokeTo(p, this.penPressure(e));
         break;
+      case "inkmove":
+        this.host.inkDragTo(p);
+        break;
+      case "lasso":
+        this.host.lassoTo(p);
+        break;
       case "marquee":
         this.updateMarquee(p);
         break;
@@ -241,10 +312,15 @@ export class CanvasInput {
         const dist = Math.hypot(p.x - this.start.x, p.y - this.start.y);
         if (dist <= DRAG_THRESHOLD) break;
         if (this.dragArmed) {
-          this.mode = "move";
-          this.host.setInteractionCursor("move");
-          // Initial move to establish the absolute grab.
-          this.host.dragTo(p);
+          if (this.inkDragArmed) {
+            this.mode = "inkmove";
+            this.host.inkDragTo(p);
+          } else {
+            this.mode = "move";
+            this.host.setInteractionCursor("move");
+            // Initial move to establish the absolute grab.
+            this.host.dragTo(p);
+          }
         } else {
           this.mode = "marquee";
           this.startWorld = screenToWorld(this.start, this.host.getFrame());
@@ -255,6 +331,11 @@ export class CanvasInput {
       case "none":
         break;
     }
+  };
+
+  /** The cursor left the canvas — drop the eraser guide (no more hover data). */
+  private onPointerLeave = (): void => {
+    this.host.setEraserPreview(null);
   };
 
   private onPointerUp = (_e: PointerEvent): void => {
@@ -297,10 +378,14 @@ export class CanvasInput {
       if (this.mode === "move") this.host.dropGrab();
       if (this.mode === "resize") this.host.endResize();
       if (this.mode === "rotate") this.host.endRotate();
+      if (this.mode === "inkmove") this.host.endInkDrag();
+      if (this.mode === "lasso") this.host.endLasso();
       if (this.mode === "marquee") this.onPointerUpMarqueeSettle();
     }
     this.mode = "none";
     this.dragArmed = false;
+    this.inkDragArmed = false;
+    this.activePointerId = null;
     this.lastMarqueeRect = null;
     this.updateCursor();
   }

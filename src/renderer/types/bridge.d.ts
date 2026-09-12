@@ -20,6 +20,14 @@ export interface SaveProjectResult {
   filePath: string | null;
 }
 
+/** Result of saving a project to its default per-project folder. */
+export interface SaveDefaultProjectResult {
+  ok: boolean;
+  filePath: string | null;
+  folder: string | null;
+  error?: string;
+}
+
 export interface AssetImportResult {
   canceled: boolean;
   asset: AssetMeta | null;
@@ -36,7 +44,15 @@ export interface ExportResult {
   filePath: string | null;
 }
 
-export type ExportFileKind = "png" | "pdf" | "md";
+export type ExportFileKind = "png" | "jpeg" | "pdf" | "md";
+
+/** A crash-recovery draft stored by the main process. */
+export interface RecoveryEntry {
+  projectId: string;
+  name: string;
+  updatedAt: string;
+  contents: string;
+}
 
 export interface ImportProjectResult {
   canceled: boolean;
@@ -69,6 +85,16 @@ export interface SpatiaApi {
   openProjectPath(filePath: string): Promise<OpenProjectResult>;
   saveProject(json: string): Promise<SaveProjectResult>;
   saveAsProject(json: string, suggestedName: string): Promise<SaveProjectResult>;
+  /** First save: store the project in its default per-project folder. */
+  projectSaveDefault(projectId: string, name: string, json: string): Promise<SaveDefaultProjectResult>;
+  /** Write a silent crash-recovery copy of the document. */
+  recoveryWrite(projectId: string, json: string): Promise<boolean>;
+  /** List crash-recovery drafts (newest first). */
+  recoveryList(): Promise<RecoveryEntry[]>;
+  /** Remove the crash-recovery draft for a project. */
+  recoveryClear(projectId: string): Promise<boolean>;
+  /** Write an exported image into the project's exports/ folder (no dialog). */
+  exportToExports(projectId: string, fileName: string, payload: string): Promise<ExportResult>;
   getRecentProjects(): Promise<RecentProject[]>;
   exportProject(projectId: string, json: string, suggestedName: string): Promise<ExportResult>;
   exportFile(kind: ExportFileKind, suggestedName: string, payload: string): Promise<ExportResult>;
@@ -116,8 +142,6 @@ export interface SpatiaApi {
   collabGetIdentity(): Promise<CollabIdentity>;
   /** Subscribe to deep-link ("spatia://join?room=…") join requests. */
   onJoinRequest(cb: (roomId: string) => void): (() => void);
-  /** Desktop-only: read a model/asset file via IPC, returns base64 data-URL. */
-  aiGetAsset?(path: string): Promise<string | null>;
 }
 
 declare global {

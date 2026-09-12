@@ -422,6 +422,12 @@
                 <li><a href="#/wiki/report" data-wiki-search="Report a problem bug mail contact email spatiacanvas">Report a problem</a></li>
               </ul>
             </div>
+            <div class="wiki-toc-group">
+              <h3 class="wiki-toc-title">News &amp; releases</h3>
+              <ul>
+                <li><a href="#/wiki/whats-new" data-wiki-search="What's new changelog release notes news version 0.5.0 drawing eraser">What's new in 0.5.0</a></li>
+              </ul>
+            </div>
           </nav>
 
           <div class="wiki-body">
@@ -438,13 +444,15 @@
                 <li><strong>Local-first.</strong> Your projects are saved as real files on your machine (or in your browser on the Web app). No account, no cloud, no lock-in — everything works offline.</li>
                 <li><strong>Infinite canvas.</strong> Arrange anything anywhere. Zoom from a bird's-eye view of your whole workspace down to a single note.</li>
                 <li><strong>Everything connects.</strong> Lines and arrows follow objects as you move them, so diagrams stay tidy without manual redrawing.</li>
+                <li><strong>Draw &amp; write naturally.</strong> Freehand ink with a live eraser — annotate, doodle and sketch right on the canvas.</li>
                 <li><strong>Fast and lean.</strong> A dependency-free canvas engine renders smoothly even on very large workspaces.</li>
                 <li><strong>One format.</strong> Projects use a versioned JSON format that keeps working when Spatia evolves.</li>
               </ul>
               <p>
                 Spatia is available as a <strong>Windows 10 / 11 (x64) desktop app</strong> and as a
-                <strong>Web app / installable PWA</strong> for any modern browser, including mobile devices.
-                Current version: <strong>0.4.9</strong>.
+                <strong>Web app / installable PWA</strong> for any modern browser — on desktop, mobile
+                phones, iPad and tablets alike.
+                Current version: <strong>0.5.0</strong>.
               </p>
             </article>
 
@@ -453,7 +461,7 @@
               <h2>Getting started</h2>
               <h3>On Windows (desktop)</h3>
               <ol>
-                <li>Download the installer from the <a href="#download">Spatia website</a> (<code>Spatia-0.4.9-x64.msi</code>).</li>
+                <li>Download the Windows app from the <a href="#download">Spatia website</a> (<code>Spatia-0.5.0-win-x64.zip</code>).</li>
                 <li>Run the <code>.msi</code> and follow the setup wizard.</li>
                 <li>Launch Spatia. It opens a fresh blank canvas with the tools panel on the left.</li>
               </ol>
@@ -682,16 +690,41 @@
                 <li><strong>Style:</strong> select a shape and use the inspector to change its fill color, stroke color and stroke width.</li>
                 <li><strong>Lines and arrows</strong> are drawn horizontally from the box's left center to its right center; resize to change their length and direction.</li>
               </ul>
-              <h3>The Pen tool</h3>
+              <h3>The Pen &amp; eraser</h3>
               <p>
-                The <strong>Pen</strong> tool (in the Tools section or the HUD) lets you draw freehand
-                strokes directly on the canvas — underline, circle, scribble, annotate. Pen strokes are
-                decorative: they render with your drawings but aren't selectable objects.
+                The <strong>Pen</strong> tool (in the Tools section or the HUD) draws freehand ink
+                strokes directly on the canvas — underline, circle, scribble, annotate, or sketch
+                a whole picture. In 0.5.0 pen strokes are <strong>real objects</strong>: ink appears
+                <em>live while you draw</em>, and finished strokes can be selected, moved, duplicated,
+                deleted and undone like any other object on the canvas.
               </p>
-              <p>
-                Combine shapes, freehand strokes and connections to sketch flow charts, wireframes,
-                diagrams and more.
-              </p>
+              <ul>
+                <li><strong>Real-time ink.</strong> The stroke and the eraser update on screen at full
+                  frame rate as you draw — what you see is what you get, no waiting for the pen-up.</li>
+                <li><strong>Smoothing &amp; stabilizer.</strong> Clean up shaky lines, and optionally let
+                  the stroke follow your stylus <strong>pressure</strong> to vary its width.</li>
+                <li><strong>Style.</strong> Pick color, opacity and stroke width before drawing. With the
+                  pen tool active, <kbd>=</kbd>/<kbd>+</kbd> and <kbd>-</kbd>/<kbd>_</kbd> change the width
+                  on the fly.</li>
+                <li><strong>Pen tool sub-modes:</strong> <kbd>P</kbd> = pen, <kbd>E</kbd> = eraser,
+                  <kbd>L</kbd> = lasso select — all three live under the same pen tool.</li>
+              </ul>
+              <h4>The eraser</h4>
+              <ul>
+                <li><strong>Partial</strong> (default) erases exactly the ink under the brush, splitting a
+                  stroke into two when the sweep passes through the middle of one.</li>
+                <li><strong>Whole stroke</strong> removes each stroke the brush touches, complete.</li>
+                <li>A <strong>live preview</strong> shows exactly what will come off as you sweep, with a
+                  brush-ring guide following the cursor.</li>
+              </ul>
+              <h4>Selecting ink</h4>
+              <ul>
+                <li>In the <strong>Select</strong> tool, drag a box (or lasso with <kbd>L</kbd> in the pen
+                  tool) around strokes and objects to grab them together.</li>
+                <li>Tap a stroke to select it whole; drag across part of a stroke to pick up just that
+                  portion. Selected strokes move, duplicate, copy/paste, group and delete like other
+                  objects.</li>
+              </ul>
             </article>
 
             <!-- Selection & editing -->
@@ -796,6 +829,18 @@
                 <li><strong>Connect:</strong> use the Connect tool — tap a source object, then tap the target (or hold and drag from source to target).</li>
                 <li><strong>More actions:</strong> the bottom <strong>Menu</strong> holds edit, duplicate, delete, connect, group, layer and view actions for the current selection.</li>
               </ul>
+              <h3>iPad &amp; tablets</h3>
+              <ul>
+                <li><strong>iPad</strong> (or any large touch tablet) uses a dedicated tablet layer with the
+                  full desktop-style tools and canvas, tuned for touch — it is never the phone layout.</li>
+                <li>Draw with an <strong>Apple Pencil</strong> or stylus: the pen tool tracks the stylus,
+                  supports <strong>pressure</strong>, and rejects palm rests while you write so your hand
+                  never accidentally draws.</li>
+                <li>Hold the pencil to draw while a <strong>second finger</strong> pans or pinches to zoom —
+                  the two gestures stay independent.</li>
+                <li>Install the PWA from Safari (<em>Share → Add to Home Screen</em>) or your browser's
+                  install menu for an app-like, offline-first experience.</li>
+              </ul>
               <h3>Bottom bar</h3>
               <p>
                 The bottom navigation gives you <strong>Select</strong>, <strong>Pen</strong>,
@@ -817,11 +862,13 @@
                 <li><strong>Frames</strong> divide the space into named regions (phases, topics, areas).</li>
                 <li><strong>Groups</strong> keep related objects moving and layering together.</li>
                 <li><strong>The minimap</strong> is your always-on overview: click anywhere to jump there.</li>
+                <li><strong>Search</strong> (<kbd>Ctrl+F</kbd>, <kbd>/</kbd>, or the Search button) finds
+                  objects by name and text and jumps straight to them.</li>
                 <li><strong>Focus</strong> (<kbd>F</kbd>) snaps the view to whatever you're working on; <strong>isolation</strong> hides the rest.</li>
               </ul>
               <div class="wiki-note">
-                <p><strong>Note:</strong> a full text-search box inside the canvas is planned for a future
-                version. Today, keeping things in named frames plus zoom-to-focus covers most canvases.</p>
+                <p><strong>Tip:</strong> combine named frames and search — give every region a clear name and
+                you can jump anywhere on even the busiest canvas.</p>
               </div>
             </article>
 
@@ -914,18 +961,65 @@
             <!-- Version history & data safety -->
             <article class="wiki-section" id="wiki-version-history">
               <h2>Version history &amp; data safety</h2>
-              <p>In version 0.4.9, version history means what a versioned, save-based workflow gives you:</p>
+              <p>Your work is protected at every level — undo, quiet autosaves, and full snapshots:</p>
               <ul>
                 <li><strong>Undo / Redo</strong> for everything you do in the current session.</li>
-                <li><strong>Manual save</strong> to your chosen location (desktop files, or IndexedDB in the browser).</li>
-                <li><strong>Portable copies:</strong> every <code>.spatia.json</code> or <code>.spatia</code> export is a snapshot you can store, rename or put in your own backup system.</li>
+                <li><strong>Autosave (desktop):</strong> once a project has been saved once, further changes
+                  are saved silently and debounced as you work — crash-safe, no prompts.</li>
+                <li><strong>Version History:</strong> open <strong>Versions…</strong> to list, restore or
+                  delete snapshots. A snapshot is captured automatically on every save (the store keeps the
+                  most recent 20 per project), an <em>"Autosave on open"</em> capture is taken when you open
+                  a project, and you can <strong>Capture snapshot</strong> manually any time.</li>
+                <li><strong>Portable copies:</strong> every <code>.spatia.json</code> or <code>.spatia</code>
+                  export is a snapshot you can store, rename or put in your own backup system.</li>
                 <li><strong>Recent projects</strong> keep your last few canvases one tap away.</li>
               </ul>
               <div class="wiki-note">
                 <p><strong>Tip:</strong> for sensitive work, export a <code>.spatia</code> folder after a big
                 session and let your OS backup handle version snapshots — it's a plain file you control.</p>
               </div>
-              <p>Automatic multi-version history and crash-safe autosave are planned for future releases.</p>
+            </article>
+
+            <!-- What's new in 0.5.0 -->
+            <article class="wiki-section" id="wiki-whats-new">
+              <h2>What's new in 0.5.0</h2>
+              <p>0.5.0 is the <strong>Drawing &amp; writing</strong> release — it makes the pen a
+                first-class tool and finally shows ink <em>as you draw it</em>.</p>
+              <h3>Headline changes</h3>
+              <ul>
+                <li><strong>Real-time drawing &amp; erasing.</strong> Pen strokes and the eraser preview now
+                  render live at full frame rate while your pointer is down — previously ink only appeared
+                  after you released the mouse or stylus.</li>
+                <li><strong>Ink is a first-class object.</strong> Draw, then select (tap, lasso or marquee),
+                  move, duplicate, copy/paste, group and undo your strokes exactly like notes and shapes.</li>
+                <li><strong>A real partial eraser.</strong> Point-erase through a stroke and it splits cleanly
+                  into two; switch to whole-stroke mode to remove an entire stroke with one sweep — with a
+                  live undo-able preview showing exactly what will go.</li>
+                <li><strong>Richer pen controls.</strong> Smoothing, stroke stabilizer, optional stylus
+                  pressure, color, opacity and stroke width, plus quick keys while drawing:
+                  <kbd>P</kbd> pen, <kbd>E</kbd> eraser, <kbd>L</kbd> lasso, <kbd>=</kbd>/<kbd>-</kbd> width.</li>
+                <li><strong>Better text editing.</strong> The note editor is auto-growing and fully
+                  right-to-left aware, and text objects expose font family, size, bold, italic and alignment
+                  in the inspector.</li>
+                <li><strong>iPad &amp; tablet layer.</strong> Big touch devices get the full desktop-style UI,
+                  Apple Pencil / stylus drawing with palm rejection, and two-finger pan &amp; zoom while the
+                  pen stays down.</li>
+              </ul>
+              <h3>Everything in 0.4.9 (still here)</h3>
+              <ul>
+                <li>Notes &amp; text with inline editing; connections that follow objects; frames; images,
+                  files &amp; links; templates.</li>
+                <li>Plugin API v2 (permissions + events), secure plugin sandbox, Browser Frame plugin.</li>
+                <li>Real-time collaboration rooms via the bundled server, and a local-first, portable
+                  <code>.spatia.json</code> / <code>.spatia</code> project format.</li>
+              </ul>
+              <h3>Try it now</h3>
+              <ul>
+                <li>Open <a href="#/web">Spatia Web</a> in your browser, or download the Windows build
+                  from the <a href="#download">Download</a> section.</li>
+                <li>Grab the <strong>Pen</strong>, draw, and watch the stroke appear live under the
+                  cursor — <kbd>P</kbd> = pen, <kbd>E</kbd> = eraser, <kbd>L</kbd> = lasso, <kbd>=</kbd>/<kbd>-</kbd> = width.</li>
+              </ul>
             </article>
 
             <!-- FAQ -->
@@ -1089,7 +1183,7 @@
         <!-- Hero -->
         <section class="hero">
           <div class="hero-inner">
-            <span class="badge">Spatia 0.4.9 is here</span>
+            <span class="badge">Spatia 0.5.0 is here</span>
             <h1 class="hero-title">
               Think in<span class="hero-accent"> space.</span>
             </h1>
@@ -1104,7 +1198,7 @@
                 Download for Windows
               </a>
             </div>
-            <p class="hero-meta">Windows 10 / 11 &middot; x64 &middot; Version 0.4.9</p>
+            <p class="hero-meta">Windows 10 / 11 &middot; x64 &middot; Version 0.5.0</p>
           </div>
           <figure class="window hero-window">
             <div class="window-bar">
@@ -1280,7 +1374,7 @@
         <section class="section cta" id="download">
           <h2 class="cta-title">Start creating.</h2>
           <p class="cta-sub">
-            Download Spatia for Windows, or open it in your browser right now — version 0.4.9, ready
+            Download Spatia for Windows, or open it in your browser right now — version 0.5.0, ready
             for Windows 10 / 11 on x64.
           </p>
           <div class="hero-actions">
@@ -1290,7 +1384,7 @@
             </a>
             <a class="btn btn-outline btn-lg" href="#/web">Try Web</a>
           </div>
-          <p class="hero-meta cta-meta">Windows 10 / 11 &middot; x64 &middot; 0.4.9</p>
+          <p class="hero-meta cta-meta">Windows 10 / 11 &middot; x64 &middot; 0.5.0</p>
         </section>
       </main>
 

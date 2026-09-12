@@ -1021,6 +1021,18 @@ html[data-wiki] .site {
     flex-direction: column;
     text-align: center;
   }
+
+  .wiki-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+
+  .wiki-table th,
+  .wiki-table td {
+    padding: 9px 10px;
+  }
 }
 
 /* ---------- In-page buttons used as report triggers ---------- */

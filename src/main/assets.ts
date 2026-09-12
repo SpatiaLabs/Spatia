@@ -3,14 +3,20 @@ import * as path from "path";
 import { randomUUID } from "crypto";
 import { app, dialog, nativeImage } from "electron";
 import type { AssetMeta } from "../shared/types/object.js";
+import { activeProjectFolder } from "./storage.js";
 
 /**
  * Project-local asset store. The renderer never touches the filesystem; the
- * main process owns asset binaries, persisted under the app's user-data
- * directory keyed by project id. Project JSON stores only asset *metadata*
- * (never binary), so large images/files stay out of the .spatia.json file.
+ * main process owns asset binaries. Once a project lives in its own default
+ * folder (`C:\Spatia\SpatiaProjects\<Name>\assets\`) the binaries are stored
+ * there so media travels with the project; otherwise they stay under the app's
+ * user-data directory keyed by project id (legacy/imported projects).
  *
- * Layout: <userData>/spatia-assets/<projectId>/<assetId><ext>
+ * Project JSON stores only asset *metadata* (never binary), so large
+ * images/files stay out of the project file.
+ *
+ * Layout (folder project):  <project folder>/assets/<assetId><ext>
+ * Layout (legacy):          <userData>/spatia-assets/<projectId>/<assetId><ext>
  */
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]);
@@ -52,8 +58,12 @@ function assetsRoot(): string {
 }
 
 function projectDir(projectId: string): string {
-  const dir = path.join(assetsRoot(), sanitize(projectId));
-  return dir;
+  // Folder projects store media inside their own assets/ directory so copying
+  // the project folder captures everything. Legacy projects fall back to the
+  // user-data store (backward compatible with existing media).
+  const folder = activeProjectFolder(projectId);
+  if (folder) return path.join(folder, "assets");
+  return path.join(assetsRoot(), sanitize(projectId));
 }
 
 function sanitize(name: string): string {

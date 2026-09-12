@@ -16,9 +16,15 @@ import type {
   PenObject,
   ShapeObject,
   WorldPoint,
+  TableObject,
+  ChartObject,
+  ChartKind,
+  FrameShape,
 } from "../types/object.js";
 import { SHAPE_KINDS, SHAPE_DEFAULTS } from "../geometry/shapes.js";
 import type { ShapeKind } from "../types/object.js";
+import { isTableData, createTableData, createChartTableData } from "../data/table.js";
+import type { TableData } from "../data/table.js";
 
 export const PROJECT_FORMAT_VERSION = 5;
 
@@ -342,6 +348,10 @@ function validateObject(o: unknown): CanvasObject {
       assertBoolean(bold, "text.bold");
       const italic = obj.italic === undefined ? false : obj.italic;
       assertBoolean(italic, "text.italic");
+      const fontFamily = typeof obj.fontFamily === "string" && obj.fontFamily !== "" ? obj.fontFamily : undefined;
+      if (fontFamily !== undefined && typeof fontFamily !== "string") {
+        throw new ProjectFormatError("Invalid text.fontFamily.");
+      }
       const textObj: TextObject = {
         ...base,
         text: obj.text,
@@ -349,6 +359,7 @@ function validateObject(o: unknown): CanvasObject {
         align: align as TextAlign,
         bold,
         italic,
+        ...(fontFamily !== undefined ? { fontFamily } : {}),
       };
       return textObj;
     }
@@ -438,7 +449,18 @@ function validateObject(o: unknown): CanvasObject {
       assertString(color, "pen.color");
       const strokeWidth = obj.strokeWidth ?? 3;
       assertFiniteNumber(strokeWidth, "pen.strokeWidth");
-      const pen: PenObject = { ...base, points, color, strokeWidth };
+      const opacity = obj.opacity === undefined ? 1 : obj.opacity;
+      assertFiniteNumber(opacity, "pen.opacity");
+      if (opacity <= 0 || opacity > 1) {
+        throw new ProjectFormatError("Invalid pen.opacity: expected a value in (0, 1].");
+      }
+      const pen: PenObject = {
+        ...base,
+        points,
+        color,
+        strokeWidth,
+        ...(opacity < 1 ? { opacity } : {}),
+      };
       return pen;
     }
     case "group": {
@@ -457,7 +479,10 @@ function validateObject(o: unknown): CanvasObject {
       const color = obj.color ?? "#2a6df5";
       assertString(name, "frame.name");
       assertString(color, "frame.color");
-      const frame: FrameObject = { ...base, name, color };
+      const frameShapeRaw = obj.frameShape ?? "rectangle";
+      const frameShape: FrameShape =
+        frameShapeRaw === "rounded" || frameShapeRaw === "ellipse" ? frameShapeRaw : "rectangle";
+      const frame: FrameObject = { ...base, name, color, frameShape };
       return frame;
     }
     case "shape": {
@@ -475,6 +500,23 @@ function validateObject(o: unknown): CanvasObject {
       assertFiniteNumber(strokeWidth, "shape.strokeWidth");
       const shape: ShapeObject = { ...base, kind, fill, stroke, strokeWidth };
       return shape;
+    }
+    case "table": {
+      const base = commonBase(obj, "table", obj.id);
+      const data: TableData = isTableData(obj.data) ? obj.data : createTableData();
+      const comparison = obj.comparison === undefined ? false : obj.comparison;
+      assertBoolean(comparison, "table.comparison");
+      const table: TableObject = { ...base, data, comparison };
+      return table;
+    }
+    case "chart": {
+      const base = commonBase(obj, "chart", obj.id);
+      const kind: ChartKind = obj.kind === "line" || obj.kind === "pie" ? obj.kind : "bar";
+      const title = obj.title === undefined ? "" : obj.title;
+      assertString(title, "chart.title");
+      const data: TableData = isTableData(obj.data) ? obj.data : createChartTableData();
+      const chart: ChartObject = { ...base, kind, title, data };
+      return chart;
     }
     default:
       throw new ProjectFormatError(`Unknown object type: ${String(obj.type)}`);

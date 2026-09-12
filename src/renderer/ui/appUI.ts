@@ -14,6 +14,20 @@ function el<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
+/** Compact relative/absolute timestamp for the recovery banner. */
+function formatRecoveryTime(iso: string): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
 /**
  * Thin DOM layer for the Spatia shell. Holds no state of its own; the app
  * controller tells it what to render. Keeps DOM manipulation out of the canvas
@@ -22,8 +36,6 @@ function el<T extends HTMLElement>(id: string): T {
 export class AppUI {
   private statusText = el<HTMLSpanElement>("status-text");
   private zoomLabel = el<HTMLDivElement>("zoom-label");
-  private cursorLabel = el<HTMLDivElement>("cursor-label");
-  private canvas = el<HTMLCanvasElement>("canvas");
 
   readonly btnNew = el<HTMLButtonElement>("btn-new");
   readonly btnOpen = el<HTMLButtonElement>("btn-open");
@@ -46,6 +58,9 @@ export class AppUI {
   readonly btnAddShapeTriangle = el<HTMLButtonElement>("btn-add-shape-triangle");
   readonly btnAddShapeLine = el<HTMLButtonElement>("btn-add-shape-line");
   readonly btnAddShapeArrow = el<HTMLButtonElement>("btn-add-shape-arrow");
+  readonly btnAddTable = el<HTMLButtonElement>("btn-add-table");
+  readonly btnAddComparison = el<HTMLButtonElement>("btn-add-comparison");
+  readonly btnAddChart = el<HTMLButtonElement>("btn-add-chart");
   readonly btnTemplates = el<HTMLButtonElement>("btn-templates");
   readonly btnZoomIn = el<HTMLButtonElement>("btn-zoom-in");
   readonly btnZoomOut = el<HTMLButtonElement>("btn-zoom-out");
@@ -60,6 +75,20 @@ export class AppUI {
 
   readonly exportDialog = el<HTMLElement>("export-dialog");
   readonly exportClose = el<HTMLButtonElement>("export-close");
+  private exportFormats = el<HTMLElement>("export-formats");
+  private exportDetails = el<HTMLElement>("export-details");
+  private exportScopeSelection = el<HTMLDivElement>("export-scope-selection");
+  private exportScaleField = el<HTMLDivElement>("export-scale-field");
+  private exportTitle = el<HTMLElement>("export-title");
+  private exportSummary = el<HTMLParagraphElement>("export-summary");
+  readonly exportBack = el<HTMLButtonElement>("export-back");
+  readonly exportRun = el<HTMLButtonElement>("export-run");
+  private docTitle = el<HTMLSpanElement>("doc-title");
+  private savedState = el<HTMLSpanElement>("saved-state");
+  private recoveryBanner = el<HTMLElement>("recovery-banner");
+  private recoveryEntries = el<HTMLDivElement>("recovery-entries");
+  readonly btnSidebarClose = el<HTMLButtonElement>("sidebar-close");
+  readonly settingsEffects = el<HTMLInputElement>("settings-effects");
   readonly templatesDialog = el<HTMLElement>("templates-dialog");
   readonly templatesClose = el<HTMLButtonElement>("templates-close");
   readonly templatesList = el<HTMLDivElement>("templates-list");
@@ -100,14 +129,33 @@ export class AppUI {
   onRecentPick: ((filePath: string) => void) | null = null;
   /** Fired when the user exits the current group/frame isolation scope. */
   onExitIsolation: (() => void) | null = null;
+  /** Fired when the user changes export scope/resolution (live summary). */
+  onExportConfigChange: (() => void) | null = null;
+  /** Fired when the user recovers a crash draft by id. */
+  onRecover: ((projectId: string) => void) | null = null;
+  /** Fired when the user dismisses a crash draft by id. */
+  onDiscardRecovery: ((projectId: string) => void) | null = null;
 
   private urlResolver: ((value: string | null) => void) | null = null;
   private urlTitle = el<HTMLDivElement>("url-title");
   private urlConfirmLabel = el<HTMLButtonElement>("url-confirm");
+  /** Element to return keyboard focus to once any transient dialog closes. */
+  private focusReturn: HTMLElement | null = null;
+
+  /** Assign the element restored focus should return to after dialog close. */
+  setFocusReturn(el: HTMLElement | null): void {
+    this.focusReturn = el;
+  }
+
+  private restoreFocus(): void {
+    this.focusReturn?.focus({ preventScroll: true });
+  }
 
   constructor() {
-    this.canvas.addEventListener("pointermove", this.onPointerMove);
     this.exitIsolationButton.addEventListener("click", () => this.onExitIsolation?.());
+    const reportConfig = () => this.onExportConfigChange?.();
+    this.exportScopeSelection.addEventListener("change", reportConfig);
+    this.exportScaleField.addEventListener("change", reportConfig);
     const initDialog = () => {
       this.urlConfirm.addEventListener("click", () => this.resolveUrl(this.urlInput.value));
       this.urlCancel.addEventListener("click", () => this.resolveUrl(null));
@@ -156,6 +204,7 @@ export class AppUI {
     this.urlDialog.setAttribute("aria-hidden", "true");
     const resolve = this.urlResolver;
     this.urlResolver = null;
+    this.restoreFocus();
     resolve?.(value);
   }
 
@@ -167,6 +216,101 @@ export class AppUI {
   closeExportDialog(): void {
     this.exportDialog.classList.remove("open");
     this.exportDialog.setAttribute("aria-hidden", "true");
+    this.restoreFocus();
+  }
+
+  /**
+   * Show the export details step (scope + resolution + summary) for a chosen
+   * format. Scope radios are derived per format: selection is meaningless for
+   * PDF, and the resolution field only applies to raster formats.
+   */
+  showExportDetails(opts: { title: string; scopes: readonly string[]; showScale: boolean }): void {
+    this.exportTitle.textContent = opts.title;
+    for (const radio of this.exportScopeSelection.querySelectorAll<HTMLInputElement>("input[name='export-scope']")) {
+      const wrapper = radio.closest("label");
+      if (wrapper) wrapper.hidden = !opts.scopes.includes(radio.value);
+    }
+    this.exportScopeSelection.hidden = opts.scopes.length === 0;
+    this.exportScaleField.hidden = !opts.showScale;
+    this.ensureScopeSelected(opts.scopes);
+    this.exportFormats.hidden = true;
+    this.exportDetails.hidden = false;
+    this.exportRun.textContent = "Export";
+    this.exportRun.disabled = opts.scopes.length === 0;
+    if (opts.scopes.length === 0) this.exportSummary.textContent = "";
+    else this.onExportConfigChange?.();
+  }
+
+  showExportFormats(): void {
+    this.exportTitle.textContent = "Export";
+    this.exportDetails.hidden = true;
+    this.exportFormats.hidden = false;
+  }
+
+  private ensureScopeSelected(scopes: readonly string[]): void {
+    if (scopes.length === 0) return;
+    const selected = this.exportScopeSelection.querySelector<HTMLInputElement>(
+      "input[name='export-scope']:checked"
+    );
+    if (selected && scopes.includes(selected.value)) return;
+    const first = this.exportScopeSelection.querySelector<HTMLInputElement>(`input[name='export-scope'][value='${scopes[0]}']`);
+    if (first) first.checked = true;
+  }
+
+  /** Currently selected export scope ("" when none available). */
+  getExportScope(): string {
+    const checked = this.exportScopeSelection.querySelector<HTMLInputElement>("input[name='export-scope']:checked");
+    return checked?.value ?? "";
+  }
+
+  /** Currently selected export resolution multiplier. */
+  getExportScale(): number {
+    const checked = this.exportScaleField.querySelector<HTMLInputElement>("input[name='export-scale']:checked");
+    return checked ? Number(checked.value) || 2 : 2;
+  }
+
+  setExportSummary(text: string): void {
+    this.exportSummary.textContent = text;
+  }
+
+  setProject(meta: ProjectMeta): void {
+    this.docTitle.textContent = meta.name || "Untitled";
+    this.docTitle.title = meta.name || "Untitled";
+  }
+
+  setSaved(dirty: boolean): void {
+    this.savedState.textContent = dirty ? "Unsaved" : "Saved";
+    this.savedState.classList.toggle("dirty", dirty);
+    this.savedState.title = dirty ? "Not saved yet" : "All changes saved";
+  }
+
+  /** Render the recovery banner. Empty input hides it. */
+  setRecovery(entries: { projectId: string; name: string; updatedAt: string }[]): void {
+    this.recoveryEntries.textContent = "";
+    this.recoveryBanner.hidden = entries.length === 0;
+    for (const e of entries) {
+      const row = document.createElement("div");
+      row.className = "recovery-entry";
+      const name = document.createElement("span");
+      name.className = "recovery-entry-name";
+      name.textContent = e.name;
+      name.title = e.updatedAt;
+      const time = document.createElement("span");
+      time.className = "recovery-entry-time";
+      time.textContent = formatRecoveryTime(e.updatedAt);
+      const recover = document.createElement("button");
+      recover.type = "button";
+      recover.className = "btn inspector-btn";
+      recover.textContent = "Recover";
+      recover.addEventListener("click", () => this.onRecover?.(e.projectId));
+      const discard = document.createElement("button");
+      discard.type = "button";
+      discard.className = "btn inspector-btn";
+      discard.textContent = "Discard";
+      discard.addEventListener("click", () => this.onDiscardRecovery?.(e.projectId));
+      row.append(name, time, recover, discard);
+      this.recoveryEntries.appendChild(row);
+    }
   }
 
   openTemplatesDialog(): void {
@@ -177,6 +321,7 @@ export class AppUI {
   closeTemplatesDialog(): void {
     this.templatesDialog.classList.remove("open");
     this.templatesDialog.setAttribute("aria-hidden", "true");
+    this.restoreFocus();
   }
 
   openProjectsDialog(): void {
@@ -188,6 +333,7 @@ export class AppUI {
   closeProjectsDialog(): void {
     this.projectsDialog.classList.remove("open");
     this.projectsDialog.setAttribute("aria-hidden", "true");
+    this.restoreFocus();
   }
 
   openVersionsDialog(): void {
@@ -198,6 +344,7 @@ export class AppUI {
   closeVersionsDialog(): void {
     this.versionsDialog.classList.remove("open");
     this.versionsDialog.setAttribute("aria-hidden", "true");
+    this.restoreFocus();
   }
 
   /** Render the recent-projects list. */
@@ -236,6 +383,7 @@ export class AppUI {
   closeSettingsDialog(): void {
     this.settingsDialog.classList.remove("open");
     this.settingsDialog.setAttribute("aria-hidden", "true");
+    this.restoreFocus();
   }
 
   /** Render the object inspector body from a list of field descriptors. */
@@ -256,14 +404,6 @@ export class AppUI {
 
   clearIsolation(): void {
     this.isolationBanner.hidden = true;
-  }
-
-  setProject(_meta: ProjectMeta): void {
-    // The removed top bar showed the project name; nothing to render now.
-  }
-
-  setSaved(_dirty: boolean): void {
-    // The removed top bar showed the saved state; nothing to render now.
   }
 
   setStatus(text: string): void {
@@ -318,34 +458,6 @@ export class AppUI {
   toggleSidebar(): void {
     this.setSidebarOpen(!this.isSidebarOpen());
   }
-
-  setCursorWorld(x: number, y: number): void {
-    this.cursorLabel.textContent = `${formatCoord(x)}, ${formatCoord(y)}`;
-  }
-
-  private onPointerMove = (e: PointerEvent): void => {
-    const rect = this.canvas.getBoundingClientRect();
-    if (this.worldReader) {
-      const p = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      const world = this.worldReader(p);
-      this.setCursorWorld(world.x, world.y);
-    }
-  };
-
-  private _worldReader: ((screen: { x: number; y: number }) => { x: number; y: number }) | null = null;
-
-  setWorldReader(reader: (screen: { x: number; y: number }) => { x: number; y: number }): void {
-    this._worldReader = reader;
-  }
-
-  private get worldReader(): ((screen: { x: number; y: number }) => { x: number; y: number }) | null {
-    return this._worldReader;
-  }
-}
-
-function formatCoord(v: number): string {
-  const rounded = Math.round(v * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 export type { ViewportState };

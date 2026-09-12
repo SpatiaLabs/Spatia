@@ -35,7 +35,10 @@ function bootstrap(): void {
   const app = new App(canvas);
   app.start();
 
-  if (isTabletDevice()) {
+  const tablet = isTabletDevice();
+  // Desktop panels stay anchored at their CSS positions; the tablet gets its
+  // own shell (web context only), so mount it after the shared app starts.
+  if (tablet) {
     new TabletUI(app).attach();
   }
 

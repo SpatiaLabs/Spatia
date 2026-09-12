@@ -15,12 +15,20 @@ export function registerIpc(): void {
   let activeFilePath: string | null = null;
 
   ipcMain.handle("project:open", async (): Promise<ReturnType<SpatiaApi["openProject"]>> => {
-    const { openProjectDialog, recordRecentProject, libraryRegister, parseProjectIdentity } = await import("./storage");
+    const {
+      openProjectDialog,
+      recordRecentProject,
+      libraryRegister,
+      parseProjectIdentity,
+      setActiveProject,
+      projectFolderFor,
+    } = await import("./storage");
     const result = await openProjectDialog();
     if (result.filePath && result.contents !== undefined) {
       activeFilePath = result.filePath;
-      void recordRecentProject(result.filePath, "Project");
       const identity = parseProjectIdentity(result.contents, result.filePath);
+      setActiveProject(identity.id, projectFolderFor(result.filePath));
+      void recordRecentProject(result.filePath, identity.name);
       void libraryRegister(result.filePath, identity.name, identity.id, identity.updatedAt);
       return { canceled: false, filePath: result.filePath, contents: result.contents };
     }
@@ -30,12 +38,20 @@ export function registerIpc(): void {
   ipcMain.handle(
     "project:openPath",
     async (_event, filePath: string): Promise<ReturnType<SpatiaApi["openProjectPath"]>> => {
-      const { readProjectFile, recordRecentProject, libraryRegister, parseProjectIdentity } = await import("./storage");
+      const {
+        readProjectFile,
+        recordRecentProject,
+        libraryRegister,
+        parseProjectIdentity,
+        setActiveProject,
+        projectFolderFor,
+      } = await import("./storage");
       const contents = await readProjectFile(filePath);
       if (contents === null) return { canceled: true, filePath: null };
       activeFilePath = filePath;
-      void recordRecentProject(filePath, "Project");
       const identity = parseProjectIdentity(contents, filePath);
+      setActiveProject(identity.id, projectFolderFor(filePath));
+      void recordRecentProject(filePath, identity.name);
       void libraryRegister(filePath, identity.name, identity.id, identity.updatedAt);
       return { canceled: false, filePath, contents };
     }
@@ -75,6 +91,68 @@ export function registerIpc(): void {
     async (_event, filePath: string): Promise<string | null> => {
       const { readProjectFile } = await import("./storage");
       return readProjectFile(filePath);
+    }
+  );
+
+  ipcMain.handle(
+    "project:saveDefault",
+    async (
+      _event,
+      projectId: string,
+      name: string,
+      json: string
+    ): Promise<ReturnType<SpatiaApi["projectSaveDefault"]>> => {
+      const {
+        saveProjectToDefaultFolder,
+        recordRecentProject,
+        libraryRegister,
+        parseProjectIdentity,
+        setActiveProject,
+      } = await import("./storage");
+      const result = await saveProjectToDefaultFolder(projectId, name, json);
+      if (result.ok && result.filePath) {
+        activeFilePath = result.filePath;
+        setActiveProject(projectId, result.folder ?? null);
+        const identity = parseProjectIdentity(json, result.filePath);
+        void recordRecentProject(result.filePath, identity.name);
+        void libraryRegister(result.filePath, identity.name, identity.id, identity.updatedAt);
+        return { ok: true, filePath: result.filePath, folder: result.folder, error: undefined };
+      }
+      return { ok: false, filePath: null, folder: null, error: result.error ?? "Could not save the project." };
+    }
+  );
+
+  ipcMain.handle(
+    "project:recoveryWrite",
+    async (_event, projectId: string, json: string): Promise<boolean> => {
+      const { writeRecovery } = await import("./storage");
+      return writeRecovery(projectId, json);
+    }
+  );
+
+  ipcMain.handle("project:recoveryList", async (): Promise<ReturnType<SpatiaApi["recoveryList"]>> => {
+    const { listRecovery } = await import("./storage");
+    return listRecovery();
+  });
+
+  ipcMain.handle(
+    "project:recoveryClear",
+    async (_event, projectId: string): Promise<boolean> => {
+      const { clearRecovery } = await import("./storage");
+      return clearRecovery(projectId);
+    }
+  );
+
+  ipcMain.handle(
+    "project:exportToExports",
+    async (
+      _event,
+      projectId: string,
+      fileName: string,
+      payload: string
+    ): Promise<ReturnType<SpatiaApi["exportToExports"]>> => {
+      const { exportToProjectExports } = await import("./storage");
+      return exportToProjectExports(projectId, fileName, payload);
     }
   );
 
@@ -411,27 +489,27 @@ export function registerIpc(): void {
     }
   );
 
-  ipcMain.handle(
-    "ai:getAsset",
-    async (_event, name: string): Promise<{ data: string; mime: string } | null> => {
-      const { getAiAsset } = await import("./ai-assets");
-      return getAiAsset(String(name));
-    }
-  );
-
   ipcMain.handle("collab:getIdentity", async (): Promise<CollabIdentity> => {
     const { getCollabIdentity } = await import("./storage");
     return getCollabIdentity();
   });
 
   async function handleSaveAs(json: string, suggestedName?: string): Promise<{ canceled: boolean; filePath: string | null }> {
-    const { saveWithDialog, recordRecentProject, libraryRegister, parseProjectIdentity } = await import("./storage");
+    const {
+      saveWithDialog,
+      recordRecentProject,
+      libraryRegister,
+      parseProjectIdentity,
+      setActiveProject,
+      projectFolderFor,
+    } = await import("./storage");
     const name = suggestedName ?? "Untitled Project.spatia.json";
     const result = await saveWithDialog(name, json);
     if (result.filePath) {
       activeFilePath = result.filePath;
-      void recordRecentProject(result.filePath, name.replace(/\.spatia\.json$/i, ""));
       const identity = parseProjectIdentity(json, result.filePath);
+      setActiveProject(identity.id, projectFolderFor(result.filePath));
+      void recordRecentProject(result.filePath, identity.name);
       void libraryRegister(result.filePath, identity.name, identity.id, identity.updatedAt);
       return { canceled: false, filePath: result.filePath };
     }

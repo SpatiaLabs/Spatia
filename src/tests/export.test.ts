@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { bytesToBase64, base64ToBytes } from "../shared/export/base64.js";
 import { exportBounds } from "../shared/export/bounds.js";
 import { buildMarkdown } from "../shared/export/markdown.js";
-import { buildPdfFromJpeg } from "../shared/export/pdf.js";
+import { buildPdfFromJpeg, buildPdfFromJpegs } from "../shared/export/pdf.js";
 import type { CanvasObject } from "../shared/types/object.js";
 
 test("base64 round trips arbitrary bytes", () => {
@@ -85,4 +85,36 @@ test("buildPdfFromJpeg produces a minimal valid single-page PDF", () => {
   assert.ok(ascii.includes("/MediaBox"));
   const pageEnd = ascii.lastIndexOf("%%EOF");
   assert.ok(pageEnd > 0, "PDF has an EOF marker");
+});
+
+test("buildPdfFromJpegs assembles a valid xref for multiple pages", () => {
+  const jpeg = bytesToBase64(base64ToBytes("AAECAwQFBgc="));
+  const pdf = buildPdfFromJpegs([
+    { jpegBase64: jpeg, pixelWidth: 200, pixelHeight: 100, dpi: 144 },
+    { jpegBase64: jpeg, pixelWidth: 400, pixelHeight: 200, dpi: 96 },
+  ]);
+  const ascii = new TextDecoder().decode(pdf);
+
+  // One catalog + one pages tree + two page/image/content object triples.
+  assert.ok(ascii.includes("<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>"));
+  assert.equal((ascii.split("/Type /Page /Parent").length - 1), 2, "two page objects");
+
+  // Each page media box equals its physical size in points (pixels * 72 / dpi).
+  assert.ok(ascii.includes("/MediaBox [0 0 100 50]"), "dpi=144 page sizes to logical units");
+  assert.ok(ascii.includes("/MediaBox [0 0 300 150]"), "dpi=96 page sizes to points");
+
+  // xref must resolve every object it claims; end offsets equal the trailer's
+  // startxref so a compliant reader can walk the table.
+  const xrefSection = ascii.slice(ascii.indexOf("xref"));
+  const startxref = Number(ascii.match(/startxref\n(\d+)/)?.[1]);
+  const size = Number(xrefSection.match(/0 (\d+)/)?.[1]);
+  // Everything from "xref" onward is ASCII, so its byte length re-anchors the
+  // table's address in the raw byte stream (offsets are byte-based, the decoded
+  // string is UTF-16).
+  const tailBytes = new TextEncoder().encode(xrefSection).length;
+  const prefixBytes = pdf.length - tailBytes;
+  assert.equal(size, 9, "xref size covers the free entry plus objects 1..8");
+  assert.equal(startxref, prefixBytes, "startxref points at the xref table");
+  assert.ok(ascii.endsWith("%%EOF\n"), "PDF ends cleanly");
+  assert.ok(ascii.indexOf("%%EOF") > 0);
 });
