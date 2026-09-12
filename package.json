@@ -3,7 +3,7 @@
   "version": "0.5.0",
   "description": "Spatia — a local-first visual infinite workspace.",
   "author": "Spatia",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "main": "dist/main/main/main.js",
   "scripts": {

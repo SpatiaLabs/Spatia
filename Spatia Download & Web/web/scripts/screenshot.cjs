@@ -177,7 +177,7 @@ const seed = async function () {
     project.addObject(o);
     return o.id;
   })();
-  const u1 = engine.createUrlObject("https://spatiacanvas.netlify.app", "Spatia — official site", { x: 980, y: 430 });
+  const u1 = engine.createUrlObject("https://spatiaweb.surge.sh", "Spatia — official site", { x: 980, y: 430 });
   const n4 = note(880, 610, "Notes", "Ship the web build\nKeep it local-first\nExport anytime");
 
   // --- icon image (the real Spatia icon) ---

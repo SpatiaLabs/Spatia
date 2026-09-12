@@ -10,7 +10,7 @@
 // Install: open the Plugins dialog and paste the URL of the manifest.json
 // that ships next to this file, or install the folder that contains both.
 //
-// https://spatiacanvas.netlify.app/plugins/counter-plugin/manifest.json
+// https://spatiaweb.surge.sh/plugins/counter-plugin/manifest.json
 
 api.addCommand({
   id: "counter-plugin.count-objects",

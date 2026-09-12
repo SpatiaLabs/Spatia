@@ -33,82 +33,105 @@
     <div id="web-host" hidden>
       <div id="app">
         <main id="canvas-container">
-          <canvas id="canvas"></canvas>
+          <canvas id="canvas" tabindex="-1"></canvas>
           <div id="isolation-banner" class="isolation-banner" hidden role="status">
             <span id="isolation-label"></span>
             <button id="btn-exit-isolation" class="btn isolation-exit" type="button" title="Exit isolation (Escape)">Exit</button>
           </div>
+          <div id="doc-titlebar" class="doc-titlebar" role="status">
+            <span id="doc-title" class="doc-title">Untitled</span>
+            <span id="saved-state" class="saved-state dirty" title="Not saved yet">Unsaved</span>
+          </div>
+          <div id="recovery-banner" class="recovery-banner" hidden role="dialog" aria-label="Recover unsaved project">
+            <div class="recovery-head">Recover a previous session?</div>
+            <div id="recovery-entries" class="recovery-entries"></div>
+          </div>
           <div id="hud">
-            <div id="zoom-label" title="Zoom level">100%</div>
-            <div id="cursor-label" title="Cursor position">0, 0</div>
             <div id="hud-controls">
+              <button id="btn-menu" class="btn btn-icon" title="Toggle tools panel">&#9776;</button>
               <button id="btn-zoom-out" class="btn btn-icon" title="Zoom out">-</button>
-              <button id="btn-zoom-in" class="btn btn-icon" title="Zoom in">+</button>
               <button id="btn-zoom-reset" class="btn" title="Reset view">Reset</button>
+              <button id="btn-zoom-in" class="btn btn-icon" title="Zoom in">+</button>
               <span class="divider" aria-hidden="true"></span>
               <button id="btn-pen" class="btn btn-tool" title="Pen tool (draw freely)">&#9997;</button>
-              <button id="btn-menu" class="btn btn-icon" title="Toggle tools panel">&#9776;</button>
             </div>
+            <div id="zoom-label" title="Zoom level">100%</div>
           </div>
           <canvas id="minimap" title="Workspace overview — click to navigate"></canvas>
           <div id="presence-layer" class="presence-layer" aria-hidden="true"></div>
           <div id="browser-layer" class="browser-layer" aria-hidden="true"></div>
           <aside id="sidebar" aria-hidden="true">
-            <div class="sidebar-section">
-              <span class="sidebar-label">File</span>
-              <button id="btn-new" class="btn sidebar-btn" title="New project">New</button>
-              <button id="btn-open" class="btn sidebar-btn" title="Open project">Open</button>
-              <button id="btn-import" class="btn sidebar-btn" title="Import a .spatia file">Import</button>
-              <button id="btn-save" class="btn sidebar-btn" title="Save project">Save</button>
-              <button id="btn-save-as" class="btn sidebar-btn" title="Save project as">Save As</button>
-              <button id="btn-templates" class="btn sidebar-btn" title="Start from a template">Templates…</button>
-              <button id="btn-export" class="btn sidebar-btn" title="Export as PNG, PDF, Markdown or .spatia">Export…</button>
-              <button id="btn-projects" class="btn sidebar-btn" title="Browse your project library">Projects…</button>
-              <button id="btn-versions" class="btn sidebar-btn" title="Browse past versions and snapshots">Versions…</button>
-              <button id="btn-plugins" class="btn sidebar-btn" title="Manage plugins">Plugins…</button>
-              <button id="btn-settings" class="btn sidebar-btn" title="App settings">Settings…</button>
+            <div class="sidebar-head">
+              <span class="sidebar-brand-mark" aria-hidden="true"></span>
+              <span class="sidebar-brand">
+                <span class="sidebar-brand-name">Spatia</span>
+                <span class="sidebar-brand-sub">Workspace</span>
+              </span>
+              <button id="sidebar-close" class="sidebar-close" type="button" title="Close panel" aria-label="Close panel">&times;</button>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Recent</span>
-              <div id="recent-list" class="recent-list"><span class="recent-empty">No recent projects</span></div>
-            </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Edit</span>
-              <button id="btn-undo" class="btn sidebar-btn" title="Undo (Ctrl+Z)" disabled>Undo</button>
-              <button id="btn-redo" class="btn sidebar-btn" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
-            </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Tools</span>
-              <button id="btn-select" class="btn sidebar-btn" title="Select / move objects">Select</button>
-              <button id="btn-pen-sidebar" class="btn sidebar-btn" title="Pen tool (draw freely)">Pen</button>
-              <button id="btn-search" class="btn sidebar-btn" title="Find objects (Ctrl+F or /)">Search</button>
-            </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Media</span>
-              <button id="btn-assets" class="btn sidebar-btn" title="Browse the project's imported assets, files and their thumbnails">Assets</button>
-            </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Collaborate</span>
-              <button id="btn-share" class="btn sidebar-btn" title="Share this project, manage members and permissions">Share…</button>
-            </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Add</span>
-              <button id="btn-add-test" class="btn sidebar-btn" title="Add a test object">Test</button>
-              <button id="btn-add-text" class="btn sidebar-btn" title="Add a text object">Text</button>
-              <button id="btn-add-note" class="btn sidebar-btn" title="Add a sticky note">Note</button>
-              <button id="btn-add-image" class="btn sidebar-btn" title="Add an image object">Image</button>
-              <button id="btn-add-file" class="btn sidebar-btn" title="Add a file object">File</button>
-              <button id="btn-add-url" class="btn sidebar-btn" title="Add a link / bookmark">Link</button>
-            </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Shapes</span>
-              <button id="btn-add-shape-rectangle" class="btn sidebar-btn" title="Add a rectangle">Rectangle</button>
-              <button id="btn-add-shape-rounded-rectangle" class="btn sidebar-btn" title="Add a rounded rectangle">Rounded</button>
-              <button id="btn-add-shape-ellipse" class="btn sidebar-btn" title="Add an ellipse">Ellipse</button>
-              <button id="btn-add-shape-diamond" class="btn sidebar-btn" title="Add a diamond">Diamond</button>
-              <button id="btn-add-shape-triangle" class="btn sidebar-btn" title="Add a triangle">Triangle</button>
-              <button id="btn-add-shape-line" class="btn sidebar-btn" title="Add a line">Line</button>
-              <button id="btn-add-shape-arrow" class="btn sidebar-btn" title="Add an arrow">Arrow</button>
+            <div class="sidebar-body">
+              <div class="sidebar-section">
+                <span class="sidebar-label">File</span>
+                <button id="btn-new" class="btn sidebar-btn" title="New project">New</button>
+                <button id="btn-open" class="btn sidebar-btn" title="Open project">Open</button>
+                <button id="btn-import" class="btn sidebar-btn" title="Import a .spatia folder">Import</button>
+                <button id="btn-save" class="btn sidebar-btn" title="Save project">Save</button>
+                <button id="btn-save-as" class="btn sidebar-btn" title="Save project as">Save As</button>
+                <button id="btn-templates" class="btn sidebar-btn" title="Start from a template">Templates…</button>
+                <button id="btn-export" class="btn sidebar-btn" title="Export as PNG, PDF, Markdown or .spatia">Export…</button>
+                <button id="btn-projects" class="btn sidebar-btn" title="Browse your project library">Projects…</button>
+                <button id="btn-versions" class="btn sidebar-btn" title="Browse past versions and snapshots">Versions…</button>
+                <button id="btn-plugins" class="btn sidebar-btn" title="Manage plugins">Plugins…</button>
+                <button id="btn-settings" class="btn sidebar-btn" title="App settings">Settings…</button>
+              </div>
+              <div class="sidebar-section">
+                <span class="sidebar-label">Recent</span>
+                <div id="recent-list" class="recent-list"><span class="recent-empty">No recent projects</span></div>
+              </div>
+              <div class="sidebar-section">
+                <span class="sidebar-label">Edit</span>
+                <button id="btn-undo" class="btn sidebar-btn" title="Undo (Ctrl+Z)" disabled>Undo</button>
+                <button id="btn-redo" class="btn sidebar-btn" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
+              </div>
+              <div class="sidebar-section">
+                <span class="sidebar-label">Tools</span>
+                <button id="btn-select" class="btn sidebar-btn" title="Select / move objects">Select</button>
+                <button id="btn-pen-sidebar" class="btn sidebar-btn" title="Pen tool (draw freely)">Pen</button>
+                <button id="btn-search" class="btn sidebar-btn" title="Find objects (Ctrl+F or /)">Search</button>
+              </div>
+              <div class="sidebar-section">
+                <span class="sidebar-label">Media</span>
+                <button id="btn-assets" class="btn sidebar-btn" title="Browse the project's imported assets, files and their thumbnails">Assets</button>
+              </div>
+              <div class="sidebar-section">
+                <span class="sidebar-label">Collaborate</span>
+                <button id="btn-share" class="btn sidebar-btn" title="Share this project, manage members and permissions">Share…</button>
+              </div>
+              <div class="sidebar-section">
+                <span class="sidebar-label">Add</span>
+                <button id="btn-add-test" class="btn sidebar-btn" title="Add a test object">Test</button>
+                <button id="btn-add-text" class="btn sidebar-btn" title="Add a text object">Text</button>
+                <button id="btn-add-note" class="btn sidebar-btn" title="Add a sticky note">Note</button>
+                <button id="btn-add-image" class="btn sidebar-btn" title="Add an image object">Image</button>
+                <button id="btn-add-file" class="btn sidebar-btn" title="Add a file object">File</button>
+                <button id="btn-add-url" class="btn sidebar-btn" title="Add a link / bookmark">Link</button>
+              </div>
+              <div class="sidebar-section">
+                <span class="sidebar-label">Data</span>
+                <button id="btn-add-table" class="btn sidebar-btn" title="Add a data table">Table</button>
+                <button id="btn-add-comparison" class="btn sidebar-btn" title="Add a comparison table">Comparison</button>
+                <button id="btn-add-chart" class="btn sidebar-btn" title="Add a bar chart">Chart</button>
+              </div>
+              <div class="sidebar-section">
+                <span class="sidebar-label">Shapes</span>
+                <button id="btn-add-shape-rectangle" class="btn sidebar-btn" title="Add a rectangle">Rectangle</button>
+                <button id="btn-add-shape-rounded-rectangle" class="btn sidebar-btn" title="Add a rounded rectangle">Rounded</button>
+                <button id="btn-add-shape-ellipse" class="btn sidebar-btn" title="Add an ellipse">Ellipse</button>
+                <button id="btn-add-shape-diamond" class="btn sidebar-btn" title="Add a diamond">Diamond</button>
+                <button id="btn-add-shape-triangle" class="btn sidebar-btn" title="Add a triangle">Triangle</button>
+                <button id="btn-add-shape-line" class="btn sidebar-btn" title="Add a line">Line</button>
+                <button id="btn-add-shape-arrow" class="btn sidebar-btn" title="Add an arrow">Arrow</button>
+              </div>
             </div>
           </aside>
           <aside id="inspector" aria-hidden="true">
@@ -136,6 +159,13 @@
             <div class="settings-row">
               <span class="settings-label">Workspace</span>
               <span>Local-first — your projects live on this device.</span>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">Effects</span>
+              <label class="settings-check">
+                <input id="settings-effects" type="checkbox" />
+                Reduce visual effects
+              </label>
             </div>
             <p class="settings-about">Spatia is a local-first visual workspace for thinking in space. Offline by default, no account required.</p>
             <div class="url-dialog-actions">
@@ -182,18 +212,45 @@
           </div>
         </div>
         <div id="export-dialog" class="url-dialog export-dialog" aria-hidden="true">
-          <div class="url-dialog-box export-dialog-box">
-            <div class="inspector-header url-dialog-title">Export</div>
-            <p class="export-hint">Choose a format for the current document.</p>
-            <div class="export-options">
-              <button class="btn export-option" data-export="spatia-folder" type="button"><span>Portable folder</span><small>.spatia (source)</small></button>
-              <button class="btn export-option" data-export="spatia-json" type="button"><span>Project file</span><small>.spatia.json</small></button>
-              <button class="btn export-option" data-export="png" type="button"><span>Image</span><small>PNG</small></button>
-              <button class="btn export-option" data-export="pdf" type="button"><span>Document</span><small>PDF</small></button>
-              <button class="btn export-option" data-export="md" type="button"><span>Markdown</span><small>.md</small></button>
+          <div class="url-dialog-box export-dialog-box" id="export-dialog-box">
+            <div class="inspector-header url-dialog-title" id="export-title">Export</div>
+            <div id="export-formats">
+              <p class="export-hint">Choose a format for the current document.</p>
+              <div class="export-options">
+                <button class="btn export-option" data-export="spatia-folder" type="button"><span>Portable folder</span><small>.spatia (source)</small></button>
+                <button class="btn export-option" data-export="spatia-json" type="button"><span>Project file</span><small>.spatia.json</small></button>
+                <button class="btn export-option" data-export="png" type="button"><span>Image</span><small>PNG</small></button>
+                <button class="btn export-option" data-export="jpeg" type="button"><span>Image</span><small>JPEG</small></button>
+                <button class="btn export-option" data-export="pdf" type="button"><span>Document</span><small>PDF</small></button>
+                <button class="btn export-option" data-export="md" type="button"><span>Markdown</span><small>.md</small></button>
+              </div>
+              <div class="url-dialog-actions">
+                <button id="export-close" class="btn inspector-btn" type="button">Close</button>
+              </div>
             </div>
-            <div class="url-dialog-actions">
-              <button id="export-close" class="btn inspector-btn" type="button">Close</button>
+            <div id="export-details" class="export-details" hidden>
+              <div id="export-detail-title" class="export-detail-title"></div>
+              <div class="export-field">
+                <span class="export-field-label">Scope</span>
+                <div class="export-radio-row" id="export-scope-selection">
+                  <label><input type="radio" name="export-scope" value="canvas" checked /> Canvas</label>
+                  <label><input type="radio" name="export-scope" value="selection" /> Selection</label>
+                  <label><input type="radio" name="export-scope" value="frame" /> Frames</label>
+                </div>
+              </div>
+              <div class="export-field">
+                <span class="export-field-label">Resolution</span>
+                <div class="export-radio-row" id="export-scale-field">
+                  <label><input type="radio" name="export-scale" value="1" /> 1&times;</label>
+                  <label><input type="radio" name="export-scale" value="2" checked /> 2&times;</label>
+                  <label><input type="radio" name="export-scale" value="3" /> 3&times;</label>
+                </div>
+              </div>
+              <p id="export-summary" class="export-summary"></p>
+              <div class="url-dialog-actions">
+                <button id="export-back" class="btn inspector-btn" type="button">Back</button>
+                <button id="export-run" class="btn inspector-btn url-confirm" type="button">Export</button>
+              </div>
             </div>
           </div>
         </div>
@@ -265,6 +322,21 @@
             <div class="search-countbar"><span id="search-count" class="search-count"></span></div>
           </div>
         </div>
+        <div id="command-dialog" class="url-dialog command-dialog" aria-hidden="true">
+          <div class="url-dialog-box command-dialog-box">
+            <div class="inspector-header url-dialog-title">Commands</div>
+            <input
+              id="command-input"
+              class="inspector-input command-input"
+              type="text"
+              placeholder="Type a command or action…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div id="command-list" class="command-list"></div>
+            <div class="search-countbar"><span id="command-count" class="search-count"></span></div>
+          </div>
+        </div>
         <div id="share-dialog" class="url-dialog share-dialog" aria-hidden="true">
           <div class="url-dialog-box share-dialog-box">
             <div class="inspector-header url-dialog-title">Share &amp; collaborate</div>
@@ -333,7 +405,7 @@
           </nav>
           <div class="header-actions">
             <a class="btn btn-ghost btn-sm" href="#/web">Try Web</a>
-            <a class="btn btn-primary btn-sm" href="./downloads/Spatia-0.4.9-x64.msi">Download</a>
+            <a class="btn btn-primary btn-sm" href="https://github.com/ji2-2/Spatia/releases/download/v0.5.0/Spatia-0.5.0-win-x64.zip">Download</a>
           </div>
         </header>
 
@@ -446,14 +518,15 @@
                 <li><strong>Everything connects.</strong> Lines and arrows follow objects as you move them, so diagrams stay tidy without manual redrawing.</li>
                 <li><strong>Draw &amp; write naturally.</strong> Freehand ink with a live eraser — annotate, doodle and sketch right on the canvas.</li>
                 <li><strong>Fast and lean.</strong> A dependency-free canvas engine renders smoothly even on very large workspaces.</li>
-                <li><strong>One format.</strong> Projects use a versioned JSON format that keeps working when Spatia evolves.</li>
+                <li><strong>One format.</strong> Projects save as <code>.spatia</code> files in SSON — a versioned, plain-text format that keeps working when Spatia evolves.</li>
               </ul>
-              <p>
-                Spatia is available as a <strong>Windows 10 / 11 (x64) desktop app</strong> and as a
-                <strong>Web app / installable PWA</strong> for any modern browser — on desktop, mobile
-                phones, iPad and tablets alike.
-                Current version: <strong>0.5.0</strong>.
-              </p>
+<p>
+            Spatia is available as a <strong>Windows 10 / 11 (x64) desktop app</strong> and as a
+            <strong>Web app / installable PWA</strong> for any modern browser — on desktop, mobile
+            phones, iPad and tablets alike. There is no separate iOS or Android app: phones, iPads
+            and tablets all use the Web version.
+            Current version: <strong>0.5.0</strong>.
+          </p>
             </article>
 
             <!-- Getting started -->
@@ -461,9 +534,9 @@
               <h2>Getting started</h2>
               <h3>On Windows (desktop)</h3>
               <ol>
-                <li>Download the Windows app from the <a href="#download">Spatia website</a> (<code>Spatia-0.5.0-win-x64.zip</code>).</li>
-                <li>Run the <code>.msi</code> and follow the setup wizard.</li>
-                <li>Launch Spatia. It opens a fresh blank canvas with the tools panel on the left.</li>
+                <li>Download <code>Spatia-0.5.0-win-x64.zip</code> from the <strong>Download</strong> button above (it points to the official <a href="https://github.com/ji2-2/Spatia/releases/tag/v0.5.0">Spatia 0.5.0 GitHub Release</a>).</li>
+                <li>Extract the ZIP anywhere (no installation is needed) and run <code>Spatia.exe</code>.</li>
+                <li>Spatia opens a fresh blank canvas with the tools panel on the left.</li>
               </ol>
               <h3>In the browser (Web app)</h3>
               <ol>
@@ -829,7 +902,14 @@
                 <li><strong>Connect:</strong> use the Connect tool — tap a source object, then tap the target (or hold and drag from source to target).</li>
                 <li><strong>More actions:</strong> the bottom <strong>Menu</strong> holds edit, duplicate, delete, connect, group, layer and view actions for the current selection.</li>
               </ul>
-              <h3>iPad &amp; tablets</h3>
+              <h3>On phones</h3>
+              <p>
+                Phones use the touch web UI: pan and pinch-zoom with two fingers, tap objects to
+                select them, and use the bottom <strong>Menu</strong> for actions. There is no
+                native phone app — access Spatia through the <a href="#/web">Web version</a>, and
+                install it as a PWA for an app-like, offline experience.
+              </p>
+              <h3>On iPad &amp; tablets</h3>
               <ul>
                 <li><strong>iPad</strong> (or any large touch tablet) uses a dedicated tablet layer with the
                   full desktop-style tools and canvas, tuned for touch — it is never the phone layout.</li>
@@ -1152,7 +1232,7 @@
             <button class="wiki-report-link" type="button" data-report-open>Report a problem</button>
             <a class="wiki-back-site" href="#top">Back to site</a>
           </div>
-          <p class="footer-legal">&copy; 2026 Spatia. All rights reserved.</p>
+          <p class="footer-legal">&copy; 2026 Spatia. Released under the MIT License.</p>
         </footer>
       </div>
     </div>
@@ -1175,7 +1255,7 @@
         <div class="header-actions">
           <a class="btn btn-ghost btn-sm" href="#/web">Try Web</a>
           <button class="btn btn-ghost btn-sm header-report-btn" type="button" data-report-open>Report a problem</button>
-          <a class="btn btn-primary btn-sm" href="./downloads/Spatia-0.4.9-x64.msi">Download</a>
+          <a class="btn btn-primary btn-sm" href="https://github.com/ji2-2/Spatia/releases/download/v0.5.0/Spatia-0.5.0-win-x64.zip">Download</a>
         </div>
       </header>
 
@@ -1193,7 +1273,7 @@
             </p>
             <div class="hero-actions">
               <a class="btn btn-primary btn-lg" href="#/web">Try Web</a>
-              <a class="btn btn-outline btn-lg" href="./downloads/Spatia-0.4.9-x64.msi">
+              <a class="btn btn-outline btn-lg" href="https://github.com/ji2-2/Spatia/releases/download/v0.5.0/Spatia-0.5.0-win-x64.zip">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
                 Download for Windows
               </a>
@@ -1375,10 +1455,11 @@
           <h2 class="cta-title">Start creating.</h2>
           <p class="cta-sub">
             Download Spatia for Windows, or open it in your browser right now — version 0.5.0, ready
-            for Windows 10 / 11 on x64.
+            for Windows 10 / 11 on x64. The Windows build is a portable ZIP hosted on
+            <a href="https://github.com/ji2-2/Spatia/releases">GitHub Releases</a>.
           </p>
           <div class="hero-actions">
-            <a class="btn btn-primary btn-lg" href="./downloads/Spatia-0.4.9-x64.msi">
+            <a class="btn btn-primary btn-lg" href="https://github.com/ji2-2/Spatia/releases/download/v0.5.0/Spatia-0.5.0-win-x64.zip">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
               Download Spatia
             </a>
@@ -1401,7 +1482,7 @@
           <a href="#/wiki">Wiki</a>
           <button class="footer-report-btn" type="button" data-report-open>Report a problem</button>
         </nav>
-        <p class="footer-legal">&copy; 2026 Spatia. All rights reserved.</p>
+        <p class="footer-legal">&copy; 2026 Spatia. Released under the MIT License.</p>
       </footer>
     </div>
 

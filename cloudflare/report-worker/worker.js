@@ -3,10 +3,9 @@
 /**
  * Spatia — "Report a problem" endpoint (Cloudflare Worker).
  *
- * Drop-in replacement for the former Netlify Function at
- * /.netlify/functions/report. The site's in-page report dialog POSTs a JSON
- * problem report here and it is forwarded to the RESEND_API_KEY inbox as an
- * email. No secrets live in the client.
+ * The site's in-page report dialog POSTs a JSON problem report here and it is
+ * forwarded to the RESEND_API_KEY inbox as an email. No secrets live in the
+ * client.
  *
  * Required secrets (set via `wrangler secret put RESEND_API_KEY`):
  *   RESEND_API_KEY  - Resend API key used to send the email

@@ -143,13 +143,13 @@ app.whenReady().then(async () => {
     if (editor) editor.blur();
     app.commands.markSaved();
 
-    // export surface: bridge present, markdown builds, dialog lists 5 formats
+    // export surface: bridge present, markdown builds, dialog lists all formats
     app.openExportDialog();
     const exportOptions = Array.from(document.querySelectorAll('#export-dialog [data-export]')).map((b) => b.getAttribute("data-export")).join(",");
     app.ui.closeExportDialog();
     const exportOk = typeof window.spatia.exportFile === "function" &&
       app.buildMarkdownText().indexOf("# ") === 0 &&
-      exportOptions === "spatia-folder,spatia-json,png,pdf,md";
+      exportOptions === "spatia-folder,spatia-json,png,jpeg,pdf,md";
 
     // templates: dialog renders 8 cards and applying one fills the canvas
     app.openTemplatesDialog();

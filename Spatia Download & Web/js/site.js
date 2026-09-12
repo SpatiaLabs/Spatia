@@ -3,7 +3,7 @@
 /**
  * Spatia site router.
  *
- *   #            -> landing page (spatiacanvas.netlify.app/#)
+ *   #            -> landing page (spatiaweb.surge.sh/#)
  *   #/web        -> the actual functional Spatia Web workspace
  *   #/wiki       -> the static user documentation (Spatia Wiki)
  *
@@ -411,7 +411,13 @@
   // stays on the site, nothing navigates away.
 
   var APP_VERSION = "0.5.0";
-  var REPORT_ENDPOINT = "/.netlify/functions/report";
+  // Serverless "Report a problem" endpoint (see cloudflare/report-worker/).
+  // After `wrangler deploy`, replace the placeholder below with the deployed
+  // worker URL (https://spatia-report.<your-subdomain>.workers.dev). Tests may
+  // override it via window.SPATIA_REPORT_ENDPOINT.
+  function reportEndpoint() {
+    return window.SPATIA_REPORT_ENDPOINT || "https://spatia-report.YOUR_SUBDOMAIN.workers.dev";
+  }
 
   var reportDialog = document.getElementById("report-dialog");
   var reportForm = document.getElementById("report-form");
@@ -493,7 +499,7 @@
       platform: navigator.platform || "unknown",
       version: APP_VERSION,
     };
-    fetch(REPORT_ENDPOINT, {
+    fetch(reportEndpoint(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

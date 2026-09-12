@@ -18,7 +18,7 @@ Spatia Download & Web/web/js/
 Spatia Download & Web/web/app.css
 Spatia Download & Web/web/plugins/
 
-# Local deployment metadata (Netlify state)
+# Local deployment metadata
 .netlify
 
 # Secrets / local environment — never commit real values

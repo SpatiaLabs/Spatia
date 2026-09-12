@@ -2,7 +2,7 @@
 
 Spatia is a local-first visual infinite workspace for notes, sketches, and documents. It runs as a desktop app on Windows and as a web app / PWA in the browser — including on tablets and iPads with Apple Pencil support. Projects are plain files on your machine: no account, no cloud.
 
-> License status: this repository is currently **not** released under an open-source license. See [License](#license).
+> Spatia is open source and released under the [MIT License](#license).
 
 ## Features
 
@@ -25,6 +25,15 @@ Try Spatia in your browser at **<https://spatiaweb.surge.sh>** — installable a
 
 ## Getting started (desktop)
 
+### Download a ready-made build
+
+Prebuilt Windows releases (portable `.zip`) are published on
+[GitHub Releases](https://github.com/ji2-2/Spatia/releases). Download
+`Spatia-0.5.0-win-x64.zip`, extract it, and run `Spatia.exe` — no install
+required.
+
+### Build and run from source
+
 Requirements: Node.js 20+ and npm, on Windows 10/11 x64.
 
 ```sh
@@ -32,7 +41,7 @@ npm ci
 npm run dev        # compile and launch the Electron app
 ```
 
-Produce a Windows installer:
+Produce the Windows installer (MSI):
 
 ```sh
 npm run package:msi   # writes release/Spatia-<version>-x64.msi
@@ -71,7 +80,7 @@ npm run test:server    # collaboration server API tests
 | `server/` | Optional real-time collaboration server. |
 | `scripts/` | Build, asset, and verification scripts. |
 | `Spatia Download & Web/` | The public website (including the embedded web app). |
-| `cloudflare/` | Serverless workers: the report-inbox endpoint and the releases endpoint. |
+| `cloudflare/` | Serverless worker for the "Report a problem" inbox. |
 
 ## Overview
 
@@ -89,7 +98,33 @@ A plugin is a folder containing a `manifest.json` and a `main.js` entry script t
 
 ## Report a problem
 
-The in-app "Report a problem" dialog posts to a serverless endpoint ([`cloudflare/report-worker/`](cloudflare/report-worker/), formerly Netlify's `functions/report.js`) that forwards the rendered report by email through [Resend](https://resend.com). Secrets are never stored in the repository — see [`.env.example`](.env.example) for the required environment variables.
+The in-app "Report a problem" dialog posts to a serverless Cloudflare Worker
+([`cloudflare/report-worker/`](cloudflare/report-worker/)) that forwards the
+rendered report by email through [Resend](https://resend.com). Secrets are
+never stored in the repository — the API key is read from the worker's
+environment only.
+
+Required configuration (values stay in your Cloudflare account, never in the
+repository):
+
+- `RESEND_API_KEY` — Resend API key (set with `wrangler secret put RESEND_API_KEY`).
+- `REPORT_FROM` — a verified sender address at Resend (set in `wrangler.toml` `[vars]`).
+
+Optional: `REPORT_TO` (defaults to `spatiacanvas@gmail.com`) and `REPORT_SUBJECT`.
+
+Deploying (one interactive step):
+
+```sh
+cd cloudflare/report-worker
+npx wrangler login          # interactive — completes auth in your browser
+npx wrangler secret put RESEND_API_KEY   # interactive prompt
+npx wrangler deploy
+```
+
+Then set `REPORT_ENDPOINT` in `Spatia Download & Web/js/site.js` to the
+deployed worker URL and rebuild the site.
+
+See [`.env.example`](.env.example) for the same variables.
 
 ## Contributing
 
@@ -102,4 +137,6 @@ Contributions are welcome. Please keep these patterns in mind:
 
 ## License
 
-This repository has **no open-source license yet**: `package.json` declares `"license": "UNLICENSED"` and no LICENSE file exists. All rights are reserved until a license is chosen. Report the bug reports / feedback via the issues above.
+Spatia is released under the [MIT License](LICENSE). The `package.json`
+file declares `"license": "MIT"` and a `LICENSE` file exists at the root of
+the repository.

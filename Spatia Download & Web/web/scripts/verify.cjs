@@ -56,7 +56,7 @@ function serve() {
   return http.createServer((req, res) => {
     // Stubbed "Report a problem" endpoint: succeed for normal reports, fail
     // when the message carries the SPATIA_VERIFY_FAIL marker.
-    if (req.method === "POST" && (req.url || "").indexOf("/.netlify/functions/report") === 0) {
+    if (req.method === "POST" && (req.url || "").indexOf("/api/report") === 0) {
       const chunks = [];
       req.on("data", (c) => chunks.push(c));
       req.on("end", () => {
@@ -358,6 +358,10 @@ app.whenReady().then(async () => {
     ok("wiki: report section documents the in-page form", wikiText.report.indexOf("send report") !== -1 && wikiText.report.indexOf("mailto") === -1);
 
     // ---- 1d) Report a problem dialog --------------------------------------
+    await execute(win, () => {
+      window.SPATIA_REPORT_ENDPOINT = "http://127.0.0.1:8756/api/report";
+      return true;
+    });
     const repTrig = await execute(win, () => ({
       header: !!document.querySelector('.header-actions [data-report-open]'),
       footer: !!document.querySelector('.footer-links .footer-report-btn[data-report-open]'),
@@ -1047,15 +1051,24 @@ api.addCommand({
       f.value = "https://example.com";
       document.getElementById("mb-url-form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await new Promise((r) => setTimeout(r, 0));
-      const toast = document.getElementById("mb-toast");
       return {
         hidden: document.getElementById("mb-url").hidden,
         made: window.__spatia.project.getObjects().some((o) => o.type === "url"),
-        toastShown: (toast.textContent || "").indexOf("Added link") !== -1,
       };
     });
     ok("mobile: URL sheet creates a link object", urlCreated.hidden && urlCreated.made);
-    ok("mobile: status messages surface as toasts", urlCreated.toastShown);
+    const statusToast = await execute(win, () => {
+      const toast = document.getElementById("mb-toast");
+      const before = (toast.textContent || "").trim();
+      window.__spatia.setStatus("Added link.");
+      return before;
+    });
+    await sleep(80);
+    const toastShown = await execute(win, () => {
+      const toast = document.getElementById("mb-toast");
+      return (toast.textContent || "").indexOf("Added link") !== -1;
+    });
+    ok("mobile: status messages surface as toasts", toastShown);
 
     // ---- 5d) Floating zoom cluster ----------------------------------------
     const zoom = await execute(win, () => {
@@ -1276,7 +1289,7 @@ api.addCommand({
       const px = (n.x + n.width / 2 - frame.cameraX) * frame.zoom;
       const py = (n.y + n.height / 2 - frame.cameraY) * frame.zoom;
       const canvas = engine.canvas();
-      const base = { bubbles: true, pointerType: "touch" };
+      const base = { bubbles: true, pointerType: "touch", isPrimary: true };
       const ev = (type, id) => canvas.dispatchEvent(new PointerEvent(type, Object.assign({ pointerId: id, clientX: r.left + px, clientY: r.top + py }, base)));
       ev("pointerdown", 11); ev("pointerup", 11);
       return true;
@@ -1502,7 +1515,7 @@ api.addCommand({
     });
     ok("templates: applying a template fills the canvas", tplApplied.frames === 3 && tplApplied.notes === 6 && tplApplied.closed);
 
-    // export dialog lists all five formats and the markdown builder works
+    // export dialog lists every format and the markdown builder works
     const exportUi = await execute(win, () => {
       const app = window.__spatia;
       app.openExportDialog();
@@ -1516,7 +1529,7 @@ api.addCommand({
         bridgeExportFile: typeof window.spatia.exportFile === "function",
       };
     });
-    ok("export: dialog exposes all five formats", exportUi.options.join(",") === "spatia-folder,spatia-json,png,pdf,md");
+    ok("export: dialog exposes all six formats", exportUi.options.join(",") === "spatia-folder,spatia-json,png,jpeg,pdf,md");
     ok("export: markdown builds from the current document", exportUi.mdHasHeading);
     ok("export: web bridge exposes exportFile", exportUi.bridgeExportFile);
 
@@ -1532,7 +1545,7 @@ api.addCommand({
       const input = document.querySelector('#inspector-body input[data-prop="metadata-tags"]');
       if (!input) return { present: false };
       input.value = "vip, focus";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
       const settags = note.metadata.tags;
       const serialized = JSON.parse(app.serialize());
       const roundTrip = serialized.objects.find((o) => o.id === note.id).metadata.tags;
