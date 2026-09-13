@@ -22,8 +22,18 @@ const root = path.resolve(__dirname, "..");
 const site = path.join(root, "Spatia Download & Web");
 const webJsOut = path.join(site, "web", "js");
 
-const tsc = path.join(root, "node_modules", ".bin", "tsc.cmd");
-const result = spawnSync(tsc, ["-p", path.join(site, "web", "tsconfig.json")], { stdio: "inherit" });
+// Spawn the TypeScript compiler as plain node code instead of going through the
+// `node_modules/.bin/tsc.cmd` shim. On Windows, spawning a `.cmd` through
+// spawnSync without a shell fails with EINVAL and a null status, which made the
+// build exit silently and leave web/js + web/app.css stale. Running tsc.js
+// directly works on every platform and avoids shell quoting of the space in
+// "Spatia Download & Web".
+const tscJs = require.resolve("typescript/lib/tsc.js");
+const result = spawnSync(process.execPath, [tscJs, "-p", path.join(site, "web", "tsconfig.json")], { stdio: "inherit" });
+if (result.error) {
+  console.error(`Web build failed: could not run tsc (${result.error.message}).`);
+  process.exit(1);
+}
 if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
@@ -38,6 +48,16 @@ for (const [fromRel, toRel] of copies) {
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.copyFileSync(path.join(root, fromRel), to);
   console.log(`copied ${fromRel} -> ${toRel}`);
+}
+
+// The web build must render exactly like the desktop app. The #app shell and
+// the shared stylesheet are copied from the same sources, so fail the build if
+// the website's HTML shell ever drifts from the renderer's.
+const checkParity = path.join(__dirname, "check-web-parity.cjs");
+const gate = spawnSync(process.execPath, [checkParity], { stdio: "inherit" });
+if (gate.error || gate.status !== 0) {
+  console.error("Web build failed: web/desktop parity check did not pass.");
+  process.exit(gate.error ? 1 : (gate.status ?? 1));
 }
 
 console.log("Web build complete.");

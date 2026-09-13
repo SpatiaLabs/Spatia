@@ -64,14 +64,15 @@ async function check(label, fn) {
     const base = await makeTmpDir("seed");
     const store = new PluginStore(base);
     const entries = await store.list();
-    const example = entries.find((e) => e.id === "example-plugin");
-    assert.ok(example, "example-plugin exists after first list()");
-    assert.equal(example.builtIn, true);
-    assert.equal(example.enabled, true);
-    assert.ok(example.manifest, "manifest is valid");
-    assert.equal(example.manifest.main, "main.js");
-    assert.ok(fs.existsSync(path.join(base, "example-plugin", "main.js")), "main.js written");
-    assert.ok(fs.existsSync(path.join(base, "example-plugin", "manifest.json")), "manifest.json written");
+    const bf = entries.find((e) => e.id === "browser-frame");
+    assert.ok(bf, "browser-frame exists after first list()");
+    assert.equal(bf.builtIn, true);
+    assert.equal(bf.enabled, true);
+    assert.ok(bf.manifest, "manifest is valid");
+    assert.equal(bf.manifest.main, "main.js");
+    assert.ok(fs.existsSync(path.join(base, "browser-frame", "main.js")), "main.js written");
+    assert.ok(fs.existsSync(path.join(base, "browser-frame", "manifest.json")), "manifest.json written");
+    assert.equal(entries.some((e) => e.id === "example-plugin"), false, "retired built-in is never seeded");
   });
 
   await check("seeding is idempotent", async () => {
@@ -85,9 +86,9 @@ async function check(label, fn) {
   await check("getSource returns manifest + main", async () => {
     const base = await makeTmpDir("source");
     const store = new PluginStore(base);
-    const src = await store.getSource("example-plugin");
+    const src = await store.getSource("browser-frame");
     assert.ok(src, "source found");
-    assert.equal(src.manifest.id, "example-plugin");
+    assert.equal(src.manifest.id, "browser-frame");
     assert.ok(typeof src.main === "string" && src.main.length > 0, "main source non-empty");
     assert.equal(await store.getSource("does-not-exist"), null);
   });
@@ -95,12 +96,12 @@ async function check(label, fn) {
   await check("setEnabled persists to _state.json", async () => {
     const base = await makeTmpDir("toggle");
     const store = new PluginStore(base);
-    assert.equal(await store.setEnabled("example-plugin", false), true);
+    assert.equal(await store.setEnabled("browser-frame", false), true);
     const after = await new PluginStore(base).list();
-    const example = after.find((e) => e.id === "example-plugin");
-    assert.equal(example.enabled, false);
+    const bf = after.find((e) => e.id === "browser-frame");
+    assert.equal(bf.enabled, false);
     const state = JSON.parse(fs.readFileSync(path.join(base, "_state.json"), "utf8"));
-    assert.equal(state["example-plugin"], false);
+    assert.equal(state["browser-frame"], false);
     assert.equal(await store.setEnabled("nope", true), false, "unknown plugin rejected");
   });
 
@@ -191,8 +192,24 @@ async function check(label, fn) {
     await store.installFromFolder(pkg);
     assert.equal(await store.remove("verify-tool"), true);
     assert.equal(await new PluginStore(base).getSource("verify-tool"), null);
-    assert.equal(await store.remove("example-plugin"), false, "built-ins are protected");
-    assert.ok(await new PluginStore(base).getSource("example-plugin"), "built-in still seeded");
+    assert.equal(await store.remove("browser-frame"), false, "built-ins are protected");
+    assert.ok(await new PluginStore(base).getSource("browser-frame"), "built-in still seeded");
+  });
+
+  await check("a retired built-in seed is pruned from existing installs", async () => {
+    const base = await makeTmpDir("legacy");
+    const dir = path.join(base, "example-plugin");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ id: "example-plugin", main: "main.js" }), "utf8");
+    fs.writeFileSync(path.join(dir, "main.js"), "api.notify('stale');", "utf8");
+    const state = path.join(base, "_state.json");
+    fs.writeFileSync(state, JSON.stringify({ "example-plugin": true }, null, 2), "utf8");
+    const entries = await new PluginStore(base).list();
+    assert.equal(entries.some((e) => e.id === "example-plugin"), false, "legacy entry gone from list");
+    assert.ok(!fs.existsSync(dir), "legacy directory removed");
+    const stateAfter = JSON.parse(fs.readFileSync(state, "utf8"));
+    assert.equal("example-plugin" in stateAfter, false, "legacy flag removed from state");
+    assert.equal(await new PluginStore(base).getSource("example-plugin"), null, "legacy plugin can no longer load");
   });
 
   await check("a broken plugin entry does not crash list()", async () => {

@@ -58,7 +58,7 @@ app.whenReady().then(async () => {
   registerIpc();
 
   // The Browser Frame plugin ships as a built-in, so no seeding is needed — it
-  // is registered automatically with the example plugin on first boot.
+  // is registered automatically on first boot.
 
   const win = new BrowserWindow({
     width: 1280,
@@ -86,36 +86,25 @@ app.whenReady().then(async () => {
 
   await win.loadFile(path.join(ROOT, "dist", "renderer", "index.html"));
   await until(win, () => !!window.__spatia && !!window.__spatia.plugins, "app boots");
-  await until(win, () => window.__spatia.plugins.commandsList().some((c) => c.id === "example.add-note"), "example command registers");
+  await until(win, () => window.__spatia.plugins.commandsList().some((c) => c.id === "browser-frame.add"), "browser-frame command registers");
 
   const listed = await win.webContents.executeJavaScript(`(() => {
-    const entry = window.__spatia.plugins.entriesList().find((e) => e.id === "example-plugin");
+    const entry = window.__spatia.plugins.entriesList().find((e) => e.id === "browser-frame");
     return { present: !!entry, builtIn: !!entry && entry.builtIn === true, enabled: !!entry && entry.enabled };
   })()`);
-  check("desktop: built-in example-plugin listed + enabled", listed.present && listed.builtIn && listed.enabled);
-
-  const ran = await win.webContents.executeJavaScript(`(async () => {
-    const app = window.__spatia;
-    const before = app.project.getObjects().length;
-    await app.plugins.dispatchCommand("example.add-note");
-    await new Promise((r) => setTimeout(r, 500));
-    const note = app.project.getObjects().find((o) => o.type === "note" && o.text === "Hello from the Example Plugin!");
-    return { created: !!note && app.project.getObjects().length > before, toast: !!document.getElementById("app-toast") };
-  })()`);
-  check("desktop: example command creates a note", ran.created);
-  check("desktop: toast element present", ran.toast);
+  check("desktop: built-in browser-frame listed + enabled", listed.present && listed.builtIn && listed.enabled);
 
   // API v2: the plugins dialog shows the api version badge + permission chips
   const dialogV2 = await win.webContents.executeJavaScript(`(() => {
     window.__spatia.openPluginsDialog();
     const rows = Array.from(document.querySelectorAll("#plugins-list .plugin-entry"));
-    const example = rows.find((el) => (el.textContent || "").includes("Example Plugin"));
-    const html = example ? example.textContent : "";
+    const bf = rows.find((el) => (el.textContent || "").includes("Browser Frame"));
+    const html = bf ? bf.textContent : "";
     document.getElementById("plugins-close").click();
     return {
-      hasRow: !!example,
+      hasRow: !!bf,
       badge: /API v2/.test(html),
-      chips: /notify/.test(html) && /documents/.test(html) && /navigation/.test(html),
+      chips: /notify/.test(html) && /documents/.test(html) && /view/.test(html),
     };
   })()`);
   check("desktop: plugins dialog shows API v2 badge + permission chips", dialogV2.hasRow && dialogV2.badge && dialogV2.chips);
@@ -160,19 +149,12 @@ app.whenReady().then(async () => {
       !document.getElementById("templates-dialog").classList.contains("open");
     app.commands.markSaved();
 
-    // API v2: selection events reach the sandboxed example plugin, which pings
-    // back through the toast channel on every non-empty selection it observes.
-    await new Promise((r) => setTimeout(r, 400));
-    const toastText = (document.getElementById("app-toast").textContent || "");
-    const pluginEvent = /Example Plugin sees \\d+ selected/.test(toastText);
-
-    return { shapeMade, shapeUndone, shapeRedone, noteMade, noteEditor, exportOk, templatesOk, pluginEvent };
+    return { shapeMade, shapeUndone, shapeRedone, noteMade, noteEditor, exportOk, templatesOk };
   })()`);
   check("desktop: shape create/select + undo/redo", phase1.shapeMade && phase1.shapeUndone && phase1.shapeRedone);
   check("desktop: instant note editing opens the editor", phase1.noteMade && phase1.noteEditor);
   check("desktop: export bridge + markdown + five formats", phase1.exportOk);
   check("desktop: templates dialog + apply", phase1.templatesOk);
-  check("desktop: plugin receives selection events (API v2)", phase1.pluginEvent);
 
   // ---- Collaboration on desktop: real E2E over ws://localhost:8787 ---------
   const collabData = fs.mkdtempSync(path.join(os.tmpdir(), "spatia-smoke-collab-"));
@@ -351,10 +333,12 @@ app.whenReady().then(async () => {
       created: !!frame,
       url: frame ? (frame.metadata && frame.metadata.browserUrl) || "" : "",
       selected: !!frame && app.selection.has(frame.id),
+      toast: !!document.getElementById("app-toast"),
     };
   })()`);
   check("desktop: Add Browser Frame command exists", bfCreated.command);
   check("desktop: command creates a frame holding the Google URL", bfCreated.created && bfCreated.url === "https://www.google.com/" && bfCreated.selected);
+  check("desktop: toast element present after the command notifies", bfCreated.toast);
 
   const googleLoaded = await until(
     win,

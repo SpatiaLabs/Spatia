@@ -7,63 +7,15 @@ import type { PluginManifest } from "./manifest.js";
  * built-ins and user-installed plugins. The only difference is that built-ins
  * cannot be removed.
  *
- * The example plugin demos the shared Plugin API: it registers a command that
- * creates an object on the canvas through the sandboxed api surface.
- *
  * The Browser Frame plugin adds a live, interactive website inside a canvas
  * frame object. It is a normal built-in: no manifest URL, no manual install —
- * it is seeded with the example plugin on both platforms.
+ * it is seeded on both platforms.
  */
 
 export interface BuiltinPlugin {
   manifest: PluginManifest;
   main: string;
 }
-
-const EXAMPLE_MANIFEST: PluginManifest = {
-  id: "example-plugin",
-  name: "Example Plugin",
-  version: "1.0.0",
-  description: "A tiny demo plugin that shows how Spatia plugins work.",
-  author: "Spatia",
-  main: "main.js",
-  apiVersion: 2,
-  permissions: ["notify", "commands", "view", "documents", "selection", "navigation"],
-};
-
-const EXAMPLE_MAIN = `// Example Spatia plugin — runs inside the plugin sandbox, where a global
-// "api" object is provided by Spatia. No access to the app DOM, Node,
-// Electron, the filesystem or the network.
-//
-// api is promise-based the whole way down; every method returns a Promise
-// except addCommand(), notify(), on() and off() which fire and forget.
-// This plugin declares permissions in its manifest (API v2): the sandbox only
-// serves the methods those permissions gate, so a plugin can never touch more
-// than it asked for.
-
-var selectionPing = null;
-api.on("selection", function (sel) {
-  if (sel && sel.ids && sel.ids.length > 0) {
-    selectionPing = sel;
-    api.notify("Example Plugin sees " + sel.ids.length + " selected object(s).");
-  }
-});
-
-api.addCommand({
-  id: "example.add-note",
-  label: "Add example note",
-  run: async function () {
-    const center = await api.viewportCenter();
-    const note = await api.createObject("note", center.x - 90, center.y - 70, {
-      title: "Plugin note",
-      text: "Hello from the Example Plugin!",
-      color: "#7dd3a3",
-    });
-    if (note) await api.select([note.id]);
-    api.notify("Added an example note.");
-  },
-});
-`;
 
 const BROWSER_FRAME_MANIFEST: PluginManifest = {
   id: "browser-frame",
@@ -119,7 +71,6 @@ api.addCommand({
 `;
 
 export const BUILTIN_PLUGINS: BuiltinPlugin[] = [
-  { manifest: EXAMPLE_MANIFEST, main: EXAMPLE_MAIN },
   { manifest: BROWSER_FRAME_MANIFEST, main: BROWSER_FRAME_MAIN },
 ];
 

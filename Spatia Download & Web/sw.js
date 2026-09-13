@@ -7,7 +7,7 @@
  */
 "use strict";
 
-var CACHE = "spatia-site-v8";
+var CACHE = "spatia-site-v9";
 var CORE = [
   "./",
   "./index.html",

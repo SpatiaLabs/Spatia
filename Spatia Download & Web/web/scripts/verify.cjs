@@ -415,16 +415,17 @@ app.whenReady().then(async () => {
     // ---- 4a) Plugins -------------------------------------------------------
     // The renderer plugin system runs identically in the browser (IndexedDB
     // store behind the same window.spatia surface). Load, boot into the
-    // sandbox, run a command that creates a real object, then break it.
+    // sandbox, run a built-in command that creates a real object, then break
+    // it.
     await execute(win, async () => {
       await window.__spatia.plugins.reload();
       return true;
     });
-    await until(win, () => window.__spatia.plugins.commandsList().some((c) => c.id === "example.add-note"), "built-in plugin command registered");
+    await until(win, () => window.__spatia.plugins.commandsList().some((c) => c.id === "browser-frame.add"), "built-in plugin command registered");
     const builtIn = await execute(win, () => {
       const pm = window.__spatia.plugins;
-      const entry = pm.entriesList().find((e) => e.id === "example-plugin");
-      const cmd = pm.commandsList().find((c) => c.id === "example.add-note");
+      const entry = pm.entriesList().find((e) => e.id === "browser-frame");
+      const cmd = pm.commandsList().find((c) => c.id === "browser-frame.add");
       return {
         lined: !!entry,
         manifestOk: !!entry && !!entry.manifest && entry.manifest.main === "main.js",
@@ -433,37 +434,44 @@ app.whenReady().then(async () => {
         commandLabel: cmd && cmd.label,
       };
     });
-    ok("plugins: built-in example-plugin is listed", builtIn.lined && builtIn.manifestOk && builtIn.builtIn && builtIn.enabled);
-    ok("plugins: built-in command labelled", builtIn.commandLabel === "Add example note");
+    ok("plugins: built-in browser-frame is listed", builtIn.lined && builtIn.manifestOk && builtIn.builtIn && builtIn.enabled);
+    ok("plugins: built-in command labelled", builtIn.commandLabel === "Add Browser Frame");
 
     const pluginRan = await execute(win, async () => {
       const app = window.__spatia;
       const before = app.project.getObjects().length;
-      await app.plugins.dispatchCommand("example.add-note");
+      await app.plugins.dispatchCommand("browser-frame.add");
       await new Promise((r) => setTimeout(r, 250));
-      const note = app.project.getObjects().find((o) => o.type === "note" && o.text === "Hello from the Example Plugin!");
+      const frame = app.project.getObjects().find((o) => o.type === "frame");
+      const newObject = app.project.getObjects().length > before;
+      let removed = false;
+      if (frame) {
+        app.project.removeObjects([frame.id]);
+        removed = true;
+      }
       const toast = document.getElementById("app-toast");
       return {
-        created: !!note,
-        newObject: app.project.getObjects().length > before,
-        toastShown: !!(toast && toast.textContent && /Added an example note/.test(toast.textContent)),
+        created: !!frame,
+        newObject,
+        removed,
+        toastShown: !!(toast && toast.textContent && /Browser Frame added/.test(toast.textContent)),
       };
     });
-    ok("plugins: example command creates a note", pluginRan.created && pluginRan.newObject);
-    ok("plugins: example command notifies via toast", pluginRan.toastShown);
+    ok("plugins: built-in command creates a frame object", pluginRan.created && pluginRan.newObject && pluginRan.removed);
+    ok("plugins: built-in command notifies via toast", pluginRan.toastShown);
 
     // disable -> command vanishes; enable -> it comes back
     await execute(win, async () => {
-      await window.__spatia.plugins.setEnabled("example-plugin", false);
+      await window.__spatia.plugins.setEnabled("browser-frame", false);
       return true;
     });
-    let gone = await execute(win, () => !window.__spatia.plugins.entriesList().some((e) => e.id === "example-plugin" && e.enabled));
+    let gone = await execute(win, () => !window.__spatia.plugins.entriesList().some((e) => e.id === "browser-frame" && e.enabled));
     ok("plugins: disabling drops the command", gone);
     await execute(win, async () => {
-      await window.__spatia.plugins.setEnabled("example-plugin", true);
+      await window.__spatia.plugins.setEnabled("browser-frame", true);
       return true;
     });
-    await until(win, () => window.__spatia.plugins.commandsList().some((c) => c.id === "example.add-note"), "built-in re-enabled");
+    await until(win, () => window.__spatia.plugins.commandsList().some((c) => c.id === "browser-frame.add"), "built-in re-enabled");
 
     await execute(win, async () => {
       try { await window.__spatiaBridge.removePluginForTest("verify-plugin"); await window.__spatia.plugins.reload(); } catch { /* idempotent */ }
@@ -522,12 +530,12 @@ app.whenReady().then(async () => {
     const dialogV2 = await execute(win, () => {
       window.__spatia.openPluginsDialog();
       const rows = Array.from(document.querySelectorAll("#plugins-list .plugin-entry"));
-      const example = rows.find((el) => (el.textContent || "").includes("Example Plugin"));
-      const html = example ? example.textContent : "";
+      const bf = rows.find((el) => (el.textContent || "").includes("Browser Frame"));
+      const html = bf ? bf.textContent : "";
       return {
         open: document.getElementById("plugins-dialog").classList.contains("open"),
         badge: /API v2/.test(html),
-        chips: /notify/.test(html) && /documents/.test(html) && /navigation/.test(html),
+        chips: /notify/.test(html) && /documents/.test(html) && /view/.test(html),
       };
     });
     ok("plugins: dialog shows API v2 badge + permission chips", dialogV2.open && dialogV2.badge && dialogV2.chips);
@@ -741,12 +749,11 @@ api.addCommand({
       counterGone: !window.__spatia.plugins.entriesList().some((e) => e.id === "counter-plugin"),
       permsGone: !window.__spatia.plugins.entriesList().some((e) => e.id === "perms-plugin"),
     }));
-    await until(win, () => window.__spatia.plugins.commandsList().some((c) => c.id === "example.add-note"), "built-in re-registered after cleanup");
+    await until(win, () => window.__spatia.plugins.commandsList().some((c) => c.id === "browser-frame.add"), "built-in re-registered after cleanup");
     const cleaned = await execute(win, () => ({
-      exampleBack: window.__spatia.plugins.commandsList().some((c) => c.id === "example.add-note"),
       browserFrameBack: window.__spatia.plugins.commandsList().some((c) => c.id === "browser-frame.add"),
     }));
-    ok("plugins: test plugins removed cleanly", removed.verifyGone && removed.brokenGone && removed.counterGone && removed.permsGone && cleaned.exampleBack);
+    ok("plugins: test plugins removed cleanly", removed.verifyGone && removed.brokenGone && removed.counterGone && removed.permsGone && cleaned.browserFrameBack);
 
     // reset the canvas + undo history the plugin commands created so the
     // mobile section starts from the same clean state as a fresh boot

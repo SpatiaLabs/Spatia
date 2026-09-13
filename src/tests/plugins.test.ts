@@ -108,16 +108,6 @@ test("built-in plugins all validate", () => {
   );
 });
 
-test("example-plugin main uses only the documented plugin api", () => {
-  const example = BUILTIN_PLUGINS.find((b) => b.manifest.id === "example-plugin");
-  assert.ok(example, "example-plugin is built-in");
-  for (const method of ["addCommand", "on", "viewportCenter", "createObject", "select", "notify"]) {
-    assert.ok(example.main.includes(`api.${method}(`), `main uses api.${method}`);
-  }
-  assert.doesNotMatch(example.main, /document|window|fetch|XMLHttpRequest|localStorage|indexedDB/, "no app/DOM/storage access");
-  assert.deepEqual(example.manifest.permissions, ["notify", "commands", "view", "documents", "selection", "navigation"]);
-});
-
 test("browserFrame normalizeBrowserUrl produces loadable http(s) addresses", () => {
   assert.equal(normalizeBrowserUrl("example.com"), "https://example.com/");
   assert.equal(normalizeBrowserUrl("https://www.google.com"), "https://www.google.com/");

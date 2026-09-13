@@ -10,6 +10,15 @@ import {
 import { BUILTIN_PLUGINS, BUILTIN_PLUGIN_IDS } from "../shared/plugins/builtin.js";
 
 /**
+ * Built-in ids that shipped in older versions but are no longer built in.
+ * Installs that were seeded by a previous version still carry the directory
+ * and its _state.json flag; `ensure()` prunes them so a retired built-in can
+ * never be seen or loaded again. A user plugin that happens to share one of
+ * these ids is intentionally left untouched.
+ */
+const LEGACY_BUILTIN_IDS = ["example-plugin"];
+
+/**
  * Desktop plugin store — PURE NODE (no electron import) so it can be
  * unit-tested with plain `node`. Layout under `baseDir` (typical value:
  * `app.getPath("userData")/plugins`):
@@ -32,7 +41,8 @@ export class PluginStore {
     this.stateFile = path.join(baseDir, "_state.json");
   }
 
-  /** Create the plugins directory and seed the built-in plugins. */
+  /** Create the plugins directory, seed the built-in plugins, and prune retired
+   * built-in seeds left behind by previous versions. */
   async ensure(): Promise<void> {
     await fs.mkdir(this.baseDir, { recursive: true });
     for (const b of BUILTIN_PLUGINS) {
@@ -41,6 +51,19 @@ export class PluginStore {
       await writeIfDifferent(path.join(dir, "manifest.json"), JSON.stringify(b.manifest, null, 2));
       await writeIfDifferent(path.join(dir, "main.js"), b.main);
     }
+    let state = await this.readState();
+    let changed = false;
+    for (const id of LEGACY_BUILTIN_IDS) {
+      if (await dirExists(path.join(this.baseDir, id))) {
+        await fs.rm(path.join(this.baseDir, id), { recursive: true, force: true });
+        changed = true;
+      }
+      if (id in state) {
+        delete state[id];
+        changed = true;
+      }
+    }
+    if (changed) await this.writeState(state);
   }
 
   async list(): Promise<PluginEntry[]> {

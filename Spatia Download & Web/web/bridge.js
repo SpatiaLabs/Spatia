@@ -360,6 +360,14 @@ async function seedBuiltinsIfNeeded() {
       files: {},
     });
   }
+  // Prune built-in entries from older versions that are no longer shipped
+  // (e.g. the retired "example-plugin"). Only built-in-flagged records are
+  // removed; a user plugin that happens to share a retired id is left alone.
+  for (const r of all) {
+    if (r && r.builtIn === true && !BUILTIN_PLUGIN_IDS.includes(r.id)) {
+      await idbDel(STORES.plugins, r.id);
+    }
+  }
 }
 
 /** Install a validated plugin payload under a given id. */
