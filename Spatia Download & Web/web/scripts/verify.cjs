@@ -765,6 +765,224 @@ api.addCommand({
       return true;
     });
 
+    // ---- 4b) Pencil drawing / eraser precision (shared engine) -------------
+    // Install an in-page helper that dispatches real PointerEvents on the
+    // canvas; it drives the SAME engine code path as desktop, phone and iPad.
+    await execute(win, () => {
+      window.__spatiaQA = window.__spatiaQA || {};
+      const QA = window.__spatiaQA;
+      QA.screenX = (wx) => {
+        const c = window.__spatia.engine.canvas();
+        const r = c.getBoundingClientRect();
+        const f = window.__spatia.engine.getFrame();
+        return r.left + (wx - f.cameraX) * f.zoom;
+      };
+      QA.screenY = (wy) => {
+        const c = window.__spatia.engine.canvas();
+        const r = c.getBoundingClientRect();
+        const f = window.__spatia.engine.getFrame();
+        return r.top + (wy - f.cameraY) * f.zoom;
+      };
+      QA.sendStroke = (a, b, opts) => {
+        opts = opts || {};
+        const c = window.__spatia.engine.canvas();
+        const steps = Math.max(1, opts.steps || 10);
+        const p0 = opts.p0 !== undefined ? opts.p0 : 0.5;
+        const p1 = opts.p1 !== undefined ? opts.p1 : p0;
+        const fire = (t, x, y, p, buttons) =>
+          c.dispatchEvent(
+            new PointerEvent(t, {
+              bubbles: true,
+              cancelable: true,
+              pointerId: opts.pointerId || 7,
+              pointerType: opts.type || "mouse",
+              isPrimary: true,
+              button: 0,
+              buttons,
+              pressure: p,
+              clientX: x,
+              clientY: y,
+            })
+          );
+        fire("pointerdown", a.x, a.y, p0, 1);
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          fire("pointermove", a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, p0 + (p1 - p0) * t, 1);
+        }
+        fire("pointerup", b.x, b.y, 0, 0);
+        return true;
+      };
+      QA.pens = () => window.__spatia.project.getObjects().filter((o) => o.type === "pen");
+      // A full reset: the undo stack, the saved flag AND the document itself.
+      // (commands.clear() alone only drops history — it does not remove objects.)
+      QA.resetInk = async () => {
+        const app = window.__spatia;
+        app.commands.clear();
+        app.commands.markSaved();
+        await app.newProject();
+      };
+      return true;
+    });
+    await sleep(120);
+
+    // 4b-1) A mouse draw commits ONE uniform stroke (pressure is now ON by
+    //       default, but a mouse reports no pressure so it must stay uniform).
+    const draw = await execute(win, async () => {
+      const app = window.__spatia;
+      const eng = app.engine;
+      await window.__spatiaQA.resetInk();
+      eng.setPenTool(true);
+      eng.setPenToolMode("pen");
+      eng.setPenSettings({ width: 3 });
+      const r = eng.canvas().getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      window.__spatiaQA.sendStroke({ x: cx - 160, y: cy }, { x: cx + 160, y: cy }, { type: "mouse", steps: 40 });
+      const s = window.__spatiaQA.pens()[0];
+      return {
+        count: window.__spatiaQA.pens().length,
+        points: s ? s.points.length : 0,
+        sw: s ? s.strokeWidth : -1,
+        uniform: s ? s.points.every((p) => p.width === undefined) : false,
+      };
+    });
+    ok("ink: mouse stroke commits a pen object", draw.count === 1 && draw.points >= 4);
+    ok("ink: mouse stays uniform (pressure is pen-only)", draw.uniform && draw.sw === 3);
+
+    // 4b-2) Eraser tap cuts exactly the visible-cursor band. Regression: the
+    // old code used the full eraser diameter as the erase radius, which would
+    // cut a ~2x band (gap ~43px) instead of the visible ~23px.
+    const tap = await execute(win, async () => {
+      const eng = window.__spatia.engine;
+      await window.__spatiaQA.resetInk();
+      eng.setPenTool(true);
+      eng.setPenToolMode("pen");
+      eng.setPenSettings({ width: 3 });
+      const r = eng.canvas().getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      window.__spatiaQA.sendStroke({ x: cx - 160, y: cy }, { x: cx + 160, y: cy }, { type: "mouse", steps: 40 });
+      eng.setPenSettings({ eraserRadius: 20 });
+      eng.setPenToolMode("eraser");
+      window.__spatiaQA.sendStroke({ x: cx, y: cy }, { x: cx, y: cy }, { type: "mouse", steps: 1 });
+      const pens = window.__spatiaQA.pens();
+      const sides = pens.map((p) => {
+        const xs = p.points.map((pt) => window.__spatiaQA.screenX(pt.x));
+        return Math.min(...xs) >= cx ? "right" : "left";
+      });
+      const leftPts = pens.filter((_, i) => sides[i] === "left").flatMap((p) => p.points.map((pt) => window.__spatiaQA.screenX(pt.x)));
+      const rightPts = pens.filter((_, i) => sides[i] === "right").flatMap((p) => p.points.map((pt) => window.__spatiaQA.screenX(pt.x)));
+      const leftMin = Math.min(...leftPts);
+      const leftMax = Math.max(...leftPts);
+      const rightMin = Math.min(...rightPts);
+      const rightMax = Math.max(...rightPts);
+      return {
+        count: pens.length,
+        leftN: sides.filter((s) => s === "left").length,
+        rightN: sides.filter((s) => s === "right").length,
+        cx,
+        leftMin,
+        leftMax,
+        rightMin,
+        rightMax,
+        gap: rightMin - leftMax,
+      };
+    });
+    ok("ink: eraser tap splits the stroke cleanly in two", tap.count === 2 && tap.leftN === 1 && tap.rightN === 1);
+    ok("ink: cut matches the visible eraser circle (not the old 2x band)", tap.gap >= 12 && tap.gap <= 32);
+    ok("ink: both stroke ends survive the cut", tap.leftMin <= tap.cx - 150 && tap.rightMax >= tap.cx + 150);
+
+    // 4b-3) Undo restores the whole stroke, redo re-applies the cut.
+    const ur = await execute(win, () => {
+      const cmds = window.__spatia.commands;
+      cmds.undo();
+      const afterUndo = window.__spatiaQA.pens().length;
+      cmds.redo();
+      const afterRedo = window.__spatiaQA.pens().length;
+      return { afterUndo, afterRedo };
+    });
+    ok("ink: undo restores the single stroke", ur.afterUndo === 1);
+    ok("ink: redo re-applies the erase cut", ur.afterRedo === 2);
+
+    // 4b-4) A parallel stroke 16px away must survive a 20px eraser tap. With
+    // the old double-radius code (radius 21.5px) it would have been wiped.
+    const near = await execute(win, async () => {
+      const app = window.__spatia;
+      const eng = app.engine;
+      await window.__spatiaQA.resetInk();
+      eng.setPenTool(true);
+      eng.setPenToolMode("pen");
+      eng.setPenSettings({ width: 3 });
+      const r = eng.canvas().getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      window.__spatiaQA.sendStroke({ x: cx - 160, y: cy }, { x: cx + 160, y: cy }, { type: "mouse", steps: 40 });
+      window.__spatiaQA.sendStroke({ x: cx - 160, y: cy - 16 }, { x: cx + 160, y: cy - 16 }, { type: "mouse", steps: 40 });
+      const pens = window.__spatiaQA.pens();
+      let b = null;
+      for (const p of pens) {
+        if (Math.abs(window.__spatiaQA.screenY(p.points[0].y) - (cy - 16)) < 8) { b = p; break; }
+      }
+      const bId = b ? b.id : null;
+      const bN = b ? b.points.length : 0;
+      eng.setPenSettings({ eraserRadius: 20 });
+      eng.setPenToolMode("eraser");
+      window.__spatiaQA.sendStroke({ x: cx, y: cy }, { x: cx, y: cy }, { type: "mouse", steps: 1 });
+      const after = window.__spatiaQA.pens();
+      const bAfter = after.find((p) => p.id === bId);
+      return {
+        before: pens.length,
+        after: after.length,
+        aFrags: after.filter((p) => p.id !== bId).length,
+        bIntact: !!bAfter && bAfter.points.length === bN,
+      };
+    });
+    ok("ink: eraser cuts only the touched stroke (2 fragments)", near.aFrags === 2);
+    ok("ink: parallel stroke 16px away survives the 20px eraser", near.after === 3 && near.bIntact);
+
+    // 4b-5) Stylus pressure is inked per-vertex with the 0.25x..1.3x taper.
+    const press = await execute(win, async () => {
+      const app = window.__spatia;
+      const eng = app.engine;
+      await window.__spatiaQA.resetInk();
+      eng.setPenTool(true);
+      eng.setPenToolMode("pen");
+      eng.setPenSettings({ width: 8, pressure: true });
+      const r = eng.canvas().getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      window.__spatiaQA.sendStroke(
+        { x: cx - 160, y: cy - 40 },
+        { x: cx + 160, y: cy - 40 },
+        { type: "pen", steps: 40, p0: 0.1, p1: 1.0 }
+      );
+      const s = window.__spatiaQA.pens()[0];
+      return {
+        count: window.__spatiaQA.pens().length,
+        points: s ? s.points.length : 0,
+        sw: s ? s.strokeWidth : -1,
+        widths: s ? s.points.filter((p) => p.width !== undefined).length : 0,
+        firstW: s && s.points[0] ? s.points[0].width : undefined,
+        lastW: s && s.points.length ? s.points[s.points.length - 1].width : undefined,
+      };
+    });
+    ok("ink: stylus pressure inked per-vertex", press.count === 1 && press.points >= 4 && press.widths === press.points);
+    ok("ink: light press starts thin (~2.8px @ pressure 0.1)", press.firstW > 1 && press.firstW < 4);
+    ok("ink: heavy press finishes full (~10.4px @ pressure 1.0)", press.lastW > 9 && press.lastW < 11);
+    ok("ink: stroke width setting honored", press.sw === 8);
+
+    // Leave an empty project + pen off so the mobile layer starts from the
+    // same clean state as the pre-mobile reset above.
+    const cleanedInk = await execute(win, async () => {
+      const app = window.__spatia;
+      app.engine.setPenTool(false);
+      app.commands.clear();
+      app.commands.markSaved();
+      await app.newProject();
+      return window.__spatiaQA.pens().length === 0;
+    });
+    ok("ink: suite cleans up to an empty project", cleanedInk);
+
     // The broken-plugin sandbox raises errors in its iframe; those must not
     // count against the global console-error check at the end of the run.
     errors.length = 0;
@@ -801,6 +1019,61 @@ api.addCommand({
     ok("mobile: undo disabled while no history", mob.undoDisabled);
     ok("mobile: no splash after boot", mob.splashGone);
     ok("mobile: site chrome links hidden", mob.chromeHidden);
+
+    // ---- 5a0) Touch really inks on the phone shell --------------------------
+    // Dispatched on the canvas element, through the mobile layer's own touch
+    // handlers, so a finger draw exercises the shared engine exactly like a
+    // downloaded iPhone build would.
+    await execute(win, () => {
+      document.querySelector('[data-bar="pen"]').click();
+      return true;
+    });
+    await sleep(150);
+    const mpen = await execute(win, () => ({
+      active: window.__spatia.engine.isPenTool(),
+      tabOn: document.querySelector('[data-bar="pen"]').classList.contains("mb-active"),
+    }));
+    ok("mobile: pen tab arms the shared pen tool", mpen.active && mpen.tabOn);
+    const mbaseline = await execute(win, () => ({
+      pens: window.__spatia.project.getObjects().filter((o) => o.type === "pen").length,
+      recentPen: window.__spatia.engine.recentPenActivity(),
+    }));
+    // A real finger draw never lands within the stylus palm-rejection window:
+    // the engine suppresses touches for 700ms after pen contact. Wait it out
+    // so this simulates an ordinary user touch, not a resting palm.
+    await sleep(850);
+    await execute(win, () => {
+      const c = window.__spatia.engine.canvas();
+      const r = c.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const base = { bubbles: true, cancelable: true, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, pressure: 0.5 };
+      const fire = (t, x, y) => c.dispatchEvent(new PointerEvent(t, Object.assign({ pointerId: 1, clientX: x, clientY: y }, base)));
+      fire("pointerdown", cx - 80, cy);
+      for (let i = 1; i <= 10; i++) fire("pointermove", cx - 80 + 160 * (i / 10), cy);
+      fire("pointerup", cx + 80, cy);
+      return true;
+    });
+    await sleep(120);
+    const mdraw = await execute(win, () => ({
+      pens: window.__spatia.project.getObjects().filter((o) => o.type === "pen").length,
+    }));
+    if (mdraw.pens !== mbaseline.pens + 1) {
+      process.stdout.write(`  [diag] mobile draw: baseline=${mbaseline.pens} recentPen=${mbaseline.recentPen} after=${mdraw.pens}\n`);
+    }
+    ok("mobile: a finger draw commits a real stroke", mdraw.pens === mbaseline.pens + 1);
+    // Revert so the suite's own mobile flows see the boot-like empty canvas.
+    await execute(win, () => {
+      window.__spatia.commands.undo();
+      document.querySelector('[data-bar="select"]').click();
+      return true;
+    });
+    await sleep(100);
+    const mrest = await execute(win, () => ({
+      pens: window.__spatia.project.getObjects().filter((o) => o.type === "pen").length,
+      penOff: !window.__spatia.engine.isPenTool(),
+    }));
+    ok("mobile: draw cleaned up, select restored", mrest.pens === mbaseline.pens && mrest.penOff);
 
     // open the Menu sheet and confirm it renders with sections
     await execute(win, () => { document.querySelector('[data-bar="menu"]').click(); });
@@ -1254,6 +1527,52 @@ api.addCommand({
       dockVisible: getComputedStyle(document.getElementById("tb-dock")).display !== "none",
     }));
     ok("tablet: stage-manager resize keeps tablet UI", resized.tbActive && resized.topbar && resized.dockVisible);
+
+    // ---- 5f0) Apple Pencil really inks on the iPad shell --------------------
+    // A stylus (pointerType "pen") stroke must draw through the tablet layer's
+    // canvas handlers — this is the drawing path a real Apple Pencil uses while
+    // a finger still pans.
+    await execute(win, () => {
+      document.querySelector('#tb-dock [data-tool="pen"]').click();
+      return true;
+    });
+    await sleep(150);
+    const tpen = await execute(win, () => ({ active: window.__spatia.engine.isPenTool() }));
+    ok("tablet: dock pen tool arms the shared pen engine", tpen.active);
+    await execute(win, () => {
+      const c = window.__spatia.engine.canvas();
+      const r = c.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const base = { bubbles: true, cancelable: true, pointerType: "pen", isPrimary: true, button: 0, buttons: 1 };
+      const fire = (t, x, y, p) => c.dispatchEvent(new PointerEvent(t, Object.assign({ pointerId: 2, clientX: x, clientY: y, pressure: p }, base)));
+      fire("pointerdown", cx - 90, cy - 40, 0.2);
+      for (let i = 1; i <= 12; i++) fire("pointermove", cx - 90 + 180 * (i / 12), cy - 40, 0.2 + 0.75 * (i / 12));
+      fire("pointerup", cx + 90, cy - 40, 0);
+      return true;
+    });
+    await sleep(150);
+    const tdraw = await execute(win, () => {
+      const pens = window.__spatia.project.getObjects().filter((o) => o.type === "pen");
+      const s = pens[0];
+      return {
+        pens: pens.length,
+        points: s ? s.points.length : 0,
+        widths: s ? s.points.filter((p) => p.width !== undefined).length : 0,
+        firstW: s && s.points[0] ? s.points[0].width : undefined,
+        lastW: s && s.points.length ? s.points[s.points.length - 1].width : undefined,
+      };
+    });
+    ok("tablet: Apple Pencil stroke draws a pen object", tdraw.pens === 1 && tdraw.points >= 4);
+    ok("tablet: stylus pressure inked per-vertex", tdraw.widths === tdraw.points && tdraw.firstW < tdraw.lastW);
+    // Restore the select tool for the suite's own tablet cleanup.
+    await execute(win, () => {
+      document.querySelector('#tb-dock [data-tool="select"]').click();
+      return true;
+    });
+    await sleep(100);
+    const trest = await execute(win, () => ({ penOff: !window.__spatia.engine.isPenTool() }));
+    ok("tablet: select tool restored after pencil test", trest.penOff);
 
     // ---- 5g) Phone regression (forced) ---------------------------------------
     // The tablet layer is document-lifetime, so leave the workspace first,

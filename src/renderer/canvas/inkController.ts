@@ -55,11 +55,17 @@ export interface InkSettings {
    * the live stroke toward the current tip so jitter lags out of the line.
    */
   stabilizer: "off" | "mild" | "strong";
-  /** Ingest stylus pressure as per-vertex stroke width. */
+  /** Ingest stylus pressure as per-vertex stroke width. On by default so a
+   *  stylus / Apple Pencil draws a natural tapered streak immediately; mouse
+   *  and finger input have no pressure so they stay uniform. */
   pressure: boolean;
   /** What the eraser does: split partial segments, or delete whole strokes. */
   eraserMode: "partial" | "stroke";
-  /** Eraser size (diameter) in screen pixels. */
+  /**
+   * Eraser size in screen pixels. `eraserRadius` is the DIAMETER of the visible
+   * guide circle (the guides draw a circle of radius `eraserRadius / 2`), so all
+   * erasure math must use half of it as the disc radius.
+   */
   eraserRadius: number;
 }
 
@@ -69,7 +75,7 @@ export const DEFAULT_INK_SETTINGS: InkSettings = {
   opacity: 1,
   smoothing: 1,
   stabilizer: "off",
-  pressure: false,
+  pressure: true,
   eraserMode: "partial",
   eraserRadius: 18,
 };
@@ -290,8 +296,9 @@ export class InkController {
 
   private pressureWidth(pressure: number): number {
     const p = clamp01(pressure);
-    // 0.35x..1.2x of the base width gives a natural light/dark pen taper.
-    return this.baseWidth * (0.35 + 0.85 * p);
+    // 0.25x..1.3x of the base width gives a physical-pencil taper: light taps
+    // leave thin faint streaks, firm presses widen the stroke.
+    return this.baseWidth * (0.25 + 1.05 * p);
   }
 
   private buildStroke(
@@ -324,13 +331,18 @@ export class InkController {
 
   private eraseWith(pen: PenObject, path: Point[]): WorldPoint[][] {
     const zoom = this.hooks.getFrame().zoom;
-    const radius = this.eraserRadius / zoom + (pen.strokeWidth || 3) / 2;
+    // Eraser disc radius: HALF the configured diameter (the guide circles draw
+    // radius `eraserRadius / 2`), converted to world units, plus the stroke's
+    // own half width so the eraser removes exactly the painted pixels its
+    // visible circle overlaps. Previously the full diameter was used as the
+    // radius, which doubled the affected area beyond the visible cursor.
+    const radius = this.eraserRadius / 2 / zoom + (pen.strokeWidth || 3) / 2;
     return eraseStroke(pen.points, path, radius);
   }
 
   private strokeTouched(path: Point[], pen: PenObject): boolean {
     const zoom = this.hooks.getFrame().zoom;
-    const radius = this.eraserRadius / zoom + (pen.strokeWidth || 3) / 2;
+    const radius = this.eraserRadius / 2 / zoom + (pen.strokeWidth || 3) / 2;
     for (const p of pen.points) {
       if (distPointToPolyline(p, path, radius) <= radius) return true;
     }

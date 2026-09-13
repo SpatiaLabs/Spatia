@@ -91,6 +91,121 @@ test("eraseStroke bridges a fast sweep across a vertex", () => {
   assert.equal(frags.length, 2);
 });
 
+test("eraser: small sweep removes only the touched middle, never the whole stroke", () => {
+  const stroke: WorldPoint[] = [];
+  for (let i = 0; i <= 100; i++) stroke.push(pt(i * 2, 0)); // 0..200
+  // Tiny wiggle just below the middle of the line ("a small movement").
+  const frags = eraseStroke(stroke, [pt(98, 4), pt(100, 5)], 6);
+  assert.equal(frags.length, 2, "a small sweep must split, not wipe, the stroke");
+  const left = frags[0];
+  const right = frags[1];
+  assert.ok(left[0].x <= 4, "the stroke start must survive");
+  assert.ok(right[right.length - 1].x >= 196, "the stroke end must survive");
+  assert.ok(left[left.length - 1].x <= 96, "the left cut must stay at the touch point");
+  assert.ok(right[0].x >= 104, "the right cut must stay at the touch point");
+});
+
+test("eraser: middle pass leaves both far ends intact", () => {
+  const stroke: WorldPoint[] = [];
+  for (let i = 0; i <= 40; i++) stroke.push(pt(i * 2, 0)); // 0..80
+  const frags = eraseStroke(stroke, [pt(39, -5), pt(40, 5)], 2);
+  assert.equal(frags.length, 2);
+  assert.equal(frags[0][0].x, 0);
+  assert.equal(frags[1][frags[1].length - 1].x, 80);
+});
+
+test("eraser: near-edge pass clips only the touched tail", () => {
+  const stroke: WorldPoint[] = [];
+  for (let i = 0; i <= 20; i++) stroke.push(pt(i * 2, 0)); // 0..40
+  const frags = eraseStroke(stroke, [pt(38, 0)], 2.5);
+  assert.equal(frags.length, 1, "only the touched side survives");
+  assert.equal(frags[0].length, 18, "0..34 must survive, 36..40 must be removed");
+  assert.equal(frags[0][frags[0].length - 1].x, 34);
+});
+
+test("eraser: two nearby strokes — erasing one leaves the other intact", () => {
+  const make = (y: number): WorldPoint[] => {
+    const s: WorldPoint[] = [];
+    for (let i = 0; i <= 20; i++) s.push(pt(i * 2, y));
+    return s;
+  };
+  const strokeA = make(0);
+  const strokeB = make(12);
+  const eraser = [pt(19, -5), pt(21, 5)];
+  const fragsA = eraseStroke(strokeA, eraser, 5);
+  const fragsB = eraseStroke(strokeB, eraser, 5);
+  assert.equal(fragsA.length, 2, "the nearer stroke must split");
+  assert.deepEqual(fragsB, [strokeB], "the nearby stroke must stay untouched");
+});
+
+test("eraser: multiple strokes each split only where the sweep crosses", () => {
+  const mk = (y: number): WorldPoint[] => {
+    const s: WorldPoint[] = [];
+    for (let i = 0; i <= 20; i++) s.push(pt(i * 2, y));
+    return s;
+  };
+  const rows = [mk(0), mk(10), mk(20)];
+  const eraser = [pt(20, -5), pt(20, 25)];
+  for (const s of rows) {
+    const frags = eraseStroke(s, eraser, 3);
+    assert.equal(frags.length, 2, "each swept stroke splits");
+    assert.ok(frags[0].every((p) => p.x <= 20), "left part stays left");
+    assert.ok(frags[1].every((p) => p.x >= 20), "right part stays right");
+  }
+});
+
+test("eraser: fast sweep severs a sparse stroke without wiping it", () => {
+  const stroke = [pt(0, 0), pt(50, 0), pt(100, 0), pt(150, 0), pt(200, 0)];
+  const frags = eraseStroke(stroke, [pt(49, 3), pt(51, 5)], 4.1);
+  assert.equal(frags.length, 2);
+  assert.deepEqual(frags[0], [pt(0, 0)]);
+  assert.deepEqual(frags[1], [pt(100, 0), pt(150, 0), pt(200, 0)]);
+});
+
+test("eraser: slow precise sweep removes exactly the covered band", () => {
+  const stroke: WorldPoint[] = [];
+  for (let i = 0; i <= 40; i++) stroke.push(pt(i, 0)); // 0..40 every 1
+  const frags = eraseStroke(stroke, [pt(20, -1), pt(20, 1)], 1);
+  assert.equal(frags.length, 2);
+  assert.equal(frags[0][frags[0].length - 1].x, 18);
+  assert.equal(frags[1][0].x, 22);
+});
+
+test("eraser: zoom scaling — the same screen eraser removes less world at higher zoom", () => {
+  const stroke: WorldPoint[] = [];
+  for (let i = 0; i <= 40; i++) stroke.push(pt(i, 0));
+  const eraser = [pt(20, -1), pt(20, 1)];
+  const at1x = eraseStroke(stroke, eraser, 2); // zoom 1: world radius 2
+  const at2x = eraseStroke(stroke, eraser, 1); // zoom 2: half the world radius
+  const removed1x = stroke.length - at1x.reduce((n, f) => n + f.length, 0);
+  const removed2x = stroke.length - at2x.reduce((n, f) => n + f.length, 0);
+  assert.ok(removed1x > removed2x, "2x zoom must remove less world geometry");
+  assert.equal(at1x[1][0].x, 23);
+  assert.equal(at2x[1][0].x, 22);
+});
+
+test("eraser: negative world coordinates behave identically", () => {
+  const stroke: WorldPoint[] = [];
+  for (let i = 0; i <= 20; i++) stroke.push(pt(-64 + i * 2, -10)); // -64..-24
+  const frags = eraseStroke(stroke, [pt(-43, -15), pt(-45, -5)], 2);
+  assert.equal(frags.length, 2);
+  assert.equal(frags[0][0].x, -64);
+  assert.equal(frags[1][frags[1].length - 1].x, -24);
+});
+
+test("eraser: panned-view coordinates behave identically (translation invariance)", () => {
+  const mk = (ox: number): WorldPoint[] => {
+    const s: WorldPoint[] = [];
+    for (let i = 0; i <= 20; i++) s.push(pt(ox + i * 2, 0));
+    return s;
+  };
+  const atOrigin = eraseStroke(mk(0), [pt(19, -5), pt(20, 5)], 2);
+  const panned = eraseStroke(mk(500), [pt(519, -5), pt(520, 5)], 2);
+  assert.equal(panned.length, atOrigin.length);
+  assert.equal(panned[0][0].x - atOrigin[0][0].x, 500);
+  assert.equal(panned[1][panned[1].length - 1].x - atOrigin[1][atOrigin[1].length - 1].x, 500);
+});
+
 test("distPointToPolyline dedupes cheaply", () => {
   const seg = [pt(0, 0), pt(10, 0)];
   assert.ok(distPointToPolyline({ x: 5, y: 3 }, seg, 3) <= 3);
