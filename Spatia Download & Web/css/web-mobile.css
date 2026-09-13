@@ -394,6 +394,56 @@ html.mb-active .spatia-context-menu {
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
+.mb-pen-collapse {
+  color: var(--mb-text-dim);
+  border-left: 1px solid var(--mb-border);
+}
+
+/* Floating chip that reopens the collapsed pen bar. Sits exactly where the
+   bar did so the canvas never shifts when it appears. */
+#mb-props-chip {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  bottom: calc(env(safe-area-inset-bottom) + 66px);
+  z-index: 96;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--mb-border);
+  border-radius: 999px;
+  background: rgba(20, 22, 26, 0.92);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  color: var(--mb-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  animation: mb-sheet-up 0.28s var(--mb-ease) both;
+}
+
+#mb-props-chip[hidden] {
+  display: none !important;
+}
+
+#mb-props-dot {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--mb-accent);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+#mb-props-chip svg {
+  width: 16px;
+  height: 16px;
+  color: var(--mb-text-dim);
+}
+
 .mb-pen-btn {
   width: 40px;
   height: 40px;
@@ -979,6 +1029,10 @@ html.mb-active .spatia-text-editor {
     bottom: calc(env(safe-area-inset-bottom) + 58px);
     left: 50%;
     right: auto;
+  }
+
+  #mb-props-chip {
+    bottom: calc(env(safe-area-inset-bottom) + 58px);
   }
 
   #mb-zoom {

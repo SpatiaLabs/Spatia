@@ -51,6 +51,7 @@ export class TabletUI {
   private morePanel!: HTMLElement;
   private moreBody!: HTMLElement;
   private scrim!: HTMLElement;
+  private resizer!: HTMLElement;
   private zoomLabel!: HTMLElement;
   private pentools!: HTMLElement;
   private ptEraserBtn!: HTMLButtonElement;
@@ -59,6 +60,8 @@ export class TabletUI {
   private ptColorChip!: HTMLElement;
   private ptUndoBtn!: HTMLButtonElement;
   private ptRedoBtn!: HTMLButtonElement;
+  private resizerDrag: { id: number; startX: number; startWidth: number } | null = null;
+  private inspectorObs: MutationObserver | null = null;
 
   constructor(app: App) {
     // App fields are TypeScript-private but exist at runtime; the layers that
@@ -83,6 +86,7 @@ export class TabletUI {
     this.app.commands.changed.subscribe(() => this.refresh());
     this.app.project.changed.subscribe(() => this.refresh());
     this.app.viewport.changed.subscribe(() => this.updateZoom());
+    this.initInspectorResizer();
     this.refresh();
   }
 
@@ -105,6 +109,7 @@ export class TabletUI {
       return el as T;
     };
     this.root = q("tb-ui");
+    this.resizer = q("tb-resizer");
     this.topTitle = q("tb-title-name");
     this.savedDot = q("tb-saved-dot");
     this.undoBtn = q("tb-undo");
@@ -409,6 +414,7 @@ export class TabletUI {
     this.renderPopups(el);
     el.hidden = false;
     this.scrim.hidden = false;
+    this.updateInspectorResizer();
   }
 
   openPop(key: string): void {
@@ -430,6 +436,7 @@ export class TabletUI {
       el.hidden = true;
     }
     this.scrim.hidden = true;
+    this.updateInspectorResizer();
   }
 
   /** Render lazily so popovers always reflect the current state. */
@@ -470,6 +477,113 @@ export class TabletUI {
     }
   }
 
+  // ------------------------------------------------------- inspector resizer
+
+  /**
+   * The right-side Properties sheet is genuinely resizable on iPad: a vertical
+   * divider at its left edge drags the panel wider/narrower, clamped and
+   * remembered for the session. It sits on the canvas side of the boundary,
+   * so a drag here never steals touches from the pane content or the canvas.
+   */
+  private initInspectorResizer(): void {
+    const stored = this.loadInspectorWidth();
+    if (stored !== null) {
+      const inspector = document.getElementById("inspector");
+      if (inspector) {
+        const w = Math.round(Math.min(this.inspectorMax(), Math.max(INSPECTOR_MIN_W, stored)));
+        inspector.style.width = `${w}px`;
+      }
+    }
+    this.resizer.addEventListener("pointerdown", this.onResizerDown);
+    this.resizer.addEventListener("pointermove", this.onResizerMove);
+    this.resizer.addEventListener("pointerup", this.onResizerUp);
+    this.resizer.addEventListener("pointercancel", this.onResizerUp);
+    const inspector = document.getElementById("inspector");
+    if (inspector) {
+      this.inspectorObs = new MutationObserver(() => this.updateInspectorResizer());
+      this.inspectorObs.observe(inspector, { attributes: true, attributeFilter: ["class"] });
+    }
+    this.updateInspectorResizer();
+  }
+
+  private inspectorMax(): number {
+    return Math.min(640, window.innerWidth * 0.62);
+  }
+
+  private onResizerDown = (e: PointerEvent): void => {
+    if (e.button !== 0 && e.buttons !== 1) return;
+    const inspector = document.getElementById("inspector");
+    if (!inspector) return;
+    e.stopPropagation();
+    e.preventDefault();
+    this.resizerDrag = { id: e.pointerId, startX: e.clientX, startWidth: inspector.getBoundingClientRect().width };
+    try {
+      this.resizer.setPointerCapture(e.pointerId);
+    } catch {
+      // Synthetic dispatch (tests) has no active pointer — fine.
+    }
+  };
+
+  private onResizerMove = (e: PointerEvent): void => {
+    const drag = this.resizerDrag;
+    if (!drag || e.pointerId !== drag.id) return;
+    const w = Math.round(Math.min(this.inspectorMax(), Math.max(INSPECTOR_MIN_W, drag.startWidth - (e.clientX - drag.startX))));
+    this.applyInspectorWidth(w);
+  };
+
+  private onResizerUp = (e: PointerEvent): void => {
+    const drag = this.resizerDrag;
+    if (!drag || e.pointerId !== drag.id) return;
+    this.resizerDrag = null;
+    try {
+      this.resizer.releasePointerCapture(e.pointerId);
+    } catch {
+      // Not captured (never captured / already released) — fine.
+    }
+    const inspector = document.getElementById("inspector");
+    if (!inspector) return;
+    this.saveInspectorWidth(inspector.getBoundingClientRect().width);
+  };
+
+  private applyInspectorWidth(w: number): void {
+    const inspector = document.getElementById("inspector");
+    if (!inspector) return;
+    inspector.style.width = `${w}px`;
+    this.updateInspectorResizer();
+  }
+
+  private updateInspectorResizer(): void {
+    const inspector = document.getElementById("inspector");
+    if (!inspector) {
+      this.resizer.hidden = true;
+      return;
+    }
+    const usable = inspector.classList.contains("open") && !inspector.classList.contains("minimized") && this.scrim.hidden;
+    this.resizer.hidden = !usable;
+    if (usable) {
+      this.resizer.style.right = `${Math.round(inspector.getBoundingClientRect().width)}px`;
+    }
+  }
+
+  private loadInspectorWidth(): number | null {
+    try {
+      const v = localStorage.getItem(INSPECTOR_W_KEY);
+      const n = v === null ? NaN : Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+    } catch {
+      /* storage unavailable */
+    }
+    return null;
+  }
+
+  private saveInspectorWidth(w: number): void {
+    try {
+      localStorage.setItem(INSPECTOR_W_KEY, String(Math.round(w)));
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
   // ----------------------------------------------------------- events
 
   private wire(): void {
@@ -500,6 +614,7 @@ export class TabletUI {
     // Stage-manager style width changes never drop out of tablet mode when the
     // device itself is a tablet; no remount required. Keep live UI in sync.
     this.closePops();
+    this.updateInspectorResizer();
   };
 
   private onKeyDown = (e: KeyboardEvent): void => {
@@ -1128,6 +1243,11 @@ const PALETTE = [
   "#adb5bd",
 ];
 
+/** Narrowest the iPad Properties sheet may be dragged. */
+const INSPECTOR_MIN_W = 260;
+/** localStorage key remembering the dragged sheet width. */
+const INSPECTOR_W_KEY = "spatia.tb.inspectorWidth";
+
 const ROTATES = [-90, -15, 15, 90, 0];
 
 // ---------------------------------------------------------------- icons
@@ -1212,6 +1332,7 @@ function paneHtml(def: PaneDef): string {
 const SHELL_HTML = `
 <div id="tb-ui" class="tb-ui">
   <div id="tb-scrim" class="tb-scrim" hidden aria-hidden="true"></div>
+  <div id="tb-resizer" class="tb-resizer" hidden aria-hidden="true"></div>
 
   <header id="tb-topbar" role="banner">
     <button id="tb-title" class="tb-top-btn tb-title" data-tb="title" type="button" aria-label="Open projects">

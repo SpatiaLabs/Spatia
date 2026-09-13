@@ -1062,6 +1062,26 @@ api.addCommand({
       process.stdout.write(`  [diag] mobile draw: baseline=${mbaseline.pens} recentPen=${mbaseline.recentPen} after=${mdraw.pens}\n`);
     }
     ok("mobile: a finger draw commits a real stroke", mdraw.pens === mbaseline.pens + 1);
+
+    // Collapse the floating pen bar with its chevron, then reopen it via the
+    // floating chip that appears in its place — the bar must be fully usable
+    // for a second stroke after reopening.
+    const mbar = await execute(win, () => {
+      const penbar = document.getElementById("mb-penbar");
+      const chip = document.getElementById("mb-props-chip");
+      const collapseBtn = penbar.querySelector('[data-pen="collapse"]');
+      const beforeOpen = !penbar.classList.contains("mb-collapsed");
+      collapseBtn.click();
+      const collapsed = penbar.classList.contains("mb-collapsed");
+      const chipShown = !!chip && !chip.hidden;
+      chip.click();
+      const reopened = !penbar.classList.contains("mb-collapsed");
+      const chipGone = !!chip && chip.hidden;
+      return { beforeOpen, collapsed, chipShown, reopened, chipGone };
+    });
+    ok("mobile: pen bar collapses via its chevron", mbar.beforeOpen && mbar.collapsed);
+    ok("mobile: floating chip reopens the bar", mbar.chipShown && mbar.reopened && mbar.chipGone);
+
     // Revert so the suite's own mobile flows see the boot-like empty canvas.
     await execute(win, () => {
       window.__spatia.commands.undo();
@@ -1573,6 +1593,77 @@ api.addCommand({
     await sleep(100);
     const trest = await execute(win, () => ({ penOff: !window.__spatia.engine.isPenTool() }));
     ok("tablet: select tool restored after pencil test", trest.penOff);
+
+    // ---- 5f1) iPad Properties sheet is genuinely resizable -------------------
+    // Select an object so the Properties sheet opens, then drag the divider at
+    // its left edge: the sheet must widen and the canvas must not pan.
+    await execute(win, () => {
+      try { localStorage.removeItem("spatia.tb.inspectorWidth"); } catch { /* ignore */ }
+      document.querySelector('#tb-dock [data-tool="note"]').click();
+      window.__spatia.selection.setIds([]);
+      return true;
+    });
+    // Sleep past the 700ms palm-rejection window (a stylus touched the canvas
+    // moments ago), otherwise the finger tap would be silently ignored.
+    await sleep(1000);
+    await execute(win, () => {
+      const app = window.__spatia;
+      const engine = app.engine;
+      const frame = engine.getFrame();
+      const r = engine.canvas().getBoundingClientRect();
+      const n = app.project.getObjects().find((o) => o.type === "note");
+      const px = (n.x + n.width / 2 - frame.cameraX) * frame.zoom;
+      const py = (n.y + n.height / 2 - frame.cameraY) * frame.zoom;
+      const canvas = engine.canvas();
+      const base = { bubbles: true, pointerType: "touch", isPrimary: true };
+      const ev = (type, id) => canvas.dispatchEvent(new PointerEvent(type, Object.assign({ pointerId: id, clientX: r.left + px, clientY: r.top + py }, base)));
+      ev("pointerdown", 13);
+      ev("pointerup", 13);
+      return true;
+    });
+    await sleep(250);
+    const sheetOpen = await execute(win, () => {
+      const i = document.getElementById("inspector");
+      const rz = document.getElementById("tb-resizer");
+      return {
+        open: !!i && i.classList.contains("open") && !i.classList.contains("minimized"),
+        resizerOn: !!rz && !rz.hidden && getComputedStyle(rz).display !== "none",
+      };
+    });
+    ok("tablet: selecting an object opens the Properties sheet", sheetOpen.open);
+    ok("tablet: resizable divider rides the sheet's left edge", sheetOpen.resizerOn);
+
+    const resz = await execute(win, () => {
+      const i = document.getElementById("inspector");
+      const rz = document.getElementById("tb-resizer");
+      const f = window.__spatia.engine.getFrame();
+      const before = i.getBoundingClientRect().width;
+      const rb = rz.getBoundingClientRect();
+      const x = rb.left + rb.width / 2;
+      const y = Math.min(rb.top + rb.height / 2, 600);
+      const fire = (t, cx) =>
+        rz.dispatchEvent(
+          new PointerEvent(t, { bubbles: true, cancelable: true, pointerType: "mouse", isPrimary: true, button: 0, buttons: t === "pointerup" ? 0 : 1, pointerId: 77, clientX: cx, clientY: y })
+        );
+      fire("pointerdown", x);
+      fire("pointermove", x - 90);
+      fire("pointerup", x - 90);
+      const after = i.getBoundingClientRect().width;
+      const f2 = window.__spatia.engine.getFrame();
+      return {
+        before,
+        after,
+        camera: { x: f.cameraX, y: f.cameraY, zoom: f.zoom },
+        cameraAfter: { x: f2.cameraX, y: f2.cameraY, zoom: f2.zoom },
+        stored: ((localStorage.getItem("spatia.tb.inspectorWidth") || "").trim()),
+      };
+    });
+    ok("tablet: dragging the divider widens the Properties sheet", resz.after > resz.before);
+    ok(
+      "tablet: sheet resize does not pan the canvas",
+      resz.camera.x === resz.cameraAfter.x && resz.camera.y === resz.cameraAfter.y && resz.camera.zoom === resz.cameraAfter.zoom
+    );
+    ok("tablet: dragged width is remembered for the session", /^[0-9]+$/.test(resz.stored) && Number(resz.stored) === Math.round(resz.after));
 
     // ---- 5g) Phone regression (forced) ---------------------------------------
     // The tablet layer is document-lifetime, so leave the workspace first,

@@ -113,6 +113,32 @@ export function smoothStroke(points: readonly WorldPoint[], iterations: number):
   return pts;
 }
 
+/**
+ * Rubber-band stabilizer: roll the final `lag` raw samples into a single
+ * trailing-average tip. The stroke trails the pen by a handful of samples, so
+ * micro-jitter at the tip (the part the eye watches) lags out of the line
+ * while the captured geometry before the tail is untouched. The resolved tip
+ * keeps the per-vertex width of the last sample so pressure strokes stay
+ * tapered. `lag` <= 0 (or longer than the whole stroke) returns the points
+ * unchanged — stabilizer off must reproduce the input exactly.
+ */
+export function stabilizeStroke(points: readonly WorldPoint[], lag: number): WorldPoint[] {
+  const n = points.length;
+  if (lag <= 0 || n <= lag + 1) return points as WorldPoint[];
+  const out: WorldPoint[] = points.slice(0, n - lag) as WorldPoint[];
+  let sx = 0;
+  let sy = 0;
+  for (let i = n - lag; i < n; i++) {
+    sx += points[i].x;
+    sy += points[i].y;
+  }
+  const last = points[n - 1];
+  const tip: WorldPoint = { x: sx / lag, y: sy / lag };
+  if (last.width !== undefined) tip.width = last.width;
+  out.push(tip);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Bounding boxes / translation
 

@@ -186,6 +186,22 @@ if (e.key === CONTROL_KEY) {
     return e.pressure > 0 ? e.pressure : undefined;
   }
 
+  /**
+   * Hold explicit pointer capture while a pen stroke is active. Implicit
+   * capture usually covers a held button, but some pen drivers drop moves the
+   * instant the tip orbits the canvas edge; explicit capture keeps the stroke
+   * routed to the canvas and only ends on release / lostpointercapture.
+   */
+  private captureActivePointer(e: PointerEvent): void {
+    const el = this.host.canvas();
+    if (typeof el.setPointerCapture !== "function") return;
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      // Synthetic dispatch (tests) or a pointer already released — fine.
+    }
+  }
+
   private handlePrimaryDown(p: Point, e: PointerEvent): void {
     this.start = p;
     this.last = p;
@@ -202,6 +218,7 @@ if (e.key === CONTROL_KEY) {
       }
       this.mode = "pen";
       this.host.startPenStroke(p, this.penPressure(e));
+      this.captureActivePointer(e);
       return;
     }
 
@@ -338,10 +355,18 @@ if (e.key === CONTROL_KEY) {
     this.host.setEraserPreview(null);
   };
 
-  private onPointerUp = (_e: PointerEvent): void => {
+  private onPointerUp = (e: PointerEvent): void => {
     // A connection draft is keyboard-driven (Ctrl keyup finishes it); a pointer
     // release must not cancel or finish it.
     if (this.mode === "connect") return;
+    const el = this.host.canvas();
+    if (typeof el.releasePointerCapture === "function") {
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {
+        // Pointer was never captured (non-pen gestures) — safe to ignore.
+      }
+    }
     this.endActiveInteraction();
   };
 

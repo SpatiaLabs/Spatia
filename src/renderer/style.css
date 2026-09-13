@@ -2322,6 +2322,47 @@ html.tb-active #tb-scrim:not([hidden]) {
   touch-action: manipulation;
 }
 
+/* Vertical divider that resizes the right-side Properties sheet. Lives on the
+   canvas side of the pane edge (right == pane width), so grabbing it never
+   overlaps the pane contents; the hairline sits exactly on the boundary. */
+html.tb-active #tb-resizer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  right: min(360px, 92vw);
+  width: 22px;
+  z-index: 8;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: ew-resize;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.tb-active #tb-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 1px;
+  background: rgba(139, 145, 153, 0.28);
+  transition: background 0.12s ease, width 0.12s ease;
+}
+
+html.tb-active #tb-resizer:hover::before {
+  background: rgba(139, 145, 153, 0.8);
+}
+
+html.tb-active #tb-resizer:active::before {
+  background: var(--color-accent);
+  width: 2px;
+}
+
+html.tb-active #tb-resizer[hidden] {
+  display: none !important;
+}
+
 /* ---- Tool dock (floating, bottom-center) ---- */
 html.tb-active #tb-dock {
   position: fixed;

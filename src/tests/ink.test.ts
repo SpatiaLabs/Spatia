@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   eraseStroke,
   smoothStroke,
+  stabilizeStroke,
   cornerMask,
   resampleStroke,
   strokeBounds,
@@ -49,6 +50,28 @@ test("cornerMask flags sharp turns only", () => {
   const stroke = [pt(0, 0), pt(10, 0), pt(10, 1), pt(10, 9), pt(10, 10)];
   const mask = cornerMask(stroke, -0.55);
   assert.ok(mask.some((v, i) => v && i > 0 && i < stroke.length - 1), "sharp turn must be flagged");
+});
+
+test("stabilizeStroke resolves the tip to the trailing average", () => {
+  const raw = [pt(0, 0), pt(10, 0), pt(20, 0), pt(21, 0)];
+  const out = stabilizeStroke(raw, 2);
+  assert.equal(out.length, raw.length - 1, "tail collapses into one resolved tip");
+  assert.deepEqual(out[out.length - 1], { x: 20.5, y: 0 });
+  assert.deepEqual(out[0], { x: 0, y: 0 }, "stroke start is untouched");
+});
+
+test("stabilizeStroke keeps the last sample's width on the resolved tip", () => {
+  const raw = [pt(0, 0, 2), pt(10, 0, 4), pt(20, 0, 6), pt(21, 0, 8)];
+  const out = stabilizeStroke(raw, 2);
+  assert.equal(out[out.length - 1].width, 8);
+  assert.equal(out[out.length - 1].x, 20.5);
+});
+
+test("stabilizeStroke passthrough for noop lags", () => {
+  const raw = [pt(0, 0), pt(1, 0)];
+  assert.equal(stabilizeStroke(raw, 0), raw);
+  assert.equal(stabilizeStroke(raw, 2), raw);
+  assert.equal(stabilizeStroke(raw, 3), raw);
 });
 
 // ---------------------------------------------------------------------------

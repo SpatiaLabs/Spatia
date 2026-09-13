@@ -19,6 +19,7 @@ import type { PenObject, WorldPoint } from "../../shared/types/object.js";
 import {
   resampleStroke,
   smoothStroke,
+  stabilizeStroke,
   strokeBounds,
   translatePoints,
   eraseStroke,
@@ -97,6 +98,15 @@ function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
 }
 
+/**
+ * Low-pass factor for stylus pressure. Raw pen pressure is noisy (hundreds of
+ * levels, tiny bounces mid-stroke) and feeding it straight into the width
+ * makes strokes shimmer. An exponential moving average keeps the taper while
+ * stripping the per-vertex flicker; 0.35 tracks fast enough for live ramps and
+ * slow enough to read as steady ink.
+ */
+const PRESS_EMA = 0.35;
+
 function uid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return "obj_" + crypto.randomUUID();
@@ -121,6 +131,8 @@ export class InkController {
   private usePressure = DEFAULT_INK_SETTINGS.pressure;
   private eraserMode = DEFAULT_INK_SETTINGS.eraserMode;
   private eraserRadius = DEFAULT_INK_SETTINGS.eraserRadius;
+  /** Smoothed pressure-to-width state for the current stroke (see PRESS_EMA). */
+  private pressureEma = 0;
   /** Active pen-tool sub-mode, mirrored from the engine so the renderer can
    *  draw the right live preview (draft stroke vs. eraser sweep). */
   private toolMode: PenToolMode = "pen";
@@ -192,6 +204,7 @@ export class InkController {
 
   beginStroke(screen: Point, pressure?: number): void {
     this.raw = [];
+    this.pressureEma = 0;
     this.draftVersion++;
     this.strokeTo(screen, pressure);
   }
@@ -202,7 +215,12 @@ export class InkController {
     const minGrid = 0.5 / this.hooks.getFrame().zoom;
     if (last && Math.hypot(w.x - last.x, w.y - last.y) < minGrid) return;
     const usePressure = this.usePressure && pressure !== undefined && pressure > 0;
-    this.raw.push(usePressure ? { x: w.x, y: w.y, width: this.pressureWidth(pressure) } : { x: w.x, y: w.y });
+    if (usePressure) {
+      this.pressureEma = this.pressureEma === 0 ? pressure : this.pressureEma + PRESS_EMA * (pressure - this.pressureEma);
+    } else {
+      this.pressureEma = 0;
+    }
+    this.raw.push(usePressure ? { x: w.x, y: w.y, width: this.pressureWidth(this.pressureEma) } : { x: w.x, y: w.y });
     this.draftVersion++;
     // CRITICAL: redraw on every move so the stroke (or eraser sweep) is visible
     // WHILE drawing — not only after the pointer is released. requestRender is
@@ -279,7 +297,11 @@ export class InkController {
     if (raw.length < 2) return raw;
     const minDist = Math.max(0.3, 0.6 / this.hooks.getFrame().zoom);
     const hadWidth = raw.some((p) => p.width !== undefined);
-    const resampled = resampleStroke(raw, minDist);
+    // Rubber-band stabilizer: collapse the tail into one trailing-average tip
+    // so the stroke literally chases the pen. Applied before resampling so the
+    // committed stroke and the live draft render identically.
+    const stabilized = this.useStabilizer > 0 ? stabilizeStroke(raw, this.useStabilizer === 2 ? 6 : 3) : raw;
+    const resampled = resampleStroke(stabilized, minDist);
     // Pressure strokes carry their width per vertex and are rendered as-is
     // (smoothing would blur their character); uniform strokes get Chaikin.
     if (hadWidth) return resampled;
