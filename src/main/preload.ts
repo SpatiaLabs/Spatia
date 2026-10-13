@@ -86,6 +86,8 @@ export interface SpatiaApi {
   exportProject(projectId: string, json: string, suggestedName: string): Promise<ExportResult>;
   exportFile(kind: ExportFileKind, suggestedName: string, payload: string): Promise<ExportResult>;
   importProject(): Promise<ImportProjectResult>;
+  /** Pick a text/JSON/XML file and return its contents without opening it. */
+  pickImportText(title: string, extensions?: string[]): Promise<{ canceled: boolean; name: string; contents: string }>;
   pickAsset(projectId: string): Promise<AssetImportResult>;
   importAssetFromPath(projectId: string, sourcePath: string, sourceName?: string): Promise<AssetImportResult>;
   readAssetDataUrl(projectId: string, assetId: string): Promise<string | null>;
@@ -117,6 +119,8 @@ export interface SpatiaApi {
   pluginsSetEnabled(id: string, enabled: boolean): Promise<boolean>;
   pluginsRemove(id: string): Promise<boolean>;
   collabGetIdentity(): Promise<CollabIdentity>;
+  /** Start the local collaboration server (desktop). Returns started/reason. */
+  collabStartServer(port?: number): Promise<{ started: boolean; reason?: string }>;
   onJoinRequest(cb: (roomId: string) => void): () => void;
 }
 
@@ -205,6 +209,9 @@ const api: SpatiaApi = {
   importProject(): Promise<ImportProjectResult> {
     return ipcRenderer.invoke("project:import");
   },
+  pickImportText(title: string, extensions?: string[]): Promise<{ canceled: boolean; name: string; contents: string }> {
+    return ipcRenderer.invoke("import:text", title, extensions);
+  },
   pickAsset(projectId: string): Promise<AssetImportResult> {
     return ipcRenderer.invoke("asset:pick", projectId);
   },
@@ -256,6 +263,9 @@ const api: SpatiaApi = {
   },
   collabGetIdentity(): Promise<CollabIdentity> {
     return ipcRenderer.invoke("collab:getIdentity");
+  },
+  collabStartServer(port?: number): Promise<{ started: boolean; reason?: string }> {
+    return ipcRenderer.invoke("collab:startServer", port);
   },
   onJoinRequest(cb: (roomId: string) => void): () => void {
     const listener = (_event: Electron.IpcRendererEvent, roomId: string): void => cb(String(roomId));

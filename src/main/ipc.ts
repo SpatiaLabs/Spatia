@@ -5,6 +5,47 @@ import type { CollabIdentity } from "../renderer/types/bridge.js";
 import path from "node:path";
 import type { PluginEntry, PluginInstallResult, PluginSource } from "../shared/plugins/manifest.js";
 
+function addToOsRecent(filePath: string): void {
+  try {
+    if (process.platform === "win32") app.addRecentDocument(filePath);
+  } catch {
+    /* best-effort */
+  }
+}
+
+let collabServerChild: import("node:child_process").ChildProcess | null = null;
+
+/**
+ * Best-effort start of the bundled local collaboration server (a plain
+ * node/ws process). Used by the desktop app so "Share this project" works
+ * without the user running `npm run server` first. Only available when the
+ * `server/` folder ships with the app (always in the source/dev build).
+ */
+async function startCollabServer(port: number): Promise<{ started: boolean; reason?: string }> {
+  if (collabServerChild && !collabServerChild.killed) {
+    return { started: true, reason: "already-running" };
+  }
+  const fs = await import("node:fs");
+  const serverDir = path.join(app.getAppPath(), "server");
+  if (!fs.existsSync(path.join(serverDir, "server.js"))) {
+    return { started: false, reason: "No bundled collaboration server in this build." };
+  }
+  const { spawn } = await import("node:child_process");
+  try {
+    const child = spawn(process.execPath, [path.join(serverDir, "server.js"), "--port", String(port)], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      stdio: "ignore",
+      detached: true,
+      windowsHide: true,
+    });
+    child.unref();
+    collabServerChild = child;
+    return { started: true };
+  } catch {
+    return { started: false, reason: "Could not launch the collaboration server." };
+  }
+}
+
 /**
  * Registers all renderer-facing IPC handlers. The main process is the single
  * owner of the currently-open project file path so that "Save" can write in
@@ -29,6 +70,7 @@ export function registerIpc(): void {
       const identity = parseProjectIdentity(result.contents, result.filePath);
       setActiveProject(identity.id, projectFolderFor(result.filePath));
       void recordRecentProject(result.filePath, identity.name);
+      addToOsRecent(result.filePath);
       void libraryRegister(result.filePath, identity.name, identity.id, identity.updatedAt);
       return { canceled: false, filePath: result.filePath, contents: result.contents };
     }
@@ -52,6 +94,7 @@ export function registerIpc(): void {
       const identity = parseProjectIdentity(contents, filePath);
       setActiveProject(identity.id, projectFolderFor(filePath));
       void recordRecentProject(filePath, identity.name);
+      addToOsRecent(filePath);
       void libraryRegister(filePath, identity.name, identity.id, identity.updatedAt);
       return { canceled: false, filePath, contents };
     }
@@ -115,6 +158,7 @@ export function registerIpc(): void {
         setActiveProject(projectId, result.folder ?? null);
         const identity = parseProjectIdentity(json, result.filePath);
         void recordRecentProject(result.filePath, identity.name);
+        addToOsRecent(result.filePath);
         void libraryRegister(result.filePath, identity.name, identity.id, identity.updatedAt);
         return { ok: true, filePath: result.filePath, folder: result.folder, error: undefined };
       }
@@ -319,6 +363,34 @@ export function registerIpc(): void {
   );
 
   ipcMain.handle(
+    "import:text",
+    async (
+      _event,
+      title: string,
+      extensions: string[] | undefined
+    ): Promise<ReturnType<SpatiaApi["pickImportText"]>> => {
+      const fs = await import("node:fs");
+      const ext = Array.isArray(extensions) && extensions.length > 0 ? extensions : ["txt", "md", "json", "xml", "mm", "opml"];
+      const result = await dialog.showOpenDialog({
+        title: title || "Import",
+        properties: ["openFile"],
+        filters: [{ name: title || "Importable files", extensions: ext }],
+      });
+      if (result.canceled || !result.filePaths[0]) {
+        return { canceled: true, name: "", contents: "" };
+      }
+      const filePath = result.filePaths[0];
+      let contents = "";
+      try {
+        contents = fs.readFileSync(filePath, "utf8");
+      } catch {
+        return { canceled: true, name: "", contents: "" };
+      }
+      return { canceled: false, name: path.basename(filePath), contents };
+    }
+  );
+
+  ipcMain.handle(
     "asset:pick",
     async (_event, projectId: string): Promise<ReturnType<SpatiaApi["pickAsset"]>> => {
       const { pickAndImport } = await import("./assets");
@@ -494,6 +566,14 @@ export function registerIpc(): void {
     return getCollabIdentity();
   });
 
+  ipcMain.handle(
+    "collab:startServer",
+    async (_event, port?: number): Promise<{ started: boolean; reason?: string }> => {
+      const p = Number(port) || 8787;
+      return startCollabServer(p);
+    }
+  );
+
   async function handleSaveAs(json: string, suggestedName?: string): Promise<{ canceled: boolean; filePath: string | null }> {
     const {
       saveWithDialog,
@@ -510,6 +590,7 @@ export function registerIpc(): void {
       const identity = parseProjectIdentity(json, result.filePath);
       setActiveProject(identity.id, projectFolderFor(result.filePath));
       void recordRecentProject(result.filePath, identity.name);
+      addToOsRecent(result.filePath);
       void libraryRegister(result.filePath, identity.name, identity.id, identity.updatedAt);
       return { canceled: false, filePath: result.filePath };
     }

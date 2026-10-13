@@ -15,7 +15,7 @@
  *   4. Renders it at every standard Windows icon size and assembles the
  *      results into a single .ico (ICONDIR + PNG-encoded entries).
  *
- * This runs automatically as part of `npm run package:msi` — there is no need
+ * This runs automatically as part of `npm run package:msi` and `npm run package:zip` — there is no need
  * to convert the icon by hand.
  */
 const fs = require("fs");

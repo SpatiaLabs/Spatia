@@ -269,6 +269,93 @@ code {
   color: var(--color-text-dim);
 }
 
+.hero-facts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  list-style: none;
+  margin: 26px auto 0;
+  padding: 0;
+}
+
+.hero-facts li {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-dim);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+.hero-docs {
+  margin-top: 24px;
+  font-size: 14px;
+  color: var(--color-text-dim);
+}
+
+.hero-docs a {
+  color: var(--color-accent);
+}
+
+/* ---------- Landing FAQ ---------- */
+.faq-list {
+  max-width: 760px;
+  margin: 36px auto 0;
+  display: grid;
+  gap: 12px;
+}
+
+.faq-item {
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  overflow: hidden;
+}
+
+.faq-item summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.faq-item summary::after {
+  content: "+";
+  flex: 0 0 auto;
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--color-text-dim);
+  transition: transform 0.15s ease;
+}
+
+.faq-item[open] summary::after {
+  transform: rotate(45deg);
+}
+
+.faq-item p {
+  margin: 0;
+  padding: 0 20px 18px;
+  font-size: 15px;
+  color: var(--color-text-dim);
+}
+
+.faq-item code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
 /* ---------- App window framing ---------- */
 .window {
   margin: 0;
@@ -383,6 +470,72 @@ code {
   font-weight: 600;
 }
 
+/* ---------- Why an infinite canvas ---------- */
+.why-lede {
+  max-width: 720px;
+}
+
+.why-checks {
+  max-width: 720px;
+  margin-bottom: 8px;
+}
+
+.why-checks a,
+.why-card a,
+.why-more a {
+  color: var(--color-accent);
+}
+
+.why-kicker {
+  margin: 42px 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.why-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+}
+
+.why-card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  transition: border-color 0.18s ease;
+}
+
+.why-card:hover {
+  border-color: rgba(91, 124, 250, 0.45);
+}
+
+.why-card h4 {
+  font-size: 15.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+
+.why-card p {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-text-dim);
+}
+
+.why-card code {
+  font-size: 12.5px;
+}
+
+.why-more {
+  margin-top: 26px;
+  font-size: 15px;
+  color: var(--color-text-dim);
+}
+
 /* ---------- Features ---------- */
 .features {
   display: grid;
@@ -467,6 +620,49 @@ code {
   margin: 18px auto 0;
   color: var(--color-text-dim);
   font-size: 17px;
+}
+
+.cta-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 26px;
+}
+
+.cta-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 230px;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 14px;
+  background: var(--color-bg-elevated);
+}
+
+.cta-card-os {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text);
+}
+
+.cta-card .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.cta-card-detail {
+  margin: 0 0 10px;
+  color: var(--color-text-dim);
+  font-size: 13px;
+}
+
+.cta-web-link {
+  margin-top: 18px;
 }
 
 .cta-meta {
@@ -688,6 +884,16 @@ html[data-wiki] .site {
 .wiki-lede {
   font-size: 17px;
   color: var(--color-text-dim);
+}
+
+.wiki-lede-links {
+  margin-top: 10px;
+  font-size: 14.5px;
+  color: var(--color-text-dim);
+}
+
+.wiki-lede-links a {
+  color: var(--color-accent);
 }
 
 .wiki-toolbar {

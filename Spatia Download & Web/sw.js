@@ -7,7 +7,7 @@
  */
 "use strict";
 
-var CACHE = "spatia-site-v9";
+var CACHE = "spatia-site-v11";
 var CORE = [
   "./",
   "./index.html",
@@ -53,7 +53,7 @@ self.addEventListener("fetch", function (event) {
 
   var url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.indexOf("/downloads/") !== -1 || /\.(msi|zip)$/i.test(url.pathname)) return;
+  if (url.pathname.indexOf("/download/") !== -1 || /\.(msi|zip|tar\.gz)$/i.test(url.pathname)) return;
 
   if (req.mode === "navigate") {
     event.respondWith(

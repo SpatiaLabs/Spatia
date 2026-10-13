@@ -24,9 +24,15 @@
 (function () {
   var host = document.getElementById("web-host");
   var wikiHost = document.getElementById("wiki-host");
-  var LANDING_TITLE = "Spatia — Think in space.";
-  var WEB_TITLE = "Spatia — Web";
-  var WIKI_TITLE = "Spatia — Wiki";
+  var LANDING_TITLE = "Spatia — Infinite Canvas & Local-First Visual Workspace";
+  var LANDING_DESC =
+    "Spatia is a free, local-first infinite canvas for organizing ideas, notes, files, and projects visually. Runs on Windows 10/11, Linux, and in your browser — offline, no account needed.";
+  var WEB_TITLE = "Spatia Web — Try the Infinite Canvas";
+  var WEB_DESC =
+    "Open Spatia straight in your browser. A free, local-first infinite canvas for notes, ideas, files and projects — installable as a PWA and works offline.";
+  var WIKI_TITLE = "Spatia Wiki — Infinite Canvas Documentation";
+  var WIKI_DESC =
+    "The complete Spatia documentation: canvases and projects, objects, pen and shapes, keyboard shortcuts, mobile and tablet, plugins, collaboration, version history and more.";
   var WEB_CSS = "./web/app.css";
   var MOBILE_CSS = "./css/web-mobile.css";
   var MOBILE_JS = "./js/web-mobile.js";
@@ -199,10 +205,40 @@
 
   // ------------------------------------------------------------ enter / leave
 
+  // Per-route <head>: each route updates the title + description + Open Graph,
+  // so crawlers and link previews see copy that names the actual product
+  // (the whole site is one document served at one URL).
+  function setMetaName(name, content) {
+    var el = document.querySelector('meta[name="' + name + '"]');
+    if (!el) {
+      el = document.createElement("meta");
+      el.name = name;
+      document.head.appendChild(el);
+    }
+    el.setAttribute("content", content);
+  }
+
+  function setMetaProp(prop, content) {
+    var el = document.querySelector('meta[property="' + prop + '"]');
+    if (!el) {
+      el = document.createElement("meta");
+      el.setAttribute("property", prop);
+      document.head.appendChild(el);
+    }
+    el.setAttribute("content", content);
+  }
+
+  function setHead(title, description) {
+    document.title = title;
+    setMetaName("description", description);
+    setMetaProp("og:title", title);
+    setMetaProp("og:description", description);
+  }
+
   function enterWeb() {
     document.documentElement.dataset.web = "1";
     host.hidden = false;
-    document.title = WEB_TITLE;
+    setHead(WEB_TITLE, WEB_DESC);
     enterMobileMode();
     applyStandalone();
 
@@ -242,7 +278,7 @@
         window.__webBootError = err && err.stack ? err.stack : String(err);
         console.error("spatia web boot failed:", err);
         loading = null;
-        document.title = LANDING_TITLE;
+        setHead(LANDING_TITLE, LANDING_DESC);
       })
       .then(finishSplash);
   }
@@ -250,7 +286,7 @@
   function leaveWeb() {
     document.documentElement.removeAttribute("data-web");
     host.hidden = true;
-    document.title = LANDING_TITLE;
+    setHead(LANDING_TITLE, LANDING_DESC);
     leaveMobileMode();
     detachAppHandlers();
     detachStylesheet();
@@ -371,7 +407,7 @@
   function enterWiki() {
     document.documentElement.dataset.wiki = "1";
     wikiHost.hidden = false;
-    document.title = WIKI_TITLE;
+    setHead(WIKI_TITLE, WIKI_DESC);
     if (!wikiActive) {
       resetWikiFilter();
       startWikiObserver();
@@ -384,7 +420,7 @@
   function leaveWiki() {
     document.documentElement.removeAttribute("data-wiki");
     wikiHost.hidden = true;
-    if (document.title === WIKI_TITLE) document.title = LANDING_TITLE;
+    setHead(LANDING_TITLE, LANDING_DESC);
     detachWikiObserver();
     wikiActive = false;
   }

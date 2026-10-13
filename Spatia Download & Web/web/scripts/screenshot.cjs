@@ -31,7 +31,7 @@ const MIME = {
   ".webp": "image/webp",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
-  ".msi": "application/octet-stream",
+  ".zip": "application/octet-stream",
   ".xml": "application/xml",
 };
 
@@ -270,7 +270,7 @@ app.whenReady().then(async () => {
   // 1) Verify the landing page loads (no runtime errors).
   await win.loadURL(`http://127.0.0.1:${PORT}/?no-sw=1`);
   const landingText = await win.webContents.executeJavaScript(`document.body.innerText || ""`);
-  if (!/Think in space/.test(landingText)) throw new Error("Landing page did not render");
+  if (!/infinite canvas/i.test(landingText)) throw new Error("Landing page did not render");
   process.stdout.write("  landing page OK\n");
 
   // 2) Enter the web workspace.

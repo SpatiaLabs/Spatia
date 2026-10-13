@@ -63,24 +63,34 @@
     "size-down": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="15" r="4"/><path d="M12 3v5M6 7l1.5 1.5M18 7l-1.5 1.5"/></svg>',
     "size-up": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="15" r="6"/><path d="M12 3v5M6 7l1.5 1.5M18 7l-1.5 1.5"/></svg>',
     done: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>',
-    collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
-    expand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>',
+    save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 2h12l2 2v20H5z"/><path d="M17 2v5H8V2M9 12h6v10H9z"/></svg>',
+    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>',
+    more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>',
+    collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+    stabilize: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 13c2-5 4-5 6 0s4 5 6 0 2.5-5 4-5"/></svg>',
+    pressure: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 20c3-3 4.5-6 4.5-11"/><path d="M19 20c-3-3-4.5-6-4.5-11"/><path d="M9.5 20h5"/></svg>',
   };
 
   var PEN_PALETTE = ["#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c", "#38d9a9", "#22b8cf", "#4dabf7", "#5b7cfa", "#845ef7", "#f783ac", "#e8eaed", "#adb5bd"];
 
   var SHELL_HTML =
     '<div id="mb-topbar" role="banner">' +
-    '<span class="mb-top-spacer" aria-hidden="true"></span>' +
+    '<button class="mb-top-title" data-bar="title" type="button" aria-label="Open projects">' +
+    '<span class="mb-title-dot" id="mb-saved-dot" aria-label="Saved"></span>' +
+    '<span class="mb-title-name" id="mb-title-name">Untitled</span>' +
+    '</button>' +
+    '<button class="mb-top-action" data-bar="save" type="button" aria-label="Save">' + ICONS.save + "</button>" +
     '<button class="mb-top-action" data-bar="undo" type="button" aria-label="Undo" disabled>' + ICONS.undo + "</button>" +
     '<button class="mb-top-action" data-bar="redo" type="button" aria-label="Redo" disabled>' + ICONS.redo + "</button>" +
-    "</div>" +
+    '<button class="mb-top-action" data-bar="search" type="button" aria-label="Search">' + ICONS.search + "</button>" +
+    '<button class="mb-top-action" data-bar="more" type="button" aria-label="More">' + ICONS.more + "</button>" +
+    '</div>' +
     '<div class="mb-toolbar" role="toolbar" aria-label="Tools">' +
-    '<button class="mb-tab" data-bar="select" data-tab="select" type="button">' + ICONS.select + "<span>Select</span><i class=\"mb-tab-pill\"></i></button>" +
-    '<button class="mb-tab" data-bar="pen" data-tab="pen" type="button">' + ICONS.pen + "<span>Pen</span><i class=\"mb-tab-pill\"></i></button>" +
+    '<button class="mb-tab" data-bar="select" data-tab="select" type="button">' + ICONS.select + "<span>Select</span></button>" +
+    '<button class="mb-tab" data-bar="pen" data-tab="pen" type="button">' + ICONS.pen + "<span>Pen</span></button>" +
     '<button class="mb-tab" data-bar="add" data-tab="add" type="button"><span class="mb-tab-add-badge">' + ICONS.add + "</span><span>Add</span></button>" +
-    '<button class="mb-tab" data-bar="connect" data-tab="connect" type="button">' + ICONS.connect + "<span>Connect</span><i class=\"mb-tab-pill\"></i></button>" +
-    '<button class="mb-tab" data-bar="menu" data-tab="menu" type="button">' + ICONS.menu + "<span>Menu</span><i class=\"mb-tab-pill\"></i></button>" +
+    '<button class="mb-tab" data-bar="connect" data-tab="connect" type="button">' + ICONS.connect + "<span>Connect</span></button>" +
+    '<button class="mb-tab" data-bar="menu" data-tab="menu" type="button">' + ICONS.menu + "<span>Menu</span></button>" +
     "</div>" +
     '<div id="mb-penbar" class="mb-penbar" hidden role="toolbar" aria-label="Pen controls">' +
     '<button class="mb-pen-btn" data-pen="eraser" type="button" aria-label="Eraser" aria-pressed="false">' + ICONS.eraser + "</button>" +
@@ -91,15 +101,15 @@
     '<span class="mb-pen-sep"></span>' +
     '<div class="mb-pen-palette" id="mb-pen-palette"></div>' +
     '<span class="mb-pen-sep"></span>' +
-    '<button class="mb-pen-btn" data-pen="undo" type="button" aria-label="Undo">' + ICONS.undo + "</button>" +
-    '<button class="mb-pen-btn" data-pen="redo" type="button" aria-label="Redo">' + ICONS.redo + "</button>" +
+    '<button class="mb-pen-btn" data-pen="stabilizer" type="button" aria-label="Stabilizer: off" aria-pressed="false">' + ICONS.stabilize + "</button>" +
+    '<button class="mb-pen-btn" data-pen="pressure" type="button" aria-label="Pressure: on" aria-pressed="true">' + ICONS.pressure + "</button>" +
     '<span class="mb-pen-sep"></span>' +
+    '<button class="mb-pen-btn" data-pen="undo" type="button" aria-label="Undo" disabled>' + ICONS.undo + "</button>" +
+    '<button class="mb-pen-btn" data-pen="redo" type="button" aria-label="Redo" disabled>' + ICONS.redo + "</button>" +
+    '<span class="mb-pen-sep"></span>' +
+    '<button class="mb-pen-btn mb-pen-hide" data-pen="collapse" type="button" aria-label="Hide pen controls">' + ICONS.collapse + '<span class="mb-pen-hide-label">Hide</span></button>' +
     '<button class="mb-pen-btn mb-pen-done" data-pen="done" type="button" aria-label="Done">' + ICONS.done + "</button>" +
-    '<button class="mb-pen-btn mb-pen-collapse" data-pen="collapse" type="button" aria-label="Collapse pen bar" aria-expanded="true">' + ICONS.collapse + "</button>" +
     "</div>" +
-    '<button id="mb-props-chip" class="mb-props-chip" type="button" aria-label="Open pen controls" aria-expanded="false">' +
-    ICONS.expand + '<span id="mb-props-dot" class="mb-props-dot"></span><span class="mb-props-label">Pen</span>' +
-    "</button>" +
     '<div id="mb-zoom" role="group" aria-label="Zoom">' +
     '<button type="button" class="mb-zoom-btn" id="mb-zoom-out" aria-label="Zoom out">−</button>' +
     '<button type="button" class="mb-zoom-btn mb-zoom-label" id="mb-zoom-reset" aria-label="Reset view">100%</button>' +
@@ -140,6 +150,8 @@
   var toolbar = host.querySelector(".mb-toolbar");
   var topUndo = host.querySelector('[data-bar="undo"]');
   var topRedo = host.querySelector('[data-bar="redo"]');
+  var topTitle = document.getElementById("mb-title-name");
+  var savedDot = document.getElementById("mb-saved-dot");
   var selRow = host.querySelector(".mb-selrow");
   var backdrop = host.querySelector(".mb-backdrop");
   var sheetEl = host.querySelector(".mb-backdrop .mb-sheet");
@@ -158,11 +170,9 @@
   var penEraserBtn = penBar ? penBar.querySelector('[data-pen="eraser"]') : null;
   var penUndoBtn = penBar ? penBar.querySelector('[data-pen="undo"]') : null;
   var penRedoBtn = penBar ? penBar.querySelector('[data-pen="redo"]') : null;
-  var penCollapseBtn = penBar ? penBar.querySelector('[data-pen="collapse"]') : null;
-  var penChip = document.getElementById("mb-props-chip");
-  var penChipDot = document.getElementById("mb-props-dot");
-  var penUserCollapsed = false;
-  var penAutoCollapsed = false;
+  var penStabBtn = penBar ? penBar.querySelector('[data-pen="stabilizer"]') : null;
+  var penPressBtn = penBar ? penBar.querySelector('[data-pen="pressure"]') : null;
+  var penPanelHidden = false;
 
   var toastTimer = null;
   function toast(text) {
@@ -264,9 +274,24 @@
     } catch (err) { /* ignore */ }
   }
 
+  function updateTopBar() {
+    if (!alive) return;
+    try {
+      var meta = app.project.getMeta();
+      var name = meta && meta.name && String(meta.name).trim() ? String(meta.name) : "Untitled";
+      if (topTitle) topTitle.textContent = name;
+      var dirty = !!app.commands.isDirty();
+      if (savedDot) {
+        savedDot.classList.toggle("mb-dirty", dirty);
+        savedDot.setAttribute("aria-label", dirty ? "Unsaved changes" : "Saved");
+      }
+    } catch (err) { /* ignore */ }
+  }
+
   function refresh() {
     if (!alive) return;
     var s = selectionState();
+    updateTopBar();
     setDisabled(topUndo, !app.commands.canUndo);
     setDisabled(topRedo, !app.commands.canRedo);
     toolbar.querySelector('[data-bar="pen"]').classList.toggle("mb-active", engine.isPenTool());
@@ -285,14 +310,25 @@
   function renderPenBar() {
     if (!penBar || !penDot || !penPalette) return;
     var on = !!engine.isPenTool();
-    penBar.hidden = !on;
-    if (!on) {
-      // Next time the pen tool arms, the bar starts fully expanded.
-      penUserCollapsed = false;
-      penAutoCollapsed = false;
-      penBarCollapse(false);
-      return;
+    penBar.hidden = !(on && !penPanelHidden);
+    var sett = null;
+    try { sett = engine.getPenSettings(); } catch (err) { /* ignore */ }
+    if (sett) {
+      var stab = sett.stabilizer === "strong" ? "strong" : sett.stabilizer === "mild" ? "mild" : "off";
+      var pressure = sett.pressure !== false;
+      if (penStabBtn) {
+        var stabOn = stab !== "off";
+        penStabBtn.classList.toggle("mb-active", stabOn);
+        penStabBtn.setAttribute("aria-pressed", stabOn ? "true" : "false");
+        penStabBtn.setAttribute("aria-label", "Pen stabilizer: " + stab);
+      }
+      if (penPressBtn) {
+        penPressBtn.classList.toggle("mb-active", pressure);
+        penPressBtn.setAttribute("aria-pressed", pressure ? "true" : "false");
+        penPressBtn.setAttribute("aria-label", "Pressure size: " + (pressure ? "on" : "off"));
+      }
     }
+    if (!on) return;
     var style = engine.getPenStyle();
     var eraser = engine.isPenEraser();
     if (penEraserBtn) {
@@ -303,7 +339,6 @@
     penDot.style.width = px + "px";
     penDot.style.height = px + "px";
     penDot.style.background = style.color;
-    if (penChipDot) penChipDot.style.background = style.color;
     penPalette.innerHTML = PEN_PALETTE.map(function (hex) {
       return '<button type="button" class="mb-pen-swatch' + (hex === style.color ? " mb-active" : "") + '" data-pencolor="' + hex + '" aria-label="Pen color ' + hex + '" style="--mpsw:' + hex + '"></button>';
     }).join("");
@@ -311,18 +346,34 @@
     if (penRedoBtn) setDisabled(penRedoBtn, !app.commands.canRedo);
   }
 
+  function penStabVal() {
+    try {
+      var s = engine.getPenSettings();
+      if (s) return s.stabilizer === "strong" ? "strong" : s.stabilizer === "mild" ? "mild" : "off";
+    } catch (err) { /* ignore */ }
+    return "off";
+  }
+
+  function penPressVal() {
+    try {
+      var s = engine.getPenSettings();
+      if (s) return s.pressure !== false;
+    } catch (err) { /* ignore */ }
+    return true;
+  }
+
+  // Users can collapse the pen panel to reclaim canvas while staying in the
+  // pen tool. The drawing-time auto-collapse (.mb-collapsed) is separate and
+  // transient; this hide survives until the Pen tab is pressed again.
+  function hidePenPanel() {
+    penPanelHidden = true;
+    renderPenBar();
+    buzz(6);
+  }
+
   function penBarCollapse(on) {
     if (!penBar) return;
     penBar.classList.toggle("mb-collapsed", !!on);
-    syncPenChip();
-    if (penCollapseBtn) penCollapseBtn.setAttribute("aria-expanded", on ? "false" : "true");
-  }
-
-  function syncPenChip() {
-    if (!penChip) return;
-    var show = !!penBar && !penBar.hidden && penBar.classList.contains("mb-collapsed");
-    penChip.hidden = !show;
-    penChip.setAttribute("aria-expanded", show ? "false" : "true");
   }
 
   function closeSheet() {
@@ -565,8 +616,12 @@
     var btn = e.target.closest("[data-bar]");
     if (!btn) return;
     var kind = btn.getAttribute("data-bar");
-    if (kind === "undo") { setConnect(false); call("undo"); refresh(); }
+    if (kind === "title") { setConnect(false); call("openProjectsDialog"); }
+    else if (kind === "save") { setConnect(false); call("saveProject"); refresh(); }
+    else if (kind === "undo") { setConnect(false); call("undo"); refresh(); }
     else if (kind === "redo") { setConnect(false); call("redo"); refresh(); }
+    else if (kind === "search") { setConnect(false); call("openSearch"); }
+    else if (kind === "more") { setConnect(false); openSheet("menu", "Menu"); }
     else if (kind === "menu") { setConnect(false); openSheet("menu", "Menu"); }
     else if (kind === "add") { setConnect(false); openSheet("add", "Add to canvas"); }
     else if (kind === "select") {
@@ -577,10 +632,17 @@
       refresh();
     } else if (kind === "pen") {
       setConnect(false);
-      var on = !engine.isPenTool();
-      engine.setPenTool(on);
-      app.ui.setTools(on);
-      if (on) app.selection.setIds([]);
+      if (engine.isPenTool()) {
+        // Pen already on: if the user hid the panel, re-show it (keep the pen
+        // tool selected); otherwise the tap deselects the tool like before.
+        if (penPanelHidden) penPanelHidden = false;
+        else { engine.setPenTool(false); app.ui.setTools(false); }
+      } else {
+        penPanelHidden = false;
+        engine.setPenTool(true);
+        app.ui.setTools(true);
+        app.selection.setIds([]);
+      }
       refresh();
     } else if (kind === "connect") {
       setConnect(!connectActive);
@@ -600,6 +662,17 @@
         engine.setPenStyle({ size: engine.getPenStyle().size - 1 });
       } else if (act === "size-up") {
         engine.setPenStyle({ size: engine.getPenStyle().size + 1 });
+      } else if (act === "stabilizer") {
+        var cur = penStabVal();
+        var next = cur === "off" ? "mild" : cur === "mild" ? "strong" : "off";
+        engine.setPenSettings({ stabilizer: next });
+        buzz(6);
+      } else if (act === "pressure") {
+        var was = penPressVal();
+        engine.setPenSettings({ pressure: !was });
+        buzz(6);
+      } else if (act === "collapse") {
+        hidePenPanel();
       } else if (act === "undo") {
         setConnect(false);
         call("undo");
@@ -610,10 +683,6 @@
         setConnect(false);
         engine.setPenTool(false);
         app.ui.setTools(false);
-      } else if (act === "collapse") {
-        penUserCollapsed = true;
-        penAutoCollapsed = false;
-        penBarCollapse(true);
       }
     } else {
       var hex = el.getAttribute("data-pencolor");
@@ -650,17 +719,6 @@
 
   host.addEventListener("click", onHostClick);
   if (penBar) penBar.addEventListener("click", onPenClick);
-  if (penChip) {
-    penChip.addEventListener("click", function (e) {
-      if (!alive) return;
-      e.stopPropagation();
-      penUserCollapsed = false;
-      penAutoCollapsed = false;
-      penBarCollapse(false);
-      buzz(6);
-      refresh();
-    });
-  }
   selRow.addEventListener("click", onSelRowClick);
   backdrop.addEventListener("click", onSheetClick);
   attachSheetDrag(host.querySelector(".mb-backdrop .mb-sheet-grab"), sheetEl, closeSheet);
@@ -675,6 +733,7 @@
   // Live undo/redo, viewport and selection states.
   try { app.selection.changed.subscribe(refresh); } catch (err) { /* ignore */ }
   try { app.commands.changed.subscribe(refresh); } catch (err) { /* ignore */ }
+  try { app.project.changed.subscribe(updateTopBar); } catch (err) { /* ignore */ }
   try { app.viewport.changed.subscribe(updateZoomLabel); } catch (err) { /* ignore */ }
   patchUi();
   refresh();
@@ -699,9 +758,7 @@
       penBar.hidden = true;
       penBar.classList.remove("mb-collapsed");
     }
-    penUserCollapsed = false;
-    penAutoCollapsed = false;
-    if (penChip) penChip.hidden = true;
+    penPanelHidden = false;
     if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
   }
 
@@ -768,15 +825,7 @@
 
   function onPointerDown(e) {
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 1 && engine.isPenTool() && !connectActive) {
-      if (!penUserCollapsed) {
-        // Temporary, drawing-collapse: the bar comes back when the finger lifts.
-        penAutoCollapsed = true;
-        penBarCollapse(true);
-      } else {
-        penAutoCollapsed = false;
-      }
-    }
+    if (pointers.size === 1 && engine.isPenTool() && !connectActive) penBarCollapse(true);
     if (pointers.size === 2) {
       // Take over the canvas for the two-finger gesture. Settle any pending
       // engine interaction (marquee / move) with a synthetic pointerup that
@@ -838,10 +887,7 @@
       lastDist = null;
       lastMid = null;
     }
-    if (pointers.size === 0 && penAutoCollapsed) {
-      penAutoCollapsed = false;
-      penBarCollapse(false);
-    }
+    if (pointers.size === 0) penBarCollapse(false);
   }
 
   // The engine's desktop right-click menu is a bubble listener on the canvas.

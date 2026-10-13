@@ -14,7 +14,8 @@ import { isEditingText } from "./textEditor.js";
  *  - a compact top command bar (project, save, undo/redo, search, …),
  *  - a floating bottom tool dock (select / hand / pen / note / shapes / add),
  *  - a contextual action bar that appears above the dock on selection,
- *  - inspector & asset panels and every dialog re-skinned as iPad-style
+ *  - a compact, dismissible Properties card in the upper-left (with a reopen
+ *    affordance), plus asset panels and every dialog re-skinned as iPad-style
  *    right-side slide-over sheets (reusing all existing App logic),
  *  - one-finger select/move (hand tool: one-finger pan), two-finger pan/pinch
  *    (the same gesture model the phone layer uses), larger selection handles
@@ -480,9 +481,9 @@ export class TabletUI {
   // ------------------------------------------------------- inspector resizer
 
   /**
-   * The right-side Properties sheet is genuinely resizable on iPad: a vertical
-   * divider at its left edge drags the panel wider/narrower, clamped and
-   * remembered for the session. It sits on the canvas side of the boundary,
+   * The compact upper-left Properties card is genuinely resizable on iPad: a
+   * vertical divider at its right edge drags the panel wider/narrower, clamped
+   * and remembered for the session. It sits on the canvas side of the boundary,
    * so a drag here never steals touches from the pane content or the canvas.
    */
   private initInspectorResizer(): void {
@@ -507,7 +508,7 @@ export class TabletUI {
   }
 
   private inspectorMax(): number {
-    return Math.min(640, window.innerWidth * 0.62);
+    return Math.min(440, window.innerWidth - 24);
   }
 
   private onResizerDown = (e: PointerEvent): void => {
@@ -527,7 +528,8 @@ export class TabletUI {
   private onResizerMove = (e: PointerEvent): void => {
     const drag = this.resizerDrag;
     if (!drag || e.pointerId !== drag.id) return;
-    const w = Math.round(Math.min(this.inspectorMax(), Math.max(INSPECTOR_MIN_W, drag.startWidth - (e.clientX - drag.startX))));
+    // The panel is left-anchored, so dragging the right edge to the right grows it.
+    const w = Math.round(Math.min(this.inspectorMax(), Math.max(INSPECTOR_MIN_W, drag.startWidth + (e.clientX - drag.startX))));
     this.applyInspectorWidth(w);
   };
 
@@ -561,7 +563,10 @@ export class TabletUI {
     const usable = inspector.classList.contains("open") && !inspector.classList.contains("minimized") && this.scrim.hidden;
     this.resizer.hidden = !usable;
     if (usable) {
-      this.resizer.style.right = `${Math.round(inspector.getBoundingClientRect().width)}px`;
+      const r = inspector.getBoundingClientRect();
+      this.resizer.style.left = `${Math.round(r.right - 11)}px`;
+      this.resizer.style.top = `${Math.round(r.top)}px`;
+      this.resizer.style.height = `${Math.round(r.height)}px`;
     }
   }
 

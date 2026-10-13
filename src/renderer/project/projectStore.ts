@@ -1,7 +1,8 @@
 import type { ProjectDocument, ProjectMeta, ShareInfo } from "../../shared/types/project.js";
 import type { CanvasObject, AssetMeta } from "../../shared/types/object.js";
-import { serialize } from "../../shared/project/serialize.js";
+import { deserialize, serialize } from "../../shared/project/serialize.js";
 import { Emitter } from "../state/emitter.js";
+import type { CollabOp } from "../../shared/collab/ops.js";
 
 export interface ProjectDocEvents {
   /** Emitted whenever document data changes (objects, meta, assets). */
@@ -241,6 +242,100 @@ export class ProjectStore {
     this.touch();
   }
 
+  // -------- Remote collaboration (ops sync, 0.5.1) --------
+
+  /**
+   * Apply a batch of remote ops from the collaboration server. Targeted per
+   * object/asset/meta so a peer's change never wipes the local undo history
+   * (full-file snapshots previously replaced the document and cleared it).
+   * Locked objects survive remote deletes. Returns whether anything changed.
+   */
+  applyRemoteOps(ops: readonly CollabOp[]): boolean {
+    let changed = false;
+    for (const op of ops) {
+      switch (op.kind) {
+        case "meta": {
+          if (op.name !== undefined && op.name !== this.doc.meta.name) {
+            this.doc.meta.name = op.name;
+            changed = true;
+          }
+          if (op.tags !== undefined) {
+            const next = [...new Set(op.tags)].slice(0, 100);
+            if (JSON.stringify(next) !== JSON.stringify(this.getTags())) {
+              this.doc.meta.tags = next;
+              changed = true;
+            }
+          }
+          break;
+        }
+        case "obj:upsert": {
+          const obj = toCanvasObject(op.obj);
+          if (!obj) break;
+          const idx = this.doc.objects.findIndex((o) => o.id === op.id);
+          if (idx >= 0) {
+            if (!jsonEqual(this.doc.objects[idx], obj)) {
+              this.doc.objects[idx] = obj;
+              changed = true;
+            }
+          } else {
+            this.doc.objects.push(obj);
+            changed = true;
+          }
+          break;
+        }
+        case "obj:delete": {
+          const idx = this.doc.objects.findIndex((o) => o.id === op.id);
+          if (idx >= 0 && !this.doc.objects[idx].locked) {
+            this.doc.objects.splice(idx, 1);
+            changed = true;
+          }
+          break;
+        }
+        case "asset:upsert": {
+          const asset = toAssetMeta(op.asset);
+          if (!asset) break;
+          const idx = this.doc.assets.findIndex((a) => a.id === op.id);
+          if (idx >= 0) {
+            if (!jsonEqual(this.doc.assets[idx], asset)) {
+              this.doc.assets[idx] = asset;
+              changed = true;
+            }
+          } else {
+            this.doc.assets.push(asset);
+            changed = true;
+          }
+          break;
+        }
+        case "asset:delete": {
+          const idx = this.doc.assets.findIndex((a) => a.id === op.id);
+          if (idx >= 0) {
+            this.doc.assets.splice(idx, 1);
+            changed = true;
+          }
+          break;
+        }
+      }
+    }
+    if (changed) this.touch();
+    return changed;
+  }
+
+  /**
+   * Adopt the reconciled state produced by the sync engine on (re)join: the
+   * union of the room's authoritative objects/assets and the local edits the
+   * merge decided to keep. Replaces the arrays in place so undo history and
+   * the document identity survive — no `replaced` (and thus no history wipe).
+   */
+  applyMerged(objects: readonly CanvasObject[], assets: readonly AssetMeta[], meta: ProjectMeta): void {
+    this.doc.objects = objects.map((o) => ({ ...o }));
+    this.doc.assets = assets.map((a) => ({ ...a }));
+    this.doc.meta.id = meta.id;
+    this.doc.meta.name = meta.name;
+    this.doc.meta.createdAt = meta.createdAt;
+    if (meta.tags !== undefined) this.doc.meta.tags = [...meta.tags];
+    this.touch();
+  }
+
   // -------- Viewport --------
 
   setViewport(x: number, y: number, zoom: number): void {
@@ -261,6 +356,53 @@ export class ProjectStore {
     this.sortedCache = null;
     this.changed.emit();
   }
+}
+
+/** Canonical deep equality used to detect no-op remote ops. */
+function jsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Validate and normalize a raw wire object payload into a typed CanvasObject by
+ * running it through the same projector validation the file loader uses.
+ * Returns null when the payload is not a valid object shape.
+ */
+function toCanvasObject(raw: Record<string, unknown>): CanvasObject | null {
+  try {
+    const container = {
+      formatVersion: 5,
+      project: { id: "shared", name: "shared", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+      viewport: { x: 0, y: 0, zoom: 1 },
+      objects: [raw],
+      assets: [],
+    };
+    const parsed = deserialize(JSON.stringify(container));
+    return parsed.objects[0];
+  } catch {
+    return null;
+  }
+}
+
+const ASSET_KINDS = new Set(["image", "file", "video", "audio", "pdf"]);
+
+function toAssetMeta(raw: Record<string, unknown>): AssetMeta | null {
+  if (typeof raw.id !== "string" || raw.id.length === 0) return null;
+  if (!ASSET_KINDS.has(String(raw.kind))) return null;
+  if (typeof raw.name !== "string" || typeof raw.size !== "number" || typeof raw.mime !== "string" || typeof raw.ext !== "string") {
+    return null;
+  }
+  const asset: AssetMeta = {
+    id: raw.id,
+    kind: raw.kind as AssetMeta["kind"],
+    name: raw.name,
+    size: raw.size,
+    mime: raw.mime,
+    ext: raw.ext,
+  };
+  if (typeof raw.thumbnail === "string" && raw.thumbnail !== "") asset.thumbnail = raw.thumbnail;
+  return asset;
 }
 
 export function createNewDocument(name = "Untitled Project"): ProjectDocument {

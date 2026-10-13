@@ -8,11 +8,33 @@
     />
     <meta
       name="description"
-      content="Spatia — a fast, local-first visual workspace. Organize ideas, connect concepts, and turn thoughts into something you can see. Windows 10 / 11 · x64."
+      content="Spatia is a free, local-first infinite canvas for organizing ideas, notes, files, and projects visually. Runs on Windows 10/11 and in your browser — offline, no account needed."
     />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <link rel="canonical" href="https://spatiaweb.surge.sh/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Spatia" />
+    <meta property="og:url" content="https://spatiaweb.surge.sh/" />
+    <meta property="og:title" content="Spatia — Infinite Canvas & Local-First Visual Workspace" />
+    <meta
+      property="og:description"
+      content="Spatia is a free, local-first infinite canvas for organizing ideas, notes, files, and projects visually. Runs on Windows 10/11 and in your browser — offline, no account needed."
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content="https://spatiaweb.surge.sh/assets/icon-512.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta property="og:image:alt" content="Spatia logo" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Spatia — Infinite Canvas & Local-First Visual Workspace" />
+    <meta
+      name="twitter:description"
+      content="Spatia is a free, local-first infinite canvas for organizing ideas, notes, files, and projects visually. Runs on Windows 10/11 and in your browser — offline, no account needed."
+    />
+    <meta name="twitter:image" content="https://spatiaweb.surge.sh/assets/icon-512.png" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; worker-src 'self'; media-src 'self' blob:; frame-src https: http:"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-dtqmZO941ectXyQDHbgJjL8ZBThmTfji5J9gIkUnh4c='; img-src 'self' data: blob:; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; worker-src 'self'; media-src 'self' blob:; frame-src https: http:"
     />
     <meta name="theme-color" content="#121417" />
     <meta name="format-detection" content="telephone=no" />
@@ -20,8 +42,27 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Spatia" />
-    <title>Spatia — Think in space.</title>
+    <title>Spatia — Infinite Canvas & Local-First Visual Workspace</title>
     <link rel="manifest" href="./manifest.webmanifest" />
+<script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Spatia",
+        "alternateName": "Spatia — Infinite Canvas",
+        "inLanguage": "en",
+        "description": "Spatia is a free, local-first infinite canvas for organizing ideas, notes, files, and projects visually. Runs on Windows 10/11 and in the browser — offline, no account needed.",
+        "applicationCategory": "DesignApplication",
+        "applicationSubCategory": "Infinite Canvas",
+        "operatingSystem": "Windows 10, Windows 11, Web browser",
+        "browserRequirements": "Requires a modern browser (Chrome, Edge, Firefox, Safari)",
+        "softwareVersion": "0.5.1",
+        "url": "https://spatiaweb.surge.sh/",
+        "keywords": "infinite canvas, visual workspace, whiteboard, brainstorming, mind map, diagram, flow chart, sticky notes, notes, sketch, local-first, offline, PWA, Windows app",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "featureList": "infinite canvas, sticky notes, text, images, files, links, frames, connections, freehand pen with stabilizer and pressure support, templates, plugins, tags, search, version history, export to PNG, PDF, Markdown and .spatia, real-time collaboration with targeted operation sync, installable PWA"
+      }
+    </script>
     <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png" />
     <link rel="icon" type="image/png" sizes="48x48" href="./assets/icon-48.png" />
     <link rel="apple-touch-icon" href="./assets/icon-180.png" />
@@ -138,6 +179,9 @@
             <div class="inspector-header">Properties</div>
             <div id="inspector-body" class="inspector-body"><span class="inspector-empty">Select an object</span></div>
           </aside>
+          <button id="inspector-reopen" class="inspector-reopen" type="button" aria-label="Show properties" hidden>
+            <span class="inspector-reopen-dot" aria-hidden="true"></span>Properties
+          </button>
         </main>
         <aside id="assets-panel" class="assets-panel" aria-hidden="true">
           <div class="inspector-header assets-header">
@@ -341,6 +385,7 @@
           <div class="url-dialog-box share-dialog-box">
             <div class="inspector-header url-dialog-title">Share &amp; collaborate</div>
             <div id="share-status" class="share-status share-status-offline"></div>
+            <p class="share-server-hint">Sharing starts the local collaboration server automatically (desktop), or connect to a server you already run.</p>
             <div class="share-server-row">
               <input
                 id="share-url"
@@ -399,13 +444,14 @@
           <nav class="nav-links" aria-label="Primary">
             <a href="#about">About</a>
             <a href="#features">Features</a>
+            <a href="#why">Why</a>
             <a class="nav-web" href="#/web">Web</a>
             <a href="#download">Download</a>
             <a class="nav-wiki" href="#/wiki">Wiki</a>
           </nav>
           <div class="header-actions">
             <a class="btn btn-ghost btn-sm" href="#/web">Try Web</a>
-            <a class="btn btn-primary btn-sm" href="https://github.com/ji2-2/Spatia/releases/download/v0.5.0/Spatia-0.5.0-win-x64.msi">Download</a>
+<a class="btn btn-primary btn-sm" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.1/Spatia-0.5.1-win-x64.msi">Download</a>
           </div>
         </header>
 
@@ -414,6 +460,11 @@
           <p class="wiki-lede">
             Everything you need to know about using Spatia — from your first canvas to
             advanced workflows. Beginner and power-user friendly, from A to Z.
+          </p>
+          <p class="wiki-lede-links">
+            Start with <a href="#/wiki/getting-started">Getting started</a> &middot;
+            see <a href="#/wiki/whats-new">What's new in 0.5.1</a> &middot;
+            ask the <a href="#/wiki/faq">FAQ</a>
           </p>
           <div class="wiki-toolbar">
             <div class="wiki-search-box">
@@ -493,7 +544,7 @@
             <div class="wiki-toc-group">
               <h3 class="wiki-toc-title">News &amp; releases</h3>
               <ul>
-                <li><a href="#/wiki/whats-new" data-wiki-search="What's new changelog release notes news version 0.5.0 drawing eraser">What's new in 0.5.0</a></li>
+                <li><a href="#/wiki/whats-new" data-wiki-search="What's new changelog release notes news version 0.5.1 collaboration windows">What's new in 0.5.1</a></li>
               </ul>
             </div>
           </nav>
@@ -521,7 +572,7 @@
             <strong>Web app / installable PWA</strong> for any modern browser — on desktop, mobile
             phones, iPad and tablets alike. There is no separate iOS or Android app: phones, iPads
             and tablets all use the Web version.
-            Current version: <strong>0.5.0</strong>.
+            Current version: <strong>0.5.1</strong>.
           </p>
             </article>
 
@@ -530,9 +581,8 @@
               <h2>Getting started</h2>
               <h3>On Windows (desktop)</h3>
               <ol>
-                <li>Download <code>Spatia-0.5.0-win-x64.msi</code> from the <strong>Download</strong> button above (it points to the official <a href="https://github.com/ji2-2/Spatia/releases/tag/v0.5.0">Spatia 0.5.0 GitHub Release</a>).</li>
-                <li>Run the installer — or, if you prefer a no-install option, download the portable <code>.zip</code> from the same release page and extract it, then run <code>Spatia.exe</code>.</li>
-                <li>Spatia opens a fresh blank canvas with the tools panel on the left.</li>
+                <li>Download <code>Spatia-0.5.1-win-x64.msi</code> with the <strong>Download</strong> button above — it is hosted on GitHub Releases.</li>
+                <li>Run the installer and follow the prompts — Spatia opens a fresh blank canvas with the tools panel on the left.</li>
               </ol>
               <h3>In the browser (Web app)</h3>
               <ol>
@@ -612,8 +662,26 @@
                   <tr><td>Markdown (<code>.md</code>)</td><td>A readable text outline of notes and text on the canvas</td><td>Notes, drafts, plain-text workflows</td></tr>
                 </tbody>
               </table>
+              <h3>Import</h3>
               <p>
-                Import works in the opposite direction: open any <code>.spatia.json</code> or
+                Use <strong>Import…</strong> (or the Import commands in the command palette) to bring
+                external files onto your canvas. Spatia converts them into native objects — text,
+                notes, shapes, connections, and frames — placed at the centre of your current view.
+              </p>
+              <table class="wiki-table">
+                <thead>
+                  <tr><th>Format</th><th>What you get</th><th>Typical use</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Markdown (<code>.md</code>)</td><td>Text objects for headings, paragraphs, and lists</td><td>Notes, outlines, documentation</td></tr>
+                  <tr><td>OPML (<code>.opml</code>)</td><td>Hierarchical text objects with parent-child connections</td><td>Outliner exports, mind-mapping apps</td></tr>
+                  <tr><td>FreeMind (<code>.mm</code>)</td><td>Hierarchical text objects with parent-child connections</td><td>Mind-map files</td></tr>
+                  <tr><td>Excalidraw (<code>.excalidraw</code>)</td><td>Shapes, text, pen strokes, and connections</td><td>Diagram exports from Excalidraw</td></tr>
+                  <tr><td>Miro board (JSON)</td><td>Sticky notes, shapes, text, and pen strokes</td><td>Board exports from Miro</td></tr>
+                </tbody>
+              </table>
+              <p>
+                Import also works the other direction: open any <code>.spatia.json</code> or
                 <code>.spatia</code> project from disk (desktop) or from your device (Web app).
               </p>
               <div class="wiki-note">
@@ -664,6 +732,25 @@
                 <li><strong>Color:</strong> notes come in a palette — pick one that fits (the inspector shows note properties when a note is selected).</li>
                 <li><strong>Resize:</strong> drag the selection handles on the note's corners or edges.</li>
               </ul>
+              <h3>Rich text formatting</h3>
+              <p>
+                Notes and text objects support lightweight inline markup. When you first apply
+                formatting, Spatia automatically enables rich-text rendering for that object.
+                Use the toolbar or keyboard shortcuts in the inline editor:
+              </p>
+              <ul>
+                <li><kbd>Ctrl</kbd>+<kbd>B</kbd> — <strong>bold</strong> (<code>**text**</code>)</li>
+                <li><kbd>Ctrl</kbd>+<kbd>I</kbd> — <em>italic</em> (<code>*text*</code>)</li>
+                <li><kbd>Ctrl</kbd>+<kbd>U</kbd> — <u>underline</u> (<code>_text_</code>)</li>
+                <li><code>&lt;/&gt;</code> toolbar button — inline code (<code>`text`</code>)</li>
+                <li><strong>Link</strong> toolbar button — insert a hyperlink (<code>[label](url)</code>)</li>
+              </ul>
+              <p>
+                Lines starting with <code>#</code>, <code>##</code>, or <code>###</code> become headings.
+                Lines starting with <code>-</code> or <code>*</code> become bullets, and
+                <code>1.</code>/<code>2.</code> become numbered list items. Plain text
+                renders identically whether or not markup is present.
+              </p>
               <h3>Text</h3>
               <p>
                 Text objects are lighter than notes — great for headings, labels and titles. Select a
@@ -763,7 +850,7 @@
               <p>
                 The <strong>Pen</strong> tool (in the Tools section or the HUD) draws freehand ink
                 strokes directly on the canvas — underline, circle, scribble, annotate, or sketch
-                a whole picture. In 0.5.0 pen strokes are <strong>real objects</strong>: ink appears
+                a whole picture. Pen strokes are <strong>real objects</strong>: ink appears
                 <em>live while you draw</em>, and finished strokes can be selected, moved, duplicated,
                 deleted and undone like any other object on the canvas.
               </p>
@@ -875,9 +962,25 @@
                   <tr><td><kbd>Ctrl</kbd> + drag from an object</td><td>Start a connection</td></tr>
                 </tbody>
               </table>
+              <h3>Text editor shortcuts</h3>
+              <p>
+                While editing text or a note, these formatting shortcuts apply:
+              </p>
+              <table class="wiki-table">
+                <thead>
+                  <tr><th>Shortcut</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>Toggle bold</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td><td>Toggle italic</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>U</kbd></td><td>Toggle underline</td></tr>
+                  <tr><td><kbd>Escape</kbd></td><td>Cancel editing</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Commit and close (multiline)</td></tr>
+                </tbody>
+              </table>
               <p>
                 Shortcuts work in the desktop app and the Web app. While you're typing in a text editor,
-                keys go to the text, not the canvas.
+                canvas shortcuts are paused.
               </p>
             </article>
 
@@ -1015,15 +1118,26 @@
                 control — and it also supports <strong>real-time collaboration</strong> for
                 nearby or online teammates.
               </p>
+              <h3>Zero-setup sharing (desktop)</h3>
+              <p>
+                On the desktop, click <strong>Share…</strong> and Spatia connects to a local
+                collaboration server automatically — no manual server setup required. The server
+                starts in the background the first time you share. Share the room link with
+                teammates; they open it and join the same room instantly.
+              </p>
+              <h3>Manual server setup</h3>
+              <p>
+                For advanced use or self-hosted setups, start the bundled collaboration server
+                yourself (<code>npm run server</code>, default
+                <code>ws://localhost:8787</code>), then click <strong>Share…</strong> and
+                connect to that URL.
+              </p>
               <ul>
-                <li>Start the bundled collaboration server (<code>npm run server</code>, default
-                  <code>ws://localhost:8787</code>), click <strong>Share…</strong> and connect.</li>
                 <li>The first person to join a room becomes its <strong>owner</strong> and can promote
                   others from <em>viewer</em> to <em>editor</em> inside the share dialog.</li>
                 <li>Everyone sees <strong>live cursors</strong> and each other's selections; the owner
                   and editors share the document and see each other's changes in real time.</li>
-                <li>Share the room ID (or an invite link) with teammates; they join the same room —
-                  desktop and Web apps interoperate.</li>
+                <li>Desktop and Web apps interoperate — join the same room from either.</li>
               </ul>
               <p>
                 Rooms are stored on the server (one file per room under <code>server-data/</code>),
@@ -1055,43 +1169,114 @@
               </div>
             </article>
 
-            <!-- What's new in 0.5.0 -->
+            <!-- What's new in 0.5.1 -->
             <article class="wiki-section" id="wiki-whats-new">
-              <h2>What's new in 0.5.0</h2>
-              <p>0.5.0 is the <strong>Drawing &amp; writing</strong> release — it makes the pen a
-                first-class tool and finally shows ink <em>as you draw it</em>.</p>
-              <h3>Headline changes</h3>
+              <h2>What's new in 0.5.1</h2>
+              <p>0.5.1 adds rich text formatting, one-click sharing, and multi-format import — on top of
+                the collaboration, platform and performance improvements shipped earlier in this release
+                cycle.</p>
+              <h3>Rich text in notes &amp; text objects</h3>
               <ul>
-                <li><strong>Real-time drawing &amp; erasing.</strong> Pen strokes and the eraser preview now
-                  render live at full frame rate while your pointer is down — previously ink only appeared
-                  after you released the mouse or stylus.</li>
-                <li><strong>Ink is a first-class object.</strong> Draw, then select (tap, lasso or marquee),
-                  move, duplicate, copy/paste, group and undo your strokes exactly like notes and shapes.</li>
-                <li><strong>A real partial eraser.</strong> Point-erase through a stroke and it splits cleanly
-                  into two; switch to whole-stroke mode to remove an entire stroke with one sweep — with a
-                  live undo-able preview showing exactly what will go.</li>
+                <li><strong>Inline formatting toolbar.</strong> Bold, italic, underline, code and
+                  link buttons appear when you double-click a note or text object — plus
+                  <kbd>Ctrl</kbd>+<kbd>B</kbd>/<kbd>I</kbd>/<kbd>U</kbd> keyboard shortcuts.</li>
+                <li><strong>Headings, bullets and numbered lists.</strong> Prefix lines with
+                  <code>#</code>/<code>##</code>/<code>###</code>, <code>-</code>/<code>*</code>, or
+                  <code>1.</code>/<code>2.</code> to structure content inside a note.</li>
+                <li><strong>Lightweight markup.</strong> Formatting is stored as plain text markers
+                  (<code>**bold**</code>, <code>*italic*</code>, <code>_underline_</code>,
+                  <code>`code`</code>, <code>[label](url)</code>) — your data stays readable and
+                  portable. Objects without formatting render exactly as before.</li>
+              </ul>
+              <h3>Zero-setup collaboration (desktop)</h3>
+              <ul>
+                <li><strong>One-click sharing.</strong> Click <strong>Share…</strong> and Spatia
+                  starts the local collaboration server automatically — no manual
+                  <code>npm run server</code> step required.</li>
+                <li><strong>Invite link with server URL.</strong> The share dialog copies a link that
+                  includes the server address, so teammates connect with a single click.</li>
+              </ul>
+              <h3>Import interoperability</h3>
+              <ul>
+                <li><strong>Import Markdown, OPML, FreeMind, Excalidraw, and Miro files.</strong>
+                  Use the command palette (<strong>Import Markdown…</strong>,
+                  <strong>Import OPML…</strong>, etc.) or the menu to bring external files
+                  onto your canvas as native objects.</li>
+                <li><strong>Opinionated conversion.</strong> Each format maps to the closest Spatia
+                  objects — text, notes, shapes, pen strokes, frames, and connections — preserving
+                  structure and hierarchy where possible.</li>
+              </ul>
+              <h3>Collaboration that stays in sync</h3>
+              <ul>
+                <li><strong>Targeted operation synchronization.</strong> Editors now exchange tiny
+                  change operations — add, update or delete exactly one object or asset — instead of
+                  broadcasting whole-file snapshots. Only what actually changed travels over the wire.</li>
+                <li><strong>Last-writer-wins convergence.</strong> The server linearizes every change
+                  with a monotonic sequence number, so concurrent editors converge on the same final
+                  document without conflicts or a journal.</li>
+                <li><strong>Reliable reconnection &amp; late joining.</strong> If the connection drops,
+                  rooms remember their state: your client reconnects, re-joins, and merges your local
+                  edits back instead of losing them. A late joiner receives the current room file at
+                  the latest sequence.</li>
+                <li><strong>Undo-safe remote edits.</strong> Changes that arrive from other editors
+                  never clear your local undo history — you can still undo your own work after a peer
+                  edits the same canvas.</li>
+                <li><strong>Heartbeat &amp; no-op acknowledgements.</strong> The room actively watches
+                  for silent connections and confirms no-op batches, so idle editors stay online and
+                  sync stays efficient.</li>
+              </ul>
+              <h3>New platforms</h3>
+              <ul>
+                <li><strong>Web (same footprint).</strong> The Web app / installable PWA remains the
+                  way to run Spatia on phones, iPads and tablets.</li>
+              </ul>
+              <h3>Windows improvements</h3>
+              <ul>
+                <li><strong>Native taskbar integration.</strong> A stable AppUserModel ID groups the
+                  app correctly on Windows 10 / 11 taskbars, with a Jump List task to open a new
+                  workspace.</li>
+                <li><strong>Recent documents.</strong> Projects you open or save now surface in the
+                  Windows recent-documents list.</li>
+              </ul>
+              <h3>Smoother high-refresh rendering</h3>
+              <ul>
+                <li><strong>Cached, opaque canvas context.</strong> The canvas uses a single cached
+                  rendering context and tells the browser it is fully opaque, so frames composite
+                  without per-frame setup or alpha blending.</li>
+                <li><strong>Display-driven frame rate.</strong> Interacting framerate follows the
+                  display — roughly 60 FPS on 60 Hz, 120 FPS on 120 Hz, 144 FPS on 144 Hz for
+                  panning, zooming, drawing and stylus input. Spatia never forces a rate higher than
+                  the display supports and never runs a permanent loop when nothing has changed.</li>
+                <li><strong>Power saving respected.</strong> When the OS or browser throttles
+                  background or battery-saver rendering, Spatia follows suit — the same engine powers
+                  web phones, iPads and tablets.</li>
+              </ul>
+              <h3>Previously — 0.5.0 (the Drawing &amp; writing release)</h3>
+              <p>0.5.0 made the pen a first-class tool and finally showed ink <em>as you draw it</em>.</p>
+              <ul>
+                <li><strong>Real-time drawing &amp; erasing.</strong> Pen strokes and the eraser preview
+                  render live at full frame rate while your pointer is down.</li>
+                <li><strong>Ink is a first-class object.</strong> Draw, then select (tap, lasso or
+                  marquee), move, duplicate, copy/paste, group and undo your strokes exactly like
+                  notes and shapes.</li>
+                <li><strong>A real partial eraser.</strong> Point-erase through a stroke and it splits
+                  cleanly into two; whole-stroke mode removes an entire stroke with one sweep.</li>
                 <li><strong>Richer pen controls.</strong> Smoothing, stroke stabilizer, optional stylus
                   pressure, color, opacity and stroke width, plus quick keys while drawing:
                   <kbd>P</kbd> pen, <kbd>E</kbd> eraser, <kbd>L</kbd> lasso, <kbd>=</kbd>/<kbd>-</kbd> width.</li>
                 <li><strong>Better text editing.</strong> The note editor is auto-growing and fully
-                  right-to-left aware, and text objects expose font family, size, bold, italic and alignment
-                  in the inspector.</li>
-                <li><strong>iPad &amp; tablet layer.</strong> Big touch devices get the full desktop-style UI,
-                  Apple Pencil / stylus drawing with palm rejection, and two-finger pan &amp; zoom while the
-                  pen stays down.</li>
-              </ul>
-              <h3>Everything in 0.4.9 (still here)</h3>
-              <ul>
-                <li>Notes &amp; text with inline editing; connections that follow objects; frames; images,
-                  files &amp; links; templates.</li>
-                <li>Plugin API v2 (permissions + events), secure plugin sandbox, Browser Frame plugin.</li>
-                <li>Real-time collaboration rooms via the bundled server, and a local-first, portable
-                  <code>.spatia.json</code> / <code>.spatia</code> project format.</li>
+                  right-to-left aware, and text objects expose font family, size, bold, italic and
+                  alignment in the inspector.</li>
+                <li><strong>iPad &amp; tablet layer.</strong> Big touch devices get the full
+                  desktop-style UI, stylus drawing with palm rejection, and two-finger pan &amp; zoom
+                  while the pen stays down.</li>
+                <li>Everything before that — notes &amp; text, connections, frames, images, files &amp;
+                  links, templates, the plugin API, and real-time collaboration rooms.</li>
               </ul>
               <h3>Try it now</h3>
               <ul>
-                <li>Open <a href="#/web">Spatia Web</a> in your browser, or download the Windows build
-                  from the <a href="#download">Download</a> section.</li>
+                <li>Open <a href="#/web">Spatia Web</a> in your browser, or grab the
+                  <a href="#download">Windows build</a>.</li>
                 <li>Grab the <strong>Pen</strong>, draw, and watch the stroke appear live under the
                   cursor — <kbd>P</kbd> = pen, <kbd>E</kbd> = eraser, <kbd>L</kbd> = lasso, <kbd>=</kbd>/<kbd>-</kbd> = width.</li>
               </ul>
@@ -1123,8 +1308,9 @@
               </p>
               <h3>What can I put on a canvas?</h3>
               <p>
-                Notes, text, images, files, links, frames, all the built-in shapes, freehand pen
-                strokes, groups and connections.
+                Notes (with rich text), text (with rich text), images, files, links, frames,
+                all the built-in shapes, freehand pen strokes, groups, connections, and
+                imported Markdown / OPML / FreeMind / Excalidraw / Miro objects.
               </p>
               <h3>Can I undo a mistake?</h3>
               <p>
@@ -1138,12 +1324,12 @@
               </p>
               <h3>Does Spatia support collaboration?</h3>
               <p>
-                Yes, plus it stays local-first. Start the bundled server (<code>npm run server</code>,
-                default <code>ws://localhost:8787</code>), then click <strong>Share…</strong> to open a
-                room — the first joiner is the owner and can invite editors. Teammates see live cursors
-                and share changes in real time; rooms survive server restarts and reconnect automatically.
-                You can also share portable <code>.spatia</code> exports and edit them together as a
-                fully offline alternative.
+                Yes, plus it stays local-first. On the desktop, click <strong>Share…</strong> and
+                Spatia starts the local server automatically — no manual setup needed. The first
+                joiner is the room owner and can invite editors. Teammates see live cursors and share
+                changes in real time; rooms survive server restarts and reconnect automatically.
+                You can also share portable <code>.spatia</code> exports as a fully offline
+                alternative.
               </p>
             </article>
 
@@ -1174,7 +1360,7 @@
               <h3>Something else is wrong</h3>
               <p>
                 If something still isn't right, restart Spatia and review the steps
-                above. The project's GitHub Issues is the best place to report a bug.
+                above.
               </p>
             </article>
           </div>
@@ -1189,6 +1375,7 @@
           <nav class="footer-links" aria-label="Footer">
             <a href="#about">About</a>
             <a href="#features">Features</a>
+            <a href="#why">Why</a>
             <a href="#/web">Web</a>
             <a href="#download">Download</a>
             <a href="#/wiki">Wiki</a>
@@ -1196,7 +1383,7 @@
           <div class="wiki-footer-actions">
             <a class="wiki-back-site" href="#top">Back to site</a>
           </div>
-          <p class="footer-legal">&copy; 2026 Spatia. Released under the MIT License.</p>
+          <p class="footer-legal">&copy; 2026 Spatia. All rights reserved.</p>
         </footer>
       </div>
     </div>
@@ -1212,13 +1399,14 @@
         <nav class="nav-links" aria-label="Primary">
           <a href="#about">About</a>
           <a href="#features">Features</a>
+          <a href="#why">Why</a>
           <a class="nav-web" href="#/web">Web</a>
           <a href="#download">Download</a>
           <a class="nav-wiki" href="#/wiki">Wiki</a>
         </nav>
         <div class="header-actions">
           <a class="btn btn-ghost btn-sm" href="#/web">Try Web</a>
-          <a class="btn btn-primary btn-sm" href="https://github.com/ji2-2/Spatia/releases/download/v0.5.0/Spatia-0.5.0-win-x64.msi">Download</a>
+          <a class="btn btn-primary btn-sm" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.1/Spatia-0.5.1-win-x64.msi">Download</a>
         </div>
       </header>
 
@@ -1226,22 +1414,30 @@
         <!-- Hero -->
         <section class="hero">
           <div class="hero-inner">
-            <span class="badge">Spatia 0.5.0 is here</span>
+            <span class="badge">Spatia 0.5.1 is here</span>
             <h1 class="hero-title">
-              Think in<span class="hero-accent"> space.</span>
+              An infinite canvas<span class="hero-accent"> for the way you think.</span>
             </h1>
             <p class="hero-sub">
-              Spatia is a powerful visual canvas for organizing ideas, connecting concepts,
-              and turning thoughts into something you can see.
+              Spatia is a local-first infinite canvas — a visual workspace where notes,
+              ideas, files, and projects live in one unbounded space. No pages, no scrolling
+              documents, no account required.
             </p>
             <div class="hero-actions">
               <a class="btn btn-primary btn-lg" href="#/web">Try Web</a>
-              <a class="btn btn-outline btn-lg" href="https://github.com/ji2-2/Spatia/releases/download/v0.5.0/Spatia-0.5.0-win-x64.msi">
+              <a class="btn btn-outline btn-lg" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.1/Spatia-0.5.1-win-x64.msi">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
                 Download for Windows
               </a>
             </div>
-            <p class="hero-meta">Windows 10 / 11 &middot; x64 &middot; Version 0.5.0</p>
+            <ul class="hero-facts">
+              <li>Web &amp; Windows</li>
+              <li>Local-first &amp; offline</li>
+              <li>No account</li>
+              <li>Free</li>
+            </ul>
+            <p class="hero-docs">New here? <a href="#/wiki/getting-started">Read the 60-second getting-started guide</a>.</p>
+            <p class="hero-meta">Windows 10 / 11 &middot; Web &middot; Version 0.5.1</p>
           </div>
           <figure class="window hero-window">
             <div class="window-bar">
@@ -1293,9 +1489,58 @@
           </div>
         </section>
 
+        <!-- Why an infinite canvas? -->
+        <section class="section why" id="why">
+          <div class="section-eyebrow">02 — Why an infinite canvas</div>
+          <h2 class="section-title">Pages force an order.<br />A canvas sets ideas free.</h2>
+          <p class="section-body why-lede">
+            Documents and classic note apps arrange everything in one fixed flow — one item under the
+            next, one page after the other. An infinite canvas works the way thinking actually does:
+            place each idea where it makes sense to you, next to the things it relates to, and zoom
+            out any time to see the whole picture at once.
+          </p>
+          <ul class="check-list why-checks">
+            <li><strong>Nothing has to be "first."</strong> Start anywhere — and move things around whenever your thinking changes.</li>
+            <li><strong>Relationships stay visible.</strong> <a href="#/wiki/connections">Connections</a> follow objects as you move them, so a diagram never breaks when you rearrange it.</li>
+            <li><strong>Everything can live in the middle.</strong> Notes, text, shapes, freehand ink, images, files and links share one space.</li>
+            <li><strong>Structure — when you want it.</strong> <a href="#/wiki/frames">Frames</a> and groups divide a big canvas without clipping or locking it down.</li>
+          </ul>
+          <h3 class="why-kicker">What people use Spatia for</h3>
+          <div class="why-list">
+            <article class="why-card">
+              <h4>Brainstorming &amp; mind maps</h4>
+              <p>Rapid-fire notes around one idea, connected as the thinking grows. Six of the eight starter <a href="#/wiki/templates">templates</a> begin this way.</p>
+            </article>
+            <article class="why-card">
+              <h4>Diagrams &amp; flowcharts</h4>
+              <p><a href="#/wiki/drawing-shapes">Shapes and arrows</a> snap into clean diagrams, and <a href="#/wiki/connections">connections</a> keep them intact while you edit.</p>
+            </article>
+            <article class="why-card">
+              <h4>Planning &amp; roadmaps</h4>
+              <p>Structure a project across <a href="#/wiki/frames">frames</a>, or start from the Project planning and Product planning templates.</p>
+            </article>
+            <article class="why-card">
+              <h4>Study &amp; learning</h4>
+              <p>Review notes visually, <a href="#/wiki/search-organization">tag and search</a> them, and study from the Flashcards template.</p>
+            </article>
+            <article class="why-card">
+              <h4>Sketching &amp; annotation</h4>
+              <p>Freehand <a href="#/wiki/drawing-shapes">pen and eraser</a> mark up ideas, slides and mockups live on the canvas.</p>
+            </article>
+            <article class="why-card">
+              <h4>Team sessions</h4>
+              <p>Join a live <a href="#/wiki/collaboration">collaboration room</a>, or share a portable <code>.spatia</code> export and work offline together.</p>
+            </article>
+          </div>
+          <p class="why-more">
+            New here? <a href="#/wiki/getting-started">Read the 60-second getting-started guide</a> or
+            <a href="#/web">try it in your browser</a>
+          </p>
+        </section>
+
         <!-- Features -->
         <section class="section" id="features">
-          <div class="section-eyebrow">02 — Built for the way you think</div>
+          <div class="section-eyebrow">03 — Built for the way you think</div>
           <h2 class="section-title">Powerful doesn't have<br />to mean complicated.</h2>
 
           <div class="features">
@@ -1367,7 +1612,7 @@
 
         <!-- Product / real screenshots -->
         <section class="section" id="product">
-          <div class="section-eyebrow">03 — The product</div>
+          <div class="section-eyebrow">04 — The product</div>
           <div class="section-grid">
             <div class="section-copy">
               <h2 class="section-title">Made to disappear.<br />So your ideas don't.</h2>
@@ -1401,7 +1646,7 @@
 
         <!-- Try Web -->
         <section class="section try-web">
-          <div class="section-eyebrow">04 — Try it now</div>
+          <div class="section-eyebrow">05 — Try it now</div>
           <h2 class="section-title">No install.<br />Just a canvas.</h2>
           <p class="section-body">
             Run Spatia straight in your browser. Create notes, frames and connections, pan and zoom,
@@ -1413,23 +1658,93 @@
           </div>
         </section>
 
+        <!-- FAQ -->
+        <section class="section faq" id="faq">
+          <div class="section-eyebrow">06 — Common questions</div>
+          <h2 class="section-title">Frequently asked questions</h2>
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary>What is Spatia?</summary>
+              <p>
+                Spatia is a local-first <strong>infinite canvas</strong> — an unbounded visual
+                workspace where notes, ideas, files, projects, shapes and connections live side by
+                side, instead of inside pages and scrolling documents.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Is Spatia really free and offline?</summary>
+              <p>
+                Yes. The desktop app works entirely offline, and the Web app keeps your work in
+                your own browser. There's no account and no cloud dependency.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Where do my projects live?</summary>
+              <p>
+                Desktop: wherever you save them (you choose with Save&nbsp;As). Web&nbsp;app: in
+                your browser's local storage. Nothing is uploaded anywhere.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>What can I put on a canvas?</summary>
+              <p>
+                Notes, text, images, files, links, frames, all the built-in shapes, freehand pen
+                strokes, groups and connections — arranged anywhere on one infinite space.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Where does Spatia run?</summary>
+              <p>
+                Windows 10 / 11 (x64) desktop app, plus a Web app /
+                installable&nbsp;PWA that runs in any modern browser on desktop, phones, iPads
+                and tablets. Projects move between them through the shared
+                <code>.spatia</code> / <code>.spatia.json</code> format.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Can I export my work?</summary>
+              <p>
+                Yes — export as PNG, PDF, Markdown, or the native
+                <code>.spatia</code> / <code>.spatia.json</code> project format, and re-open any
+                of them again later.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Can I extend Spatia?</summary>
+              <p>
+                Yes. Spatia has a plugin system with a manifest, a command/events API with
+                permissions and a sandboxed runtime, plus eight starter templates you can begin
+                a project from.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary>Does Spatia support collaboration?</summary>
+              <p>
+                Yes, and it stays local-first. Start the bundled server
+                (<code>npm run server</code>, default <code>ws://localhost:8787</code>), then click
+                <strong>Share…</strong> to open a room — teammates see live cursors and share
+                changes in real time. You can also share portable <code>.spatia</code> exports.
+              </p>
+            </details>
+          </div>
+        </section>
+
         <!-- CTA / Download -->
         <section class="section cta" id="download">
           <h2 class="cta-title">Start creating.</h2>
-          <p class="cta-sub">
-            Download Spatia for Windows, or open it in your browser right now — version 0.5.0, ready
-            for Windows 10 / 11 on x64. The Windows build is an installer (MSI) hosted on
-            <a href="https://github.com/ji2-2/Spatia/releases">GitHub Releases</a> — a portable
-            ZIP is also available there for no-install use.
-          </p>
-          <div class="hero-actions">
-            <a class="btn btn-primary btn-lg" href="https://github.com/ji2-2/Spatia/releases/download/v0.5.0/Spatia-0.5.0-win-x64.msi">
+          <div class="cta-downloads">
+            <div class="cta-card">
+              <span class="cta-card-os">Windows</span>
+              <p class="cta-card-detail">MSI installer &middot; Windows 10 / 11 &middot; x64</p>
+              <a class="btn btn-primary btn-lg" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.1/Spatia-0.5.1-win-x64.msi">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
-              Download Spatia
+              Download for Windows
             </a>
-            <a class="btn btn-outline btn-lg" href="#/web">Try Web</a>
+            </div>
           </div>
-          <p class="hero-meta cta-meta">Windows 10 / 11 &middot; x64 &middot; 0.5.0</p>
+          <a class="btn btn-ghost btn-lg cta-web-link" href="#/web">…or just open it in your browser</a>
+          <p class="cta-sub">Windows builds are hosted on GitHub Releases.</p>
+          <p class="hero-meta cta-meta">Windows 10 / 11 &middot; Web &middot; 0.5.1</p>
         </section>
       </main>
 
@@ -1442,10 +1757,13 @@
         <nav class="footer-links" aria-label="Footer">
           <a href="#about">About</a>
           <a href="#features">Features</a>
+          <a href="#why">Why</a>
+          <a href="#faq">FAQ</a>
           <a href="#download">Download</a>
           <a href="#/wiki">Wiki</a>
+          <a href="#/wiki/getting-started">Get started</a>
         </nav>
-        <p class="footer-legal">&copy; 2026 Spatia. Released under the MIT License.</p>
+        <p class="footer-legal">&copy; 2026 Spatia. All rights reserved.</p>
       </footer>
     </div>
   </body>

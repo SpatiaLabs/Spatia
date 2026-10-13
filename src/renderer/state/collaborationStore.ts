@@ -1,5 +1,6 @@
 import { Emitter } from "./emitter.js";
 import { normalizeCollabUrl, DEFAULT_COLLAB_URL, type CollabUser, type CollabRole, type ClientMessage, type ServerMessage } from "../../shared/collab/protocol.js";
+import type { CollabOp } from "../../shared/collab/ops.js";
 
 export type CollabStatus = "offline" | "connecting" | "connected" | "error";
 
@@ -27,6 +28,8 @@ export class CollaborationStore {
   roomId = "";
   role: CollabRole = "viewer";
   ownerId = "";
+  /** Latest monotonic room sequence the server reported (ops linearization). */
+  seq = 0;
   user: CollabUser | null = null;
   readonly peers = new Map<string, RemotePeer>();
   readonly permissions = new Map<string, CollabRole>();
@@ -51,6 +54,12 @@ export class CollaborationStore {
   /** Wired by the App: a full document snapshot arrived from the room. */
   onRemoteFile: ((file: Record<string, unknown>) => void) | null = null;
 
+  /** Wired by the App: joined a room with the authoritative file + room seq. */
+  onJoined: ((file: Record<string, unknown> | null, seq: number) => void) | null = null;
+
+  /** Wired by the App: an ops batch was linearized by the server. */
+  onOps: ((msg: { user: CollabUser; seq: number; baseSeq: number; ops: CollabOp[] }) => void) | null = null;
+
   private socket: WebSocket | null = null;
   private pendingJoin = "";
   private lastPresenceSent = 0;
@@ -59,6 +68,9 @@ export class CollaborationStore {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Persistent writes (snapshots) queued while offline. */
   private backlog: ClientMessage[] = [];
+  /** The moment traffic was last received — a stale socket force-rejoins. */
+  private lastMessageAt = 0;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   // -------- Transport --------
 
@@ -66,6 +78,7 @@ export class CollaborationStore {
     this.serverUrl = normalizeCollabUrl(serverUrl) || DEFAULT_COLLAB_URL;
     this.manualDisconnect = false;
     this.reconnectAttempts = 0;
+    this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -106,6 +119,7 @@ export class CollaborationStore {
       if (this.pendingJoin) this.sendRaw({ t: "join", room: this.pendingJoin, user: this.requireUser() });
     };
     socket.onmessage = (event: MessageEvent): void => {
+      this.lastMessageAt = Date.now();
       let msg: ServerMessage;
       try {
         msg = JSON.parse(String(event.data)) as ServerMessage;
@@ -117,6 +131,7 @@ export class CollaborationStore {
     socket.onclose = (): void => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.stopHeartbeat();
       this.peers.clear();
       this.permissions.clear();
       if (this.manualDisconnect) {
@@ -160,6 +175,7 @@ export class CollaborationStore {
 
   disconnect(): void {
     this.manualDisconnect = true;
+    this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -244,9 +260,52 @@ export class CollaborationStore {
     this.send({ t: "snapshot", file });
   }
 
+  /** Ship a diff batch against the caller's last-known room sequence. */
+  sendOps(baseSeq: number, ops: readonly CollabOp[]): void {
+    if (!this.isJoined || !this.canEdit || ops.length === 0) return;
+    this.send({ t: "ops", baseSeq, ops: ops.map((o) => ({ ...o })) });
+  }
+
   sendPermSet(userId: string, role: CollabRole): void {
     if (!this.isJoined || this.role !== "owner") return;
     this.send({ t: "perm:set", userId, role });
+  }
+
+  // -------- Heartbeat --------
+
+  /**
+   * While joined, ping the server periodically and treat total silence as a
+   * dead connection: force a close so the rejoin path re-establishes and
+   * resyncs the document.
+   */
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.lastMessageAt = Date.now();
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - this.lastMessageAt > 45000) {
+        try {
+          this.socket.close();
+        } catch {
+          /* already closed */
+        }
+        return;
+      }
+      if (this.isJoined) {
+        try {
+          this.send({ t: "ping" });
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 20000);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   // -------- Incoming messages --------
@@ -257,6 +316,7 @@ export class CollaborationStore {
         this.roomId = msg.room;
         this.role = msg.role;
         this.ownerId = msg.ownerId;
+        this.seq = msg.seq;
         this.permissions.clear();
         for (const [id, role] of Object.entries(msg.permissions)) this.permissions.set(id, role);
         const prev = new Set(this.peers.keys());
@@ -265,7 +325,8 @@ export class CollaborationStore {
           const role = u.id === msg.ownerId ? "owner" : msg.permissions[u.id] || "viewer";
           this.peers.set(u.id, { user: u, role, presence: prev.has(u.id) ? this.peers.get(u.id)!.presence ?? null : null, selection: [] });
         }
-        if (msg.file) this.onRemoteFile?.(msg.file as Record<string, unknown>);
+        this.startHeartbeat();
+        this.onJoined?.(msg.file ?? null, msg.seq);
         this.flushBacklog();
         this.changed.emit();
         break;
@@ -299,7 +360,16 @@ export class CollaborationStore {
         break;
       }
       case "snapshot": {
+        // Legacy whole-file broadcast from an older peer.
         if (msg.user.id !== this.user?.id) this.onRemoteFile?.(msg.file);
+        break;
+      }
+      case "ops": {
+        this.seq = Math.max(this.seq, msg.seq);
+        this.onOps?.({ user: msg.user, seq: msg.seq, baseSeq: msg.baseSeq, ops: msg.ops });
+        break;
+      }
+      case "pong": {
         break;
       }
       case "perm:changed": {

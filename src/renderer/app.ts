@@ -43,14 +43,19 @@ import { buildPdfFromJpegs, type PdfPage } from "../shared/export/pdf.js";
 import { bytesToBase64 } from "../shared/export/base64.js";
 import { TEMPLATES, templateById } from "../shared/templates/templates.js";
 import { CollaborationStore } from "./state/collaborationStore.js";
+import { CollabSync } from "./state/collabSync.js";
 import { CollabUI, type CollabShareView } from "./ui/collabUI.js";
 import { loadCollabIdentity } from "./state/collabIdentity.js";
 import { sanitizeRoomId, DEFAULT_COLLAB_URL, type CollabUser } from "../shared/collab/protocol.js";
 import { createId } from "../shared/core/id.js";
+import { importMarkdown, importOPML, importFreeMind, importExcalidraw, importMiro } from "../shared/import/importers.js";
 import { AssetsUI } from "./ui/assetsUI.js";
 import { APP_VERSION } from "../shared/core/version.js";
 
 const EFFECTS_KEY = "spatia:reduced-effects";
+
+/** Remembered across sessions: whether the user hid the Properties panel. */
+const INSPECTOR_HIDDEN_KEY = "spatia.inspector.hidden";
 
 /** Font families offered in the text-object inspector (CSS-safe names). */
 const FONT_CHOICES = ["Arial", "Calibri", "Courier New", "Georgia", "Segoe UI", "Times New Roman", "Trebuchet MS", "Verdana"];
@@ -98,12 +103,13 @@ export class App {
   private collab = new CollaborationStore();
   private collabUi = new CollabUI();
   private assetsUi = new AssetsUI();
+  private collabSync = new CollabSync(this.collab, this.project);
   private collabIdentity: CollabUser | null = null;
-  private collabSnapshotTimer: number | null = null;
   private overlayTimer: number | null = null;
-  private applyingRemote = false;
   private pendingJoinRoom = "";
   private inspectorMinimized = false;
+  /** User dismissed the Properties panel; selection changes must not reopen it. */
+  private inspectorHidden = false;
 
   /** File path of the current project once a save location exists. */
   private activeFilePath: string | null = null;
@@ -334,6 +340,12 @@ export class App {
       { id: "export-pdf", category: "Export", label: "Export PDF…", keywords: "document print", enabled: () => true, run: () => this.exportFormat("pdf") },
       { id: "export-markdown", category: "Export", label: "Export Markdown…", keywords: "md text", enabled: () => true, run: () => this.exportFormat("md") },
       { id: "export-spatia", category: "Export", label: "Export Spatia…", keywords: "spatia folder project file", enabled: () => true, run: () => this.exportFormat("spatia-folder") },
+      // -------- Import --------
+      { id: "import-markdown", category: "Import", label: "Import Markdown…", keywords: "md text note import", enabled: () => true, run: () => void this.importTextFile("markdown") },
+      { id: "import-opml", category: "Import", label: "Import OPML / Outline…", keywords: "outline opml rss import", enabled: () => true, run: () => void this.importTextFile("opml") },
+      { id: "import-freemind", category: "Import", label: "Import FreeMind (Mindmap)…", keywords: "freemind mm mind map import", enabled: () => true, run: () => void this.importTextFile("freemind") },
+      { id: "import-excalidraw", category: "Import", label: "Import Excalidraw…", keywords: "excalidraw json import", enabled: () => true, run: () => void this.importTextFile("excalidraw") },
+      { id: "import-miro", category: "Import", label: "Import Miro Board…", keywords: "miro board json import", enabled: () => true, run: () => void this.importTextFile("miro") },
       // -------- Application --------
       { id: "plugins", category: "Application", label: "Plugins", keywords: "extensions addons", enabled: () => true, run: () => this.openPluginsDialog() },
       { id: "settings", category: "Application", label: "Settings", keywords: "preferences options", enabled: () => true, run: () => this.openSettingsDialog() },
@@ -423,7 +435,10 @@ export class App {
     this.collabUi.onPermSet = (userId, role) => this.collab.sendPermSet(userId, role);
 
     this.collab.onRemoteFile = (file) => this.applyRemoteFile(file);
+    this.collab.onJoined = (file, seq) => this.collabSync.onJoined(file, seq);
+    this.collab.onOps = (msg) => this.collabSync.onOps(msg);
     this.collab.changed.subscribe(() => {
+      this.collabSync.setEnabled(this.collab.isJoined && this.collab.canEdit);
       this.refreshCollabUi();
       this.refreshAssetsUi();
     });
@@ -597,17 +612,34 @@ export class App {
     const user = await this.ensureCollabIdentity();
     const room = this.collab.roomId || createId("room");
     const url = this.collab.serverUrl || DEFAULT_COLLAB_URL;
+    // Zero-setup: attempt to start the local collaboration server before the
+    // first connect so "Share this project" works out of the box (desktop).
+    if (!this.collab.isJoined && this.collab.status !== "connected") {
+      const started = await this.startLocalCollabServer();
+      if (!started && this.collab.status === "error") {
+        this.setStatus("Could not reach the collaboration server. Start it with `npm run server`.");
+      }
+    }
     if (!this.collab.isJoined) {
       this.collab.connect(url);
-      if (this.collab.status === "connecting") {
-        // Wait for open before joining (store joins on open via pendingJoin).
-        this.collab.join(room, user);
-      } else {
-        this.collab.join(room, user);
-      }
+      this.collab.join(room, user);
     }
     this.collabUi.openShare();
     this.refreshCollabUi();
+  }
+
+  /** Best-effort local server start (desktop only; web is a no-op). */
+  private async startLocalCollabServer(): Promise<boolean> {
+    try {
+      const result = await window.spatia.collabStartServer(8787);
+      if (result?.started) {
+        this.setStatus("Collaboration server started.");
+        return true;
+      }
+    } catch {
+      /* bridge not present (web) — falls through */
+    }
+    return false;
   }
 
   private async copyInviteLink(): Promise<void> {
@@ -647,16 +679,8 @@ export class App {
         lastSyncedAt: new Date().toISOString(),
       });
     }
-    // Push the current document once after (re)joining so the room always has a
-    // baseline for new members.
-    if (this.collab.isJoined && this.collab.canEdit && !this.collabBaselineSent) {
-      this.collabBaselineSent = true;
-      this.scheduleCollabSnapshot();
-    }
-    if (!this.collab.isJoined) this.collabBaselineSent = false;
   }
   private lastCollabStatusText = "";
-  private collabBaselineSent = false;
 
   private shareView(): CollabShareView {
     const peers = [...this.collab.peers.values()].map((p) => ({ user: p.user, role: p.role }));
@@ -701,31 +725,12 @@ export class App {
     });
   }
 
-  private scheduleCollabSnapshot(): void {
-    if (!this.collab.isJoined || !this.collab.canEdit || this.applyingRemote) return;
-    if (this.collabSnapshotTimer !== null) return;
-    this.collabSnapshotTimer = window.setTimeout(() => {
-      this.collabSnapshotTimer = null;
-      if (!this.collab.isJoined || !this.collab.canEdit) return;
-      try {
-        this.collab.sendSnapshot(JSON.parse(this.serialize()) as Record<string, unknown>);
-      } catch {
-        /* serialization is validated before sending */
-      }
-    }, 700);
-  }
-
-  /** A peer's authoritative document snapshot replaces this session's state. */
+  /** A peer's legacy authoritative whole-file snapshot replaces this session. */
   private applyRemoteFile(file: Record<string, unknown>): void {
     try {
       const parsed = deserialize(JSON.stringify(file));
       const doc: ProjectDocument = { ...fileToDocument(parsed) };
-      this.applyingRemote = true;
-      try {
-        this.applyDocument(doc);
-      } finally {
-        this.applyingRemote = false;
-      }
+      this.applyDocument(doc);
       this.setStatus("Loaded the shared document from the room.");
     } catch {
       this.setStatus("Received a document that doesn't match the Spatia format.");
@@ -1798,22 +1803,38 @@ async importProject(): Promise<void> {
     const h = obj.height * frame.zoom;
     const fontSize = (obj.type === "text" ? obj.fontSize : obj.width * 0.07) * frame.zoom;
     const fontFamily = obj.type === "text" ? obj.fontFamily : undefined;
+    let formatUsed = false;
+    // The toolbar renders 34px above the box; keep it within the viewport top.
+    const toolTop = Math.max(0, tl.y - 36);
 
     openTextEditor({
       left: tl.x,
-      top: tl.y,
+      top: toolTop,
       width: w,
       height: h,
       fontSize,
       value: obj.text,
       multiline: true,
       fontFamily,
+      markup: true,
+      onFormatUsed: () => {
+        formatUsed = true;
+      },
       onCommit: (text) => {
-        if (text === obj.text) {
+        if (text === obj.text && !formatUsed) {
           this.refreshUI();
           return;
         }
         const changes: PropChange[] = [{ id: obj.id, key: "text", before: obj.text, after: text }];
+        // Enable rich rendering as soon as the user applies any formatting.
+        if (formatUsed && obj.metadata?.richText !== true) {
+          changes.push({
+            id: obj.id,
+            key: "metadata",
+            before: { ...(obj.metadata ?? {}) },
+            after: { ...(obj.metadata ?? {}), richText: true },
+          });
+        }
         // Grow the text object with its content so long text never clips after
         // commit (a rough pass when no canvas measure is available).
         if (obj.type === "text") {
@@ -2131,6 +2152,81 @@ async importProject(): Promise<void> {
     }
     this.viewport.set(next);
     this.setStatus(`Focused ${this.selection.size} object${this.selection.size === 1 ? "" : "s"}.`);
+  }
+
+  // -------- Text/JSON import --------
+
+  private async importTextFile(
+    format: "markdown" | "opml" | "freemind" | "excalidraw" | "miro"
+  ): Promise<void> {
+    const pick: Record<typeof format, { title: string; ext: string[] }> = {
+      markdown: { title: "Import Markdown", ext: ["md", "markdown", "txt"] },
+      opml: { title: "Import OPML / Outline", ext: ["opml", "txt"] },
+      freemind: { title: "Import FreeMind map", ext: ["mm", "txt"] },
+      excalidraw: { title: "Import Excalidraw", ext: ["json"] },
+      miro: { title: "Import Miro board", ext: ["json"] },
+    };
+    const cfg = pick[format];
+    let res: { canceled: boolean; name: string; contents: string };
+    try {
+      res = await window.spatia.pickImportText(cfg.title, cfg.ext);
+    } catch {
+      this.setStatus("Import is not available in this build.");
+      return;
+    }
+    if (res.canceled || !res.contents) {
+      this.setStatus("Import canceled.");
+      return;
+    }
+    let objects: CanvasObject[];
+    switch (format) {
+      case "markdown":
+        objects = importMarkdown(res.contents);
+        break;
+      case "opml":
+        objects = importOPML(res.contents);
+        break;
+      case "freemind":
+        objects = importFreeMind(res.contents);
+        break;
+      case "excalidraw":
+        objects = importExcalidraw(res.contents);
+        break;
+      case "miro":
+        objects = importMiro(res.contents);
+        break;
+    }
+    if (objects.length === 0) {
+      this.setStatus(`No content found in "${res.name}".`);
+      return;
+    }
+    this.addImportedObjects(objects, res.name);
+  }
+
+  /** Insert imported objects centred on the current view centre. */
+  private addImportedObjects(objects: CanvasObject[], name: string): void {
+    const center = this.centerWorld();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const o of objects) {
+      minX = Math.min(minX, o.x);
+      minY = Math.min(minY, o.y);
+      maxX = Math.max(maxX, o.x + o.width);
+      maxY = Math.max(maxY, o.y + o.height);
+    }
+    const offX = center.x - (minX + maxX) / 2;
+    const offY = center.y - (minY + maxY) / 2;
+    const placed = objects.map((o) => ({ ...o, x: o.x + offX, y: o.y + offY, zIndex: this.project.nextZIndex() }));
+    const ids: string[] = [];
+    for (const o of placed) {
+      this.commands.execute(addObjectCommand(this.project, o));
+      ids.push(o.id);
+    }
+    this.selection.setIds(ids);
+    this.refreshUI();
+    this.setStatus(`Imported ${placed.length} object${placed.length === 1 ? "" : "s"} from "${name}".`);
   }
 
   private isolateSelection(): void {
@@ -2510,7 +2606,7 @@ async importProject(): Promise<void> {
       if (this.isolation && !this.project.getObject(this.isolation.containerId)) this.exitIsolation();
       this.refreshUI();
       this.scheduleOverlayUpdate();
-      this.scheduleCollabSnapshot();
+      this.collabSync.pushState();
       this.scheduleAutoSave();
       this.scheduleRecovery();
     });
@@ -2595,40 +2691,41 @@ async importProject(): Promise<void> {
   }
 
   private updateInspector(): void {
+    const view = this.inspectorView();
+    // Content is always rendered so a hidden panel is up to date the instant
+    // the user shows it again; only the open/closed state respects `hidden`.
+    if (view.html !== null) this.ui.setInspector(view.html);
+    this.ui.setInspectorOpen(!this.inspectorHidden && view.open);
+  }
+
+  /**
+   * Compute the Properties body plus whether the current tool/selection state
+   * wants it open. Kept separate from the DOM so the hidden-vs-selection rules
+   * stay easy to reason about (and to test).
+   */
+  private inspectorView(): { html: string | null; open: boolean } {
     // While the pen tool is active the inspector hosts the pen's tool panel
     // (size / color / eraser) so new strokes are fully editable; drawing never
     // holds a selection, so the object view is irrelevant here.
     if (this.engine.isPenTool()) {
       this.setInspectorMinimized(false);
-      this.ui.setInspectorOpen(true);
-      this.ui.setInspector(this.penToolInspector());
-      return;
+      return { html: this.penToolInspector(), open: true };
     }
     // Ink selection (freehand strokes) takes priority over the object view
     // when strokes are selected, since stroke objects are rarely edited through
     // the object inspector.
     if (this.engine.hasInkSelection()) {
-      this.ui.setInspectorOpen(true);
-      this.ui.setInspector(this.inkInspector());
-      return;
+      return { html: this.inkInspector(), open: true };
     }
     const ids = this.selection.get();
-    if (ids.length === 0) {
-      this.ui.setInspectorOpen(false);
-      return;
-    }
-    this.ui.setInspectorOpen(true);
+    if (ids.length === 0) return { html: null, open: false };
     if (ids.length === 1) {
       const obj = this.project.getObject(ids[0]);
-      if (!obj) {
-        this.ui.setInspector(`<span class="inspector-empty">Select an object</span>`);
-        return;
-      }
-      this.ui.setInspector(this.inspectorFor(obj));
+      if (!obj) return { html: `<span class="inspector-empty">Select an object</span>`, open: true };
       void this.refreshMissingFlag(obj);
-    } else {
-      this.ui.setInspector(`<span class="inspector-empty">${ids.length} objects selected</span>`);
+      return { html: this.inspectorFor(obj), open: true };
     }
+    return { html: `<span class="inspector-empty">${ids.length} objects selected</span>`, open: true };
   }
 
   /** Inspector view shown while the pen tool is active (live tool style). */
@@ -3178,7 +3275,7 @@ async importProject(): Promise<void> {
     this.setupInspectorWindowControls();
   }
 
-  /** Window controls for the Properties panel: minimize-to-chip + close. */
+  /** Window controls for the Properties panel: minimize-to-chip + hide. */
   private setupInspectorWindowControls(): void {
     const header = document.querySelector<HTMLElement>("#inspector .inspector-header");
     if (!header) return;
@@ -3189,12 +3286,50 @@ async importProject(): Promise<void> {
       if (act === "min") this.setInspectorMinimized(true);
       else if (act === "expand") this.setInspectorMinimized(false);
       else if (act === "close") {
-        this.setInspectorMinimized(false);
-        this.ui.setInspectorOpen(false);
-        this.setStatus("Properties closed — selecting an object reopens them.");
+        this.setInspectorHidden(true);
+        this.setStatus("Properties hidden — use the Properties button to show them again.");
       }
     });
     this.renderInspectorHeader(header);
+
+    // Restore the user's hide/show preference and wire the always-on reopen
+    // affordance that replaces the panel while it is hidden.
+    this.inspectorHidden = this.loadInspectorHidden();
+    document.getElementById("inspector-reopen")?.addEventListener("click", () => {
+      this.setInspectorHidden(false);
+    });
+    this.updateInspectorReopen();
+    this.updateInspector();
+  }
+
+  /**
+   * Hide or show the Properties panel. The choice is remembered across
+   * sessions, and while hidden selection changes never force the panel back
+   * open (the reopen button is the only way back).
+   */
+  setInspectorHidden(hidden: boolean): void {
+    this.inspectorHidden = hidden;
+    try {
+      window.localStorage.setItem(INSPECTOR_HIDDEN_KEY, hidden ? "1" : "0");
+    } catch {
+      /* storage unavailable — keep the in-memory state */
+    }
+    if (hidden) this.setInspectorMinimized(false);
+    this.updateInspectorReopen();
+    this.updateInspector();
+  }
+
+  private loadInspectorHidden(): boolean {
+    try {
+      return window.localStorage.getItem(INSPECTOR_HIDDEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  private updateInspectorReopen(): void {
+    const reopen = document.getElementById("inspector-reopen");
+    if (reopen) reopen.hidden = !this.inspectorHidden;
   }
 
   private renderInspectorHeader(header: HTMLElement): void {

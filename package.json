@@ -1,6 +1,6 @@
 {
   "name": "spatia",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Spatia — a local-first visual infinite workspace.",
   "author": "Spatia",
   "license": "MIT",
@@ -18,7 +18,8 @@
     "server": "node server/server.js",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
-    "package:msi": "npm run build && node scripts/make-ico.js && electron-builder --win msi"
+    "package:msi": "npm run build && node scripts/make-ico.js && node scripts/package-win.js msi",
+    "package:zip": "npm run build && node scripts/make-ico.js && node scripts/package-win.js zip"
   },
   "build": {
     "appId": "com.spatia.desktop",
@@ -33,7 +34,6 @@
       "package.json"
     ],
     "asar": true,
-    "electronDist": "node_modules/electron/dist",
     "win": {
       "icon": "build/icon.ico",
       "target": [
@@ -42,6 +42,39 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Spatia-${version}-win-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Graphics",
+      "executableName": "spatia",
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
+      "fileAssociations": [
+        {
+          "ext": "spatia",
+          "name": "Spatia Canvas",
+          "description": "Spatia canvas document"
+        },
+        {
+          "ext": "spatia.json",
+          "name": "Spatia Canvas JSON",
+          "description": "Spatia canvas document (JSON)"
         }
       ]
     },

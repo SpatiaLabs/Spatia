@@ -16,6 +16,13 @@
  * compiled `dist/` output so the server and clients never drift. Run with:
  *
  *   npm run server [-- --port 8787 --data ./server-data]
+ *
+ * Since 0.5.1 the server also accepts targeted `ops` batches: each admitted
+ * batch bumps the room's monotonic `seq` and is broadcast to every member
+ * (including the sender, which treats its copy as an acknowledgement). Ops are
+ * last-writer-wins per object, so concurrent editors converge — a stale
+ * `baseSeq` is only rejected when it is ahead of the room (impossible after a
+ * fresh join, which always ships the full authoritative file + seq).
  */
 
 const path = require("node:path");
@@ -26,6 +33,7 @@ const { WebSocketServer } = require("ws");
 // The shared protocol is compiled by the test build (`npm run build:test`),
 // so the server imports it from the same compiled tree the tests use.
 const protocol = require("../dist/test/shared/collab/protocol.js");
+const opsModule = require("../dist/test/shared/collab/ops.js");
 
 const args = process.argv.slice(2);
 function argValue(name, fallback) {
@@ -51,6 +59,9 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
  * @property {Record<string, import("./protocol").CollabRole>} permissions
  * @property {Record<string, unknown> | null} file
  *        Last authoritative ProjectFile snapshot.
+ * @property {number} seq
+ *        Monotonic linearization counter — bumped once per file-changing batch
+ *        (ops or a legacy snapshot). Clients derive their `baseSeq` from it.
  * @property {string} createdAt
  * @property {string} updatedAt
  */
@@ -76,6 +87,7 @@ function loadRoom(roomId) {
     ownerId: persisted && typeof persisted.ownerId === "string" ? persisted.ownerId : "",
     permissions: sanitizePermissions(persisted ? persisted.permissions : undefined),
     file: persisted && persisted.file ? persisted.file : null,
+    seq: persisted && typeof persisted.seq === "number" ? persisted.seq : 0,
     createdAt: (persisted && persisted.createdAt) || new Date().toISOString(),
     updatedAt: (persisted && persisted.updatedAt) || new Date().toISOString(),
   };
@@ -98,6 +110,18 @@ function persistRoom(room) {
   const tmp = `${roomFile(room.roomId)}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(room, null, 2));
   fs.renameSync(tmp, roomFile(room.roomId));
+}
+
+/** An empty v5 file used as the on-disk baseline for ops-only rooms. */
+function emptyRoomFile() {
+  const now = new Date().toISOString();
+  return {
+    formatVersion: 5,
+    project: { id: "", name: "Shared room", createdAt: now, updatedAt: now },
+    viewport: { x: 0, y: 0, zoom: 1 },
+    objects: [],
+    assets: [],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +262,7 @@ function handle(socket, msg, joined) {
         users,
         permissions: { ...room.permissions },
         file: room.file,
+        seq: room.seq,
       });
       broadcastOthers(room, socket, { t: "peer:join", user: msg.user });
       break;
@@ -267,8 +292,44 @@ function handle(socket, msg, joined) {
       }
       joined.lastSnapshotAt = now;
       room.file = msg.file;
+      room.seq += 1;
       persistRoom(room);
       broadcastOthers(room, socket, { t: "snapshot", user: joined.user, file: msg.file });
+      break;
+    }
+
+    case "ops": {
+      const room = rooms.get(joined.roomId);
+      if (!canEdit(roleFor(room, joined.user.id))) {
+        return send(socket, { t: "denied", action: "read-only viewer — ask the owner for editing access" });
+      }
+      // A baseSeq beyond the room's counter is impossible after a fresh join
+      // (which ships file + seq); treat it as a resync request instead of
+      // accepting ungrounded edits.
+      if (msg.baseSeq > room.seq) {
+        return send(socket, { t: "denied", action: "sequence out of date — reconnect and rejoin to resync" });
+      }
+      if (!room.file) room.file = emptyRoomFile();
+      const applied = opsModule.applyOps(
+        { objects: room.file.objects, assets: room.file.assets, meta: room.file.project },
+        msg.ops
+      );
+      if (applied === 0) {
+        // The batch changed nothing (e.g. a re-sent, already-applied diff).
+        // Ack only the sender so its sync engine advances its baseline; do NOT
+        // bump seq or rebroadcast, since the room state is untouched.
+        return send(socket, { t: "ops", user: joined.user, seq: room.seq, baseSeq: msg.baseSeq, ops: msg.ops });
+      }
+      room.seq += 1;
+      persistRoom(room);
+      // Broadcast to the whole room INCLUDING the sender, whose copy this is —
+      // it doubles as the acknowledgement the sync engine flushes on.
+      broadcast(room, null, { t: "ops", user: joined.user, seq: room.seq, baseSeq: msg.baseSeq, ops: msg.ops });
+      break;
+    }
+
+    case "ping": {
+      send(socket, { t: "pong" });
       break;
     }
 

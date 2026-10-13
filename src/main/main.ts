@@ -8,9 +8,36 @@ let inviteDeliveryReady = false;
 
 app.setName("Spatia");
 
+// Windows: a stable AppUserModelID keeps taskbar grouping, notifications and
+// the Jump List attached to the installed app rather than the Electron shell.
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.spatia.desktop");
+}
+
 const SPDT_URL_SCHEME = "spatia";
 // Flags used by the packaged app; ignored (but harmless) in dev.
 app.setAsDefaultProtocolClient(SPDT_URL_SCHEME);
+
+/** A Jump List task = a one-click entry in the taskbar's right-click menu. */
+function installWindowsJumpList(): void {
+  // No-op on non-Windows platforms (addRecentDocument and setUserTasks are
+  // Windows/macOS APIs; the macOS dock ignores tasks).
+  if (process.platform !== "win32") return;
+  try {
+    app.setUserTasks([
+      {
+        program: process.execPath,
+        arguments: "",
+        title: "New workspace",
+        description: "Open a fresh Spatia canvas",
+        iconPath: process.execPath,
+        iconIndex: 0,
+      },
+    ]);
+  } catch {
+    /* the Jump List is best-effort */
+  }
+}
 
 /** Deliver a queued invite once the renderer is ready to receive it. */
 function flushInvite(): void {
@@ -51,6 +78,7 @@ if (!gotLock) {
 
   function onReady(): void {
     registerIpc();
+    installWindowsJumpList();
     mainWindow = createMainWindow();
     mainWindow.webContents.once("did-finish-load", () => {
       inviteDeliveryReady = true;

@@ -1,0 +1,4 @@
+# Surge deploy ignore list (gitignore syntax).
+# Windows installers are hosted on GitHub Releases now, not on the Surge CDN,
+# so keep the large download/ binaries out of the publish payload.
+download/

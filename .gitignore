@@ -13,10 +13,14 @@ release-*/
 
 # Website build output and large binaries
 Spatia Download & Web.zip
+Spatia Download & Web/download/
 Spatia Download & Web/downloads/
 Spatia Download & Web/web/js/
 Spatia Download & Web/web/app.css
 Spatia Download & Web/web/plugins/
+
+# Collaboration server runtime data (rooms/snapshots written at runtime)
+server/server-data/
 
 # Local deployment metadata
 .netlify/

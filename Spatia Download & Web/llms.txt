@@ -1,0 +1,65 @@
+# Spatia
+
+> Spatia is a free, local-first infinite canvas for organizing ideas, notes, files, and projects visually. One unbounded space where notes, text, shapes, frames, files and links live side by side — instead of pages and scrolling documents.
+
+## What Spatia is
+
+Spatia is a visual workspace, often described as an "infinite canvas" or spatial organizer. It is designed for thinking in space: place any idea anywhere, connect related items, and zoom from a bird's-eye overview of the whole workspace down to a single note. The closest mental models are an endless whiteboard, a mind-mapping surface, and a note app that does not force an order.
+
+## Key facts
+
+- Pricing: free to use. No account is required.
+- Platforms: Windows 10 / 11 (x64) desktop app, Linux (x64) desktop app, plus a Web app / installable PWA that runs in any modern browser on desktop, phones, iPads and tablets.
+- Storage: local-first. Desktop projects are saved as files on your machine; the Web app stores projects in your browser. Nothing is uploaded to a Spatia cloud.
+- Offline: the desktop app works fully offline; the Web app works offline once loaded.
+- Current version: 0.5.1.
+- Source: Spatia is open source under the MIT License; the source code is available at https://github.com/SpatiaLabs/Spatia.
+- Native scope: there is no separate iOS or Android native app — phones, iPads and tablets use the Web version.
+
+## Product capabilities
+
+- Infinite canvas with zoom and pan, a minimap, focus, and isolation modes.
+- Objects: sticky notes, text, images, files, links, frames, seven built-in shapes, groups, and freehand pen strokes.
+- Rich text in notes and text: bold, italic, underline, inline code, links, headings, bullets and numbered lists — lightweight inline markup stored as plain text.
+- Connection lines and arrows that follow objects as they move or resize.
+- Freehand pen with real-time ink, a stabilizer, stylus pressure support, and a partial or whole-stroke eraser.
+- Eight starter templates: blank, brainstorming, project planning, mind map, study, notes, product planning, personal.
+- Search, tags, projects, folders, and version history with automatic snapshots.
+- Import Markdown, OPML, FreeMind (.mm), Excalidraw (.excalidraw), and Miro board JSON — files convert to native objects on the canvas.
+- Export to PNG, JPEG, PDF, Markdown, and the native .spatia / .spatia.json format.
+- Plugin system: manifest-based, sandboxed, with a permissions and events API, including hosted plugins.
+- Real-time collaboration with zero setup on the desktop — click Share and the local server starts automatically. Rooms survive server restarts and reconnect automatically. Synchronization uses targeted operation sync with last-writer-wins convergence.
+
+## Frequently asked questions
+
+- Where do my projects live? Desktop: in the files you save. Web app: in your browser's local storage.
+- Does Spatia need an account? No.
+- Can I export my work? Yes — PNG, JPEG, PDF, Markdown, and .spatia / .spatia.json.
+- Is there a macOS or Linux desktop app? The desktop app targets Windows 10/11 x64 and Linux x64; the Web app runs in any modern browser.
+- Is Spatia open source? Yes. Spatia is released under the MIT License; the source code is available at https://github.com/SpatiaLabs/Spatia.
+
+## Documentation
+
+- [Spatia — main website](https://spatiaweb.surge.sh/)
+- [Getting started](https://spatiaweb.surge.sh/#/wiki/getting-started)
+- [What is Spatia?](https://spatiaweb.surge.sh/#/wiki/what-is)
+- [Canvases & projects](https://spatiaweb.surge.sh/#/wiki/canvases-projects)
+- [Saving & opening projects](https://spatiaweb.surge.sh/#/wiki/saving-open)
+- [Import & export](https://spatiaweb.surge.sh/#/wiki/import-export)
+- [Templates](https://spatiaweb.surge.sh/#/wiki/templates)
+- [Notes & text](https://spatiaweb.surge.sh/#/wiki/notes-text)
+- [Connections](https://spatiaweb.surge.sh/#/wiki/connections)
+- [Frames](https://spatiaweb.surge.sh/#/wiki/frames)
+- [Images, files & links](https://spatiaweb.surge.sh/#/wiki/images-files-urls)
+- [Drawing & shapes](https://spatiaweb.surge.sh/#/wiki/drawing-shapes)
+- [Selection & editing](https://spatiaweb.surge.sh/#/wiki/selection)
+- [Zoom, pan & navigation](https://spatiaweb.surge.sh/#/wiki/navigation)
+- [Keyboard shortcuts](https://spatiaweb.surge.sh/#/wiki/shortcuts)
+- [Mobile & gestures](https://spatiaweb.surge.sh/#/wiki/mobile)
+- [Search & organization](https://spatiaweb.surge.sh/#/wiki/search-organization)
+- [Plugins](https://spatiaweb.surge.sh/#/wiki/plugins)
+- [Collaboration](https://spatiaweb.surge.sh/#/wiki/collaboration)
+- [Version history & data safety](https://spatiaweb.surge.sh/#/wiki/version-history)
+- [FAQ](https://spatiaweb.surge.sh/#/wiki/faq)
+- [Troubleshooting](https://spatiaweb.surge.sh/#/wiki/troubleshooting)
+- [What's new in 0.5.1](https://spatiaweb.surge.sh/#/wiki/whats-new)

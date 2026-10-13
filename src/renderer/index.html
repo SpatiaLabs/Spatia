@@ -117,6 +117,9 @@
           <div class="inspector-header">Properties</div>
           <div id="inspector-body" class="inspector-body"><span class="inspector-empty">Select an object</span></div>
         </aside>
+        <button id="inspector-reopen" class="inspector-reopen" type="button" aria-label="Show properties" hidden>
+          <span class="inspector-reopen-dot" aria-hidden="true"></span>Properties
+        </button>
       </main>
       <aside id="assets-panel" class="assets-panel" aria-hidden="true">
         <div class="inspector-header assets-header">
@@ -320,6 +323,7 @@
         <div class="url-dialog-box share-dialog-box">
           <div class="inspector-header url-dialog-title">Share &amp; collaborate</div>
           <div id="share-status" class="share-status share-status-offline"></div>
+          <p class="share-server-hint">Sharing starts the local collaboration server automatically (desktop), or connect to a server you already run.</p>
           <div class="share-server-row">
             <input
               id="share-url"

@@ -8,13 +8,15 @@ Spatia is a local-first visual infinite workspace for notes, sketches, and docum
 
 - **Infinite canvas** — zoom, pan, minimap, plus workspace *focus* and *isolation*.
 - **Notes, text, images, files & connections** — drop content straight onto the board.
+- **Rich text formatting** — bold, italic, underline, code, links, headings, bullets and numbered lists inside notes and text objects, stored as lightweight inline markup.
 - **First-class pen & eraser** — real-time ink with smoothing and pressure support, plus partial- and whole-stroke erasing with a live preview of the result.
 - **Shapes & selection** — add, resize, rotate, select, and organize objects.
 - **Fast fuzzy search** — find anything in a project (`Ctrl+F`, `/`, or the Search button).
 - **Templates** — start from a reusable template.
+- **Import interoperability** — import Markdown, OPML, FreeMind, Excalidraw and Miro files onto the canvas as native objects.
 - **Version history & data safety** — desktop autosave plus up to 20 snapshots per project, with manual and on-open captures you can restore at any time.
 - **Plugins** — a sandboxed plugin system (API v2) with an explicit permission model ([view][perms]) and shared validation for desktop, web, and renderer.
-- **Real-time collaboration** — an optional self-hosted collaboration server ([server/](server/)).
+- **Real-time collaboration** — zero-setup on desktop (click Share and the local server starts automatically); manual server setup also available ([server/](server/)).
 - **Portable & offline** — `.spatia` files are plain text in **SSON**, Spatia's versioned structured object notation; unknown/newer format versions are rejected rather than silently corrupted.
 
 [perms]: src/shared/plugins/manifest.ts
@@ -27,11 +29,9 @@ Try Spatia in your browser at **<https://spatiaweb.surge.sh>** — installable a
 
 ### Download a ready-made build
 
-Prebuilt Windows releases (an installer, `.msi`) are published on
-[GitHub Releases](https://github.com/ji2-2/Spatia/releases). Download
-`Spatia-0.5.0-win-x64.msi` and run it to install, or grab the portable
-`Spatia-0.5.0-win-x64.zip` for a no-install option (extract and run
-`Spatia.exe`).
+Prebuilt Windows x64 installers are published on
+[GitHub Releases](https://github.com/SpatiaLabs/Spatia/releases). Download
+`Spatia-0.5.1-win-x64.msi` and run it to install Spatia.
 
 ### Build and run from source
 
@@ -42,10 +42,10 @@ npm ci
 npm run dev        # compile and launch the Electron app
 ```
 
-Produce the Windows installer (MSI):
+Produce the Windows ZIP package:
 
 ```sh
-npm run package:msi   # writes release/Spatia-<version>-x64.msi
+npm run package:zip   # writes release/Spatia-<version>-win-x64.zip
 ```
 
 ## Web app / website
@@ -103,7 +103,7 @@ Contributions are welcome. Please keep these patterns in mind:
 - TypeScript for all application code (no plain JS), with `npm run typecheck` passing.
 - Pure/parseable logic belongs in `src/shared/` with tests in `src/tests/`.
 - Before opening a PR, run `npm run typecheck`, `npm test`, and `npm run build:web` if the website/web app changed.
-- Bugs and ideas go through [GitHub Issues](https://github.com/ji2-2/Spatia/issues).
+- Bugs and ideas go through [GitHub Issues](https://github.com/SpatiaLabs/Spatia/issues).
 
 ## License
 

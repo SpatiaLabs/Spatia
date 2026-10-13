@@ -1,12 +1,20 @@
 /**
- * Real-time collaboration wire protocol (Phase 2, M4).
+ * Real-time collaboration wire protocol (Phase 2, M4 / 0.5.1 ops sync).
  *
  * Pure, dependency-free message types and validators shared by the Electron
  * renderer, the web build and the local collaboration server (which imports
  * this module from the compiled `dist/` output). The protocol is JSON over
  * a single WebSocket per client; the server is authoritative for permissions
  * and persists rooms under `server-data/`.
+ *
+ * Since 0.5.1 the document syncs as targeted `ops` batches instead of whole
+ * files: each client diffs against its baseline and the server linearizes
+ * admitted batches with a monotonic per-room `seq` (last-writer-wins per
+ * object). Legacy `snapshot` messages remain on the wire so older clients keep
+ * working in mixed rooms.
  */
+
+import { isCollabOp, type CollabOp } from "./ops.js";
 
 export type CollabRole = "owner" | "editor" | "viewer";
 
@@ -25,22 +33,28 @@ export type ClientMessage =
   | { t: "presence"; x: number; y: number }
   | { t: "selection"; ids: string[] }
   | { t: "snapshot"; file: Record<string, unknown> }
+  | { t: "ops"; baseSeq: number; ops: CollabOp[] }
+  | { t: "ping" }
   | { t: "perm:set"; userId: string; role: CollabRole };
 
 /** Server -> client. */
 export type ServerMessage =
-  | { t: "joined"; room: string; role: CollabRole; ownerId: string; users: CollabUser[]; permissions: Record<string, CollabRole>; file: Record<string, unknown> | null }
+  | { t: "joined"; room: string; role: CollabRole; ownerId: string; users: CollabUser[]; permissions: Record<string, CollabRole>; file: Record<string, unknown> | null; seq: number }
   | { t: "peer:join"; user: CollabUser }
   | { t: "peer:leave"; user: CollabUser }
   | { t: "presence"; user: CollabUser; x: number; y: number }
   | { t: "selection"; user: CollabUser; ids: string[] }
   | { t: "snapshot"; user: CollabUser; file: Record<string, unknown> }
+  | { t: "ops"; user: CollabUser; seq: number; baseSeq: number; ops: CollabOp[] }
+  | { t: "pong" }
   | { t: "perm:changed"; user: CollabUser; userId: string; role: CollabRole }
   | { t: "error"; reason: string }
   | { t: "denied"; action: string };
 
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
 export const MAX_TAGS = 100;
+/** Cap on ops per message so a batch stays well below MAX_MESSAGE_BYTES. */
+export const MAX_OPS_PER_MESSAGE = 5000;
 export const ROOM_ID_PATTERN = /^[a-zA-Z0-9_-]{4,64}$/;
 export const DEFAULT_COLLAB_URL = "ws://localhost:8787";
 
@@ -161,6 +175,19 @@ export function validateClientMessage(raw: unknown): { message: ClientMessage } 
       const file = m.file as Record<string, unknown>;
       if (file.formatVersion !== 5) return { reason: "unsupported format version" };
       return { message: { t: "snapshot", file } };
+    }
+    case "ops": {
+      if (typeof m.baseSeq !== "number" || !Number.isInteger(m.baseSeq) || m.baseSeq < 0) {
+        return { reason: "invalid baseSeq" };
+      }
+      if (!Array.isArray(m.ops) || m.ops.length === 0 || m.ops.length > MAX_OPS_PER_MESSAGE) {
+        return { reason: "invalid ops batch" };
+      }
+      if (!m.ops.every(isCollabOp)) return { reason: "invalid op" };
+      return { message: { t: "ops", baseSeq: m.baseSeq, ops: m.ops as CollabOp[] } };
+    }
+    case "ping": {
+      return { message: { t: "ping" } };
     }
     case "perm:set": {
       if (typeof m.userId !== "string" || m.userId.length === 0) return { reason: "invalid user id" };

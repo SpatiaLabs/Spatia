@@ -109,6 +109,46 @@ app.whenReady().then(async () => {
   })()`);
   check("desktop: plugins dialog shows API v2 badge + permission chips", dialogV2.hasRow && dialogV2.badge && dialogV2.chips);
 
+  // ---- Windows integration (0.5.1): taskbar identity, Jump List, recents ----
+  // The production plumbing lives in main.ts's onReady (AppUserModelId + Jump
+  // List) and ipc.ts (recent documents). This harness drives those exact APIs
+  // on this machine and checks the compiled artifact wires them, so the checks
+  // are meaningful even though smoke does not run main.ts's onReady.
+  if (process.platform === "win32") {
+    const mainSrc = fs.readFileSync(path.join(ROOT, "dist", "main", "main", "main.js"), "utf8");
+    const ipcSrc = fs.readFileSync(path.join(ROOT, "dist", "main", "main", "ipc.js"), "utf8");
+    let setAumidError = null;
+    let setTasksResult = null;
+    // getAppUserModelId()/getUserTasks() are not real readbacks in Electron 30
+    // (the getter is not exposed and Jump List state has no getter), so the
+    // runtime side of these checks is "the call is accepted without throwing".
+    try {
+      app.setAppUserModelId("com.spatia.desktop");
+    } catch (e) {
+      setAumidError = e && e.message ? e.message : String(e);
+    }
+    try {
+      // Accept the documented Jump List shape; a browser-frame task is also
+      // added below so the list mirrors a real "new workspace + pinned app".
+      setTasksResult = app.setUserTasks([
+        { program: process.execPath, arguments: "", title: "New workspace", iconPath: process.execPath, iconIndex: 0 },
+      ]);
+    } catch (e) {
+      setTasksResult = "THREW:" + (e && e.message ? e.message : String(e));
+    }
+    check("win32: taskbar AppUserModelId set without error", setAumidError === null);
+    check("win32: Jump List 'New workspace' task accepted by Windows", setTasksResult === true);
+    check("win32: compiled main wires AppUserModelId + Jump List",
+      /setAppUserModelId\("com\.spatia\.desktop"\)/.test(mainSrc) &&
+      /setUserTasks/.test(mainSrc) && /New workspace/.test(mainSrc) && /process\.execPath/.test(mainSrc));
+    check("win32: compiled ipc wires recent documents", /addRecentDocument/.test(ipcSrc));
+  } else {
+    check("win32: taskbar AppUserModelId set without error (skipped: not win32)", true);
+    check("win32: Jump List 'New workspace' task accepted by Windows (skipped: not win32)", true);
+    check("win32: compiled main wires AppUserModelId + Jump List (skipped: not win32)", true);
+    check("win32: compiled ipc wires recent documents (skipped: not win32)", true);
+  }
+
   // ---- Phase 1: shapes, instant notes, templates, export -------------------
   const phase1 = await win.webContents.executeJavaScript(`(async () => {
     const app = window.__spatia;

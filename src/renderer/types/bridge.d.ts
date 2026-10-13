@@ -99,6 +99,8 @@ export interface SpatiaApi {
   exportProject(projectId: string, json: string, suggestedName: string): Promise<ExportResult>;
   exportFile(kind: ExportFileKind, suggestedName: string, payload: string): Promise<ExportResult>;
   importProject(): Promise<ImportProjectResult>;
+  /** Pick a text/JSON/XML file and return its contents without opening it. */
+  pickImportText(title: string, extensions?: string[]): Promise<{ canceled: boolean; name: string; contents: string }>;
   pickAsset(projectId: string): Promise<AssetImportResult>;
   importAssetFromPath(projectId: string, sourcePath: string, sourceName?: string): Promise<AssetImportResult>;
   readAssetDataUrl(projectId: string, assetId: string): Promise<string | null>;
@@ -140,6 +142,8 @@ export interface SpatiaApi {
   pluginsRemove(id: string): Promise<boolean>;
   /** Stable per-machine collaboration identity (persisted by the main process). */
   collabGetIdentity(): Promise<CollabIdentity>;
+  /** Start the local collaboration server (desktop). Returns started/reason. */
+  collabStartServer(port?: number): Promise<{ started: boolean; reason?: string }>;
   /** Subscribe to deep-link ("spatia://join?room=…") join requests. */
   onJoinRequest(cb: (roomId: string) => void): (() => void);
 }

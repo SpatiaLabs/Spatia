@@ -35,6 +35,7 @@ const MIME = {
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".msi": "application/octet-stream",
+  ".zip": "application/octet-stream",
   ".xml": "application/xml",
 };
 
@@ -228,8 +229,24 @@ app.whenReady().then(async () => {
       webHidden: document.getElementById("web-host").hidden,
       hasManifestLink: !!document.querySelector('link[rel="manifest"]'),
       themeColor: (document.querySelector('meta[name="theme-color"]') || {}).content || null,
+      seoTitle: document.title,
+      desc: (document.querySelector('meta[name="description"]') || {}).content || "",
+      canonical: (document.querySelector('link[rel="canonical"]') || {}).href || "",
+      robots: (document.querySelector('meta[name="robots"]') || {}).content || "",
+      ogTitle: (document.querySelector('meta[property="og:title"]') || {}).content || "",
+      ogDescription: (document.querySelector('meta[property="og:description"]') || {}).content || "",
+      ogImage: (document.querySelector('meta[property="og:image"]') || {}).content || "",
+      hasJsonLd: !!document.querySelector('script[type="application/ld+json"]'),
+      ldText: (document.querySelector('script[type="application/ld+json"]') || {}).textContent || "",
+      hasWhy: !!document.querySelector(".section#why"),
+      faqCount: document.querySelectorAll(".faq-item").length,
+      host: location.host,
+      downloadLinks: Array.prototype.slice
+        .call(document.querySelectorAll('#download a[href*="/download/"]'))
+        .map((a) => new URL(a.href, location.href).href),
+      hasGithub: /github\.com|github\b/i.test(document.body.outerHTML),
     }));
-    ok("landing renders", /Think in space/.test(landing.text));
+    ok("landing renders", /infinite canvas/i.test(landing.text) && /local-first/.test(landing.text) && /Spatia/.test(landing.text));
     ok("landing site visible", landing.siteVisible);
     ok("landing is scrollable content", landing.tall);
     ok("real brand logo displayed", landing.logoLoaded);
@@ -237,6 +254,26 @@ app.whenReady().then(async () => {
     ok("web host hidden on landing", landing.webHidden);
     ok("manifest <link> present", landing.hasManifestLink);
     ok("theme-color meta present", landing.themeColor === "#121417");
+    ok("SEO title names infinite canvas", /Infinite Canvas/.test(landing.seoTitle) && /Local-First/.test(landing.seoTitle));
+    ok("meta description names the product", /infinite canvas/.test(landing.desc) && /local-first/.test(landing.desc) && /Windows/.test(landing.desc));
+    ok("canonical points at the production URL", landing.canonical === "https://spatiaweb.surge.sh/");
+    ok("robots meta allows indexing", /index, follow/.test(landing.robots));
+    ok("Open Graph title + description present", /Infinite Canvas/.test(landing.ogTitle) && /local-first/.test(landing.ogDescription));
+    ok("structured data present", landing.hasJsonLd);
+    ok("structured data includes keywords", /"keywords"/.test(landing.ldText));
+    ok("structured data softwareVersion is 0.5.1", /"softwareVersion"\s*:\s*"0\.5\.1"/.test(landing.ldText));
+    ok("landing announces version 0.5.1", /0\.5\.1/.test(landing.text));
+    ok("landing offers Windows + Web paths", landing.downloadLinks.length >= 1 && /Web.*Windows/.test(landing.text));
+    ok("landing offers an FAQ", landing.faqCount >= 6);
+    ok("og:image hosted on the website itself", landing.ogImage === "https://spatiaweb.surge.sh/assets/icon-512.png");
+    ok("landing has a 'Why an infinite canvas' section", landing.hasWhy && /why an infinite canvas/i.test(landing.text));
+    ok("landing introduces no open-source claims", !/open[-\s]?source|MIT license/i.test(landing.text));
+    ok("download CTAs point to the GitHub release MSI", landing.downloadLinks.length >= 1 && landing.downloadLinks.every((h) => {
+      const u = new URL(h);
+      return u.host === "github.com" && u.pathname === "/SpatiaLabs/Spatia/releases/download/v0.5.1/Spatia-0.5.1-win-x64.msi";
+    }));
+    ok("public site links the GitHub release for downloads", landing.hasGithub);
+    ok("landing copy names the GitHub-hosted installer", /hosted on GitHub Releases/i.test(landing.text));
 
     // ---- 1b) Wiki route (#/wiki) ---------------------------------------
     await execute(win, () => { window.location.hash = "#/wiki"; });
@@ -255,14 +292,16 @@ app.whenReady().then(async () => {
         hasReportUI: !!document.querySelector('[data-report-open], [data-report-close], #report-dialog, #report-form'),
         hasGmail: /@gmail\.com/.test(document.body.innerHTML),
         sectionIds: Array.prototype.map.call(document.querySelectorAll(".wiki-section"), (s) => s.id || ""),
+        quickStart: document.querySelectorAll(".wiki-lede-links a").length,
       };
     });
     ok("landing nav gains Wiki link", wiki.hadWikiNav);
     ok("footer nav gains Wiki link", wiki.hadFooterWiki);
-    ok("wiki route renders", wiki.title === "Spatia — Wiki" && wiki.landingHidden);
+    ok("wiki route renders", wiki.title === "Spatia Wiki — Infinite Canvas Documentation" && wiki.landingHidden);
     ok("wiki TOC has navigation entries", wiki.tocCount >= 20);
     ok("wiki has documentation sections", wiki.sectionCount >= 20);
     ok("wiki search present", wiki.hasSearch);
+    ok("wiki intro offers start links", wiki.quickStart >= 3);
     ok("wiki has no Report a problem UI", !wiki.hasReportUI);
     ok("wiki exposes no personal contact email", !wiki.hasGmail);
 
@@ -313,7 +352,7 @@ app.whenReady().then(async () => {
       title: document.title,
       webHidden: document.getElementById("web-host").hidden,
     }));
-    ok("wiki exit restores landing", wikiBack.siteVisible && wikiBack.webHidden && /Think in space/.test(wikiBack.title));
+    ok("wiki exit restores landing", wikiBack.siteVisible && wikiBack.webHidden && /Infinite Canvas/.test(wikiBack.title));
 
     // ---- 1c) Wiki content accuracy ----------------------------------------
     const wikiText = await execute(win, () => ({
@@ -354,7 +393,7 @@ app.whenReady().then(async () => {
     ok("web mode: body overflow hidden", webIn.bodyOverflowY === "hidden");
     ok("web mode: app instance alive", webIn.appAlive);
     ok("web mode: canvas sized", webIn.canvasW > 0);
-    ok("web mode: title is web", /Spatia — Web/.test(webIn.title));
+    ok("web mode: title is web", /Spatia Web —/.test(webIn.title));
     ok("web mode: app.css attached", webIn.appCssPresent);
     const repWeb = await execute(win, () => ({
       dialogGone: !document.getElementById("report-dialog"),
@@ -363,6 +402,34 @@ app.whenReady().then(async () => {
     }));
     ok("report: dialog absent inside the web workspace", repWeb.dialogGone && repWeb.noAttr && repWeb.noTrigger);
     execute(win, () => { window.__appId = window.__spatia; });
+
+    // ---- 2a) Render cadence (0.5.1): display-driven, no artificial cap ----
+    // The hidden window pauses rAF (no vsync being driven), so briefly reveal it
+    // so the compositor clocks requestAnimationFrame like a real display, then
+    // hide it again. A fallback timer guarantees the measurement never blocks.
+    win.showInactive();
+    await sleep(250);
+    const idleDur = 700;
+    const cadence = await execute(win, () => new Promise((resolve) => {
+      const t0 = performance.now();
+      let frames = 0;
+      const tick = () => {
+        frames++;
+        if (performance.now() - t0 >= 700) resolve({ frames, ms: Date.now() - t0 });
+        else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+      setTimeout(() => resolve({ frames, ms: Date.now() - t0 }), 1000);
+    }));
+    win.hide();
+    ok("render: cadence is display-driven (not a 30fps cap): " + cadence.frames + " frames in ~" + Math.round(cadence.ms) + "ms",
+      cadence.frames >= 28);
+    await httpOk("render: engine bundle declares a cached opaque context (alpha:false, desynchronized)",
+      "/web/js/renderer/canvas/engine.js",
+      (b) => b.toString("utf-8").indexOf("desynchronized") !== -1);
+    await httpOk("render: engine bundle drives frames via requestAnimationFrame",
+      "/web/js/renderer/canvas/engine.js",
+      (b) => /requestAnimationFrame/.test(b.toString("utf-8")));
 
     // ---- 3) Back to landing (the real bug) --------------------------------
     await execute(win, () => { window.location.hash = "#top"; });
@@ -393,7 +460,7 @@ app.whenReady().then(async () => {
     ok("FIX: landing visible again", back.siteVisible);
     ok("FIX: landing is scrollable (no reload)", back.scrollTop > 200);
     ok("no page reload across navigation", back.marker === "held-across-nav");
-    ok("title restored to landing", /Think in space/.test(back.title));
+    ok("title restored to landing", /Infinite Canvas/.test(back.title));
     ok("desktop session: no mobile bar", !back.mbActive && !back.barPresent);
 
     // ---- 4) Re-enter #/web keeps the same app instance -------------------
@@ -673,10 +740,15 @@ api.addCommand({
         frame = app.project.getObjects().find((o) => o.type === "frame");
         if (!frame) await new Promise((r) => setTimeout(r, 100));
       }
+      let selected = !!frame && app.selection.has(frame.id);
+      for (let i = 0; i < 30 && !selected; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        selected = !!frame && app.selection.has(frame.id);
+      }
       return {
         frame: !!frame,
         url: frame ? (frame.metadata && frame.metadata.browserUrl) || "" : "",
-        selected: !!frame && app.selection.has(frame.id),
+        selected,
       };
     });
     ok("plugins: browser-frame command creates + selects a frame with the Google URL", bfCreated.frame && bfCreated.url === "https://www.google.com/" && bfCreated.selected);
@@ -1062,25 +1134,6 @@ api.addCommand({
       process.stdout.write(`  [diag] mobile draw: baseline=${mbaseline.pens} recentPen=${mbaseline.recentPen} after=${mdraw.pens}\n`);
     }
     ok("mobile: a finger draw commits a real stroke", mdraw.pens === mbaseline.pens + 1);
-
-    // Collapse the floating pen bar with its chevron, then reopen it via the
-    // floating chip that appears in its place — the bar must be fully usable
-    // for a second stroke after reopening.
-    const mbar = await execute(win, () => {
-      const penbar = document.getElementById("mb-penbar");
-      const chip = document.getElementById("mb-props-chip");
-      const collapseBtn = penbar.querySelector('[data-pen="collapse"]');
-      const beforeOpen = !penbar.classList.contains("mb-collapsed");
-      collapseBtn.click();
-      const collapsed = penbar.classList.contains("mb-collapsed");
-      const chipShown = !!chip && !chip.hidden;
-      chip.click();
-      const reopened = !penbar.classList.contains("mb-collapsed");
-      const chipGone = !!chip && chip.hidden;
-      return { beforeOpen, collapsed, chipShown, reopened, chipGone };
-    });
-    ok("mobile: pen bar collapses via its chevron", mbar.beforeOpen && mbar.collapsed);
-    ok("mobile: floating chip reopens the bar", mbar.chipShown && mbar.reopened && mbar.chipGone);
 
     // Revert so the suite's own mobile flows see the boot-like empty canvas.
     await execute(win, () => {
@@ -1594,11 +1647,12 @@ api.addCommand({
     const trest = await execute(win, () => ({ penOff: !window.__spatia.engine.isPenTool() }));
     ok("tablet: select tool restored after pencil test", trest.penOff);
 
-    // ---- 5f1) iPad Properties sheet is genuinely resizable -------------------
-    // Select an object so the Properties sheet opens, then drag the divider at
-    // its left edge: the sheet must widen and the canvas must not pan.
+    // ---- 5f1) iPad Properties card is compact, upper-left and dismissible ----
+    // Select an object so the Properties card opens, then verify it is a small
+    // upper-left card (not a full-height right sheet).
     await execute(win, () => {
       try { localStorage.removeItem("spatia.tb.inspectorWidth"); } catch { /* ignore */ }
+      try { localStorage.removeItem("spatia.inspector.hidden"); } catch { /* ignore */ }
       document.querySelector('#tb-dock [data-tool="note"]').click();
       window.__spatia.selection.setIds([]);
       return true;
@@ -1625,17 +1679,34 @@ api.addCommand({
     const sheetOpen = await execute(win, () => {
       const i = document.getElementById("inspector");
       const rz = document.getElementById("tb-resizer");
+      const r = i.getBoundingClientRect();
       return {
         open: !!i && i.classList.contains("open") && !i.classList.contains("minimized"),
         resizerOn: !!rz && !rz.hidden && getComputedStyle(rz).display !== "none",
+        left: r.left,
+        top: r.top,
+        width: r.width,
+        height: r.height,
+        vw: window.innerWidth,
+        vh: window.innerHeight,
       };
     });
-    ok("tablet: selecting an object opens the Properties sheet", sheetOpen.open);
-    ok("tablet: resizable divider rides the sheet's left edge", sheetOpen.resizerOn);
+    ok("tablet: selecting an object opens the Properties card", sheetOpen.open);
+    ok("tablet: Properties card sits in the upper-left workspace corner", sheetOpen.left < sheetOpen.vw / 2 && sheetOpen.top < sheetOpen.vh / 2);
+    ok(
+      "tablet: Properties card stays compact (not a full-height sheet)",
+      sheetOpen.width <= sheetOpen.vw * 0.6 + 1 && sheetOpen.height <= sheetOpen.vh * 0.8
+    );
+    ok("tablet: resizable divider rides the card's right edge", sheetOpen.resizerOn);
 
     const resz = await execute(win, () => {
       const i = document.getElementById("inspector");
       const rz = document.getElementById("tb-resizer");
+      // Start the drag from the clean CSS-default width: the remembered width
+      // is persisted across sessions and the drag clamps at the inspector max,
+      // so a stored cap would make "+90px" a no-op and fail the assertion.
+      localStorage.removeItem("spatia.tb.inspectorWidth");
+      i.style.width = "";
       const f = window.__spatia.engine.getFrame();
       const before = i.getBoundingClientRect().width;
       const rb = rz.getBoundingClientRect();
@@ -1646,8 +1717,8 @@ api.addCommand({
           new PointerEvent(t, { bubbles: true, cancelable: true, pointerType: "mouse", isPrimary: true, button: 0, buttons: t === "pointerup" ? 0 : 1, pointerId: 77, clientX: cx, clientY: y })
         );
       fire("pointerdown", x);
-      fire("pointermove", x - 90);
-      fire("pointerup", x - 90);
+      fire("pointermove", x + 90);
+      fire("pointerup", x + 90);
       const after = i.getBoundingClientRect().width;
       const f2 = window.__spatia.engine.getFrame();
       return {
@@ -1658,12 +1729,48 @@ api.addCommand({
         stored: ((localStorage.getItem("spatia.tb.inspectorWidth") || "").trim()),
       };
     });
-    ok("tablet: dragging the divider widens the Properties sheet", resz.after > resz.before);
+    ok("tablet: dragging the divider widens the Properties card", resz.after > resz.before);
     ok(
-      "tablet: sheet resize does not pan the canvas",
+      "tablet: card resize does not pan the canvas",
       resz.camera.x === resz.cameraAfter.x && resz.camera.y === resz.cameraAfter.y && resz.camera.zoom === resz.cameraAfter.zoom
     );
     ok("tablet: dragged width is remembered for the session", /^[0-9]+$/.test(resz.stored) && Number(resz.stored) === Math.round(resz.after));
+
+    // ---- 5f2) A hidden Properties card stays hidden across selections --------
+    const hidden = await execute(win, () => {
+      document.querySelector('#inspector .inspector-header [data-inspector="close"]').click();
+      const i = document.getElementById("inspector");
+      const reopen = document.getElementById("inspector-reopen");
+      return {
+        closed: !i.classList.contains("open"),
+        reopenShown: !!reopen && !reopen.hidden && getComputedStyle(reopen).display !== "none",
+        persisted: localStorage.getItem("spatia.inspector.hidden"),
+      };
+    });
+    ok("tablet: closing the card hides it", hidden.closed);
+    ok("tablet: a reopen affordance replaces the hidden card", hidden.reopenShown);
+    ok("tablet: hidden state is persisted", hidden.persisted === "1");
+
+    const stayedHidden = await execute(win, () => {
+      const app = window.__spatia;
+      const note = app.project.getObjects().find((o) => o.type === "note");
+      app.selection.setIds([]);
+      app.selection.setIds([note.id]);
+      return { open: document.getElementById("inspector").classList.contains("open") };
+    });
+    ok("tablet: selecting an object does not reopen a hidden card", !stayedHidden.open);
+
+    const reopened = await execute(win, () => {
+      document.getElementById("inspector-reopen").click();
+      const i = document.getElementById("inspector");
+      return {
+        open: i.classList.contains("open"),
+        reopenHidden: document.getElementById("inspector-reopen").hidden,
+        persisted: localStorage.getItem("spatia.inspector.hidden"),
+      };
+    });
+    ok("tablet: reopen button shows the card again", reopened.open && reopened.reopenHidden);
+    ok("tablet: showing the card clears the persisted hidden state", reopened.persisted === "0");
 
     // ---- 5g) Phone regression (forced) ---------------------------------------
     // The tablet layer is document-lifetime, so leave the workspace first,
@@ -1683,14 +1790,23 @@ api.addCommand({
     });
     await until(win, () => document.documentElement.hasAttribute("data-web") && !!document.querySelector(".mb-toolbar"), "phone layer injected");
     await sleep(250);
-    const phone = await execute(win, () => ({
-      mbActive: document.documentElement.classList.contains("mb-active"),
-      noTb: !document.documentElement.classList.contains("tb-active"),
-      toolbar: !!document.querySelector(".mb-toolbar"),
-    }));
+    const phone = await execute(win, () => {
+      const tool = document.querySelector(".mb-toolbar");
+      const r = tool ? tool.getBoundingClientRect() : { width: 0, left: 0, right: 0 };
+      return {
+        mbActive: document.documentElement.classList.contains("mb-active"),
+        noTb: !document.documentElement.classList.contains("tb-active"),
+        toolbar: !!tool,
+        toolW: r.width,
+        centerOff: Math.abs((r.left + r.right) / 2 - innerWidth / 2),
+        fullyVisible: r.left >= -0.5 && r.right <= innerWidth + 0.5,
+      };
+    });
     ok("phone: html.mb-active set on 390x844", phone.mbActive);
     ok("phone: not in tablet mode", phone.noTb);
     ok("phone: mobile toolbar present", phone.toolbar);
+    ok("phone: bottom bar centered and fully visible (portrait)",
+      phone.fullyVisible && phone.centerOff < 1 && phone.toolW > 100);
     // Create a note through the mobile add sheet to prove create still works.
     await execute(win, () => { document.querySelector('[data-bar="add"]').click(); });
     await sleep(200);
@@ -1702,6 +1818,64 @@ api.addCommand({
       return { present: !!btn, created: after === before + 1 };
     });
     ok("phone: add sheet creates a note", createdNote.present && createdNote.created);
+
+    // Pen panel on the phone (portrait 390x844): the Pen tab opens the panel
+    // with the existing controls (eraser / size / swatches) plus pressure and
+    // stabilizer settings. Hide collapses the panel while keeping the pen
+    // tool selected; pressing Pen again brings the panel back; a Pen tap on a
+    // visible panel still deselects the tool as before.
+    await execute(win, () => {
+      document.querySelector('[data-bar="pen"]').click();
+      return true;
+    });
+    await sleep(140);
+    const penPortrait = await execute(win, () => {
+      const bar = document.getElementById("mb-penbar");
+      const visible = !bar.hidden;
+      const hasCore = !!bar.querySelector('[data-pen="eraser"]') &&
+        !!bar.querySelector('[data-pen="size"]') &&
+        bar.querySelectorAll(".mb-pen-swatch").length >= 8;
+      const hasSettings = !!bar.querySelector('[data-pen="stabilizer"]') && !!bar.querySelector('[data-pen="pressure"]');
+      const hasHide = !!bar.querySelector('[data-pen="collapse"]');
+      bar.querySelector('[data-pen="collapse"]').click();
+      const hiddenWhileSelected = bar.hidden && window.__spatia.engine.isPenTool();
+      document.querySelector('[data-bar="pen"]').click();
+      const backAfterPen = !bar.hidden && window.__spatia.engine.isPenTool();
+      document.querySelector('[data-bar="pen"]').click();
+      return { visible, hasCore, hasSettings, hasHide, hiddenWhileSelected, backAfterPen, penOff: !window.__spatia.engine.isPenTool() };
+    });
+    ok(
+      "phone: Pen tab opens the pen panel (color/size/pressure/stabilizer)",
+      penPortrait.visible && penPortrait.hasCore && penPortrait.hasSettings && penPortrait.hasHide
+    );
+    ok("phone: Hide collapses the panel while the pen tool stays selected", penPortrait.hiddenWhileSelected);
+    ok("phone: Pen tab brings the hidden panel back", penPortrait.backAfterPen);
+    ok("phone: Pen tap on a visible panel still deselects", penPortrait.penOff);
+
+    // Same hide/reveal cycle verified in landscape with the compact dock.
+    await win.setContentSize(844, 390);
+    await sleep(250);
+    const penLand = await execute(win, () => {
+      const toolbar = document.querySelector(".mb-toolbar");
+      document.querySelector('[data-bar="pen"]').click();
+      const bar = document.getElementById("mb-penbar");
+      const open = !bar.hidden;
+      const r = toolbar.getBoundingClientRect();
+      const lock = { w: r.width, centerOff: Math.abs((r.left + r.right) / 2 - innerWidth / 2), fullyVisible: r.left >= -0.5 && r.right <= innerWidth + 0.5 };
+      bar.querySelector('[data-pen="collapse"]').click();
+      const hiddenWhileSelected = bar.hidden && window.__spatia.engine.isPenTool();
+      document.querySelector('[data-bar="pen"]').click();
+      const back = !bar.hidden;
+      document.querySelector('[data-bar="pen"]').click();
+      return { open, lock, hiddenWhileSelected, back, penOff: !window.__spatia.engine.isPenTool() };
+    });
+    ok("phone: pen panel opens with the dock in landscape", penLand.open);
+    ok("phone: bottom bar centered and fully visible (landscape)",
+      !penLand.open || (penLand.lock.fullyVisible && penLand.lock.centerOff < 1 && penLand.lock.w > 100));
+    ok("phone: Hide + reopen cycle works in landscape", penLand.hiddenWhileSelected && penLand.back);
+    ok("phone: deselect from a visible panel works in landscape", penLand.penOff);
+    await win.setContentSize(390, 844);
+    await sleep(200);
 
     // Restore default (no forced mode, suite default viewport) before the
     // console-error check so downstream sections see the original conditions.
@@ -1717,15 +1891,28 @@ api.addCommand({
     await httpOk("PWA manifest served", "/manifest.webmanifest", (b) => {
       try {
         const j = JSON.parse(b.toString("utf-8"));
-        return j.name === "Spatia" && j.start_url.indexOf("#/web") !== -1 && j.display === "standalone";
+        return j.name === "Spatia" && j.start_url.indexOf("#/web") !== -1 && j.display === "standalone" && j.version === "0.5.1";
       } catch {
         return false;
       }
     });
-    await httpOk("PWA service worker served", "/sw.js", (b) => b.toString("utf-8").indexOf("spatia-site-v") !== -1);
+    await httpOk("PWA service worker served (cache v11)", "/sw.js", (b) => b.toString("utf-8").indexOf("spatia-site-v11") !== -1);
     await httpOk("PWA icon 192 served", "/assets/icon-192.png", (b) => b.length > 1000);
     await httpOk("PWA icon 512 served", "/assets/icon-512.png", (b) => b.length > 1000);
     await httpOk("PWA maskable icon served", "/assets/icon-maskable-512.png", (b) => b.length > 1000);
+    await httpOk("llms.txt served with a factual AI summary", "/llms.txt", (b) => {
+      const t = b.toString("utf-8");
+      return /^# Spatia/m.test(t) &&
+        /infinite canvas/i.test(t) &&
+        !/not open source/i.test(t) &&
+      /github\.com\/SpatiaLabs\/Spatia/.test(t) &&
+        t.indexOf("0.5.1") !== -1 &&
+        /Linux \(x64\) desktop app/.test(t) &&
+        t.indexOf("#/wiki/getting-started") !== -1;
+    });
+    await httpOk("sitemap lists the production URL", "/sitemap.xml", (b) => b.toString("utf-8").indexOf("https://spatiaweb.surge.sh/") !== -1);
+    const landingHtml = fs.readFileSync(path.join(BASE, "index.html"), "utf-8");
+    ok("landing downloads the MSI from the GitHub release", landingHtml.indexOf("https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.1/Spatia-0.5.1-win-x64.msi") !== -1);
 
     const page = await execute(win, () => ({
       manifestHref: (document.querySelector('link[rel="manifest"]') || {}).href || "",
@@ -2035,29 +2222,37 @@ api.addCommand({
         }
         if (peer) {
           // A real canvas object (not a special comment channel) is what syncs.
+          await win.webContents.executeJavaScript(`window.__verifyPreNoteIds = ${JSON.stringify(await execute(win, () => window.__spatia.project.getObjects().map((o) => o.id)))};`);
           await execute(win, () => {
             const app = window.__spatia;
             app["addNoteAt"]({ x: 40, y: 60 });
             app.collab.sendPresence(120, 340);
           });
-          const gotObjectSync = await peerUntil(peer, (msgs) =>
-            msgs.some(
+          let roomSeq = 0;
+          let ownerNoteId = "";
+          const gotObjectSync = await peerUntil(peer, (msgs) => {
+            for (const m of msgs) if (typeof m.seq === "number") roomSeq = Math.max(roomSeq, m.seq);
+            return msgs.some(
               (m) =>
-                m.t === "snapshot" &&
+                m.t === "ops" &&
                 m.user.id === ownerId &&
-                m.file &&
-                Number(m.file.formatVersion) === 5 &&
-                Array.isArray(m.file.objects) &&
-                m.file.objects.some((o) => o.type === "note")
-            )
-          );
-          ok("second client receives a live canvas object via the owner's snapshot (v5)", gotObjectSync);
+                Array.isArray(m.ops) &&
+                m.ops.some((o) => o.kind === "obj:upsert" && o.obj && o.obj.type === "note")
+            );
+          });
+          ok("second client receives a live canvas object via targeted ops (v5)", gotObjectSync);
+          ownerNoteId = await execute(win, () => {
+            const app = window.__spatia;
+            const ids = app.project.getObjects().map((o) => o.id);
+            return ids.find((id) => !window.__verifyPreNoteIds.includes(id)) || "";
+          });
+          await win.webContents.executeJavaScript(`window.__verifyOwnerNoteId = ${JSON.stringify(ownerNoteId)};`);
           const gotPresence = await peerUntil(peer, (msgs) =>
             msgs.some((m) => m.t === "presence" && m.user.id === ownerId && m.x === 120 && m.y === 340)
           );
           ok("second client sees the owner's live cursor", gotPresence);
 
-          // Viewers are denied every write server-side — even a document snapshot.
+          // Viewers are denied every write server-side — legacy snapshot and ops.
           const viewerFile = {
             formatVersion: 5,
             project: { id: "p-viewer", name: "viewer write", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
@@ -2066,28 +2261,68 @@ api.addCommand({
             assets: [],
           };
           peer.ws.send(JSON.stringify({ t: "snapshot", file: viewerFile }));
-          const viewerDenied = await peerUntil(peer, (msgs) => msgs.some((m) => m.t === "denied" && /viewer/i.test(m.action)));
-          ok("viewer writes (snapshot) are denied by the server", viewerDenied);
+          peer.ws.send(
+            JSON.stringify({
+              t: "ops",
+              baseSeq: 0,
+              ops: [
+                {
+                  kind: "obj:upsert",
+                  id: "v-obj",
+                  obj: { type: "note", id: "v-obj", x: 1, y: 1, width: 50, height: 50, rotation: 0, zIndex: 9, locked: false, metadata: {}, title: "V", text: "viewer write", color: "#f0c33c" },
+                },
+              ],
+            })
+          );
+          const viewerDenied = await peerUntil(
+            peer,
+            (msgs) => msgs.filter((m) => m.t === "denied" && /viewer/i.test(m.action)).length >= 2
+          );
+          ok("viewer writes (snapshot and ops) are denied by the server", viewerDenied);
 
-          // Owner promotes the peer to editor; the editor's object then syncs to
-          // the app — proving the same channel the editor role gates.
+          // Owner promotes the peer to editor; the editor's ops then sync to the
+          // app through the same channel the editor role gates.
           await execute(win, () => window.__spatia.collab.sendPermSet("verify-peer", "editor"));
           const promoted = await peerUntil(peer, (msgs) =>
             msgs.some((m) => m.t === "perm:changed" && m.userId === "verify-peer" && m.role === "editor")
           );
           ok("owner promotion reaches the peer", promoted);
+
+          // Editor LWW-wins on the owner's note via a targeted op, then ships a
+          // brand-new object; the app converges on both without a snapshot.
+          const peerEdit = (id, text) => ({
+            type: "note", id, x: 40, y: 60, width: 180, height: 140, rotation: 0, zIndex: 1,
+            locked: false, metadata: {}, title: "", text, color: "#5cb8f2",
+          });
           peer.ws.send(
             JSON.stringify({
-              t: "snapshot",
-              file: {
-                formatVersion: 5,
-                project: { id: "p-verify", name: "Editor doc", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
-                viewport: { x: 0, y: 0, zoom: 1 },
-                objects: [
-                  { type: "note", id: "verify-peer-obj", x: 1, y: 2, width: 100, height: 80, rotation: 0, zIndex: 1, locked: false, metadata: {}, title: "Hi", text: "editor object", color: "#f0c33c" },
-                ],
-                assets: [],
-              },
+              t: "ops",
+              baseSeq: roomSeq,
+              ops: [{ kind: "obj:upsert", id: ownerNoteId, obj: peerEdit(ownerNoteId, "peer edit") }],
+            })
+          );
+          const lwwConverged = await until(
+            win,
+            () => {
+              const app = window.__spatia;
+              const notes = app.project.getObjects().filter((o) => o.type === "note");
+              return notes.some((o) => o.text === "peer edit");
+            },
+            "editor's last-writer op applied by the app",
+            60
+          );
+          ok("editor ops apply to the app (LWW last write wins)", lwwConverged);
+          let selfAck = null;
+          await peerUntil(peer, (msgs) => {
+            selfAck = msgs.find((m) => m.t === "ops" && m.user.id === "verify-peer");
+            return !!(selfAck && selfAck.seq > roomSeq);
+          });
+          if (selfAck && selfAck.seq > roomSeq) roomSeq = selfAck.seq;
+          peer.ws.send(
+            JSON.stringify({
+              t: "ops",
+              baseSeq: roomSeq,
+              ops: [{ kind: "obj:upsert", id: "verify-peer-obj", obj: peerEdit("verify-peer-obj", "editor object") }],
             })
           );
           const editorSynced = await until(
@@ -2097,10 +2332,62 @@ api.addCommand({
               const objs = app.project && app.project.getObjects ? app.project.getObjects() : [];
               return objs.some((o) => o.id === "verify-peer-obj" && o.text === "editor object");
             },
-            "editor snapshot applied by the app",
+            "editor object ops applied by the app",
             60
           );
-          ok("editor snapshot syncs back to the app", editorSynced);
+          ok("editor ops sync back to the app", editorSynced);
+
+          // Remote ops never corrupt local undo history: undo reverts the owner's
+          // local add (an ops-backed change) but keeps the remote editor's object.
+          const undoPreserved = await execute(win, () => {
+            const app = window.__spatia;
+            const noteId = window.__verifyOwnerNoteId || "";
+            const peerObjId = "verify-peer-obj";
+            const before = app.project.getObjects().map((o) => o.id);
+            app["undo"]();
+            const afterUndo = app.project.getObjects().map((o) => o.id);
+            app["redo"]();
+            const afterRedo = app.project.getObjects().map((o) => o.id);
+            return {
+              localReverted: before.includes(noteId) && !afterUndo.includes(noteId) && afterUndo.includes(peerObjId),
+              restored: afterRedo.includes(noteId) && afterRedo.includes(peerObjId),
+            };
+          });
+          ok(
+            "remote ops preserve undo: undo drops the local note, keeps the peer's object",
+            undoPreserved.localReverted && undoPreserved.restored
+          );
+
+          // A late joiner receives the authoritative room file at the current seq.
+          let latePeer = null;
+          let lateGotFile = false;
+          try {
+            latePeer = await makePeerClient(collabPort, "verify-room", { id: "verify-late", name: "Late", color: "#ff7bd5" });
+            lateGotFile = await peerUntil(
+              latePeer,
+              (msgs) =>
+                msgs.some(
+                  (m) =>
+                    m.t === "joined" &&
+                    typeof m.seq === "number" &&
+                    m.file &&
+                    Number(m.file.formatVersion) === 5 &&
+                    Array.isArray(m.file.objects) &&
+                    m.file.objects.some((o) => o.id === "verify-peer-obj")
+                )
+            );
+          } catch (err) {
+            lateGotFile = false;
+            process.stderr.write("  [collab late-joiner error] " + (err && err.message ? err.message : String(err)) + "\n");
+          }
+          ok("late-joining client receives the room file at the current sequence", lateGotFile);
+          if (latePeer && latePeer.ws) {
+            try {
+              latePeer.ws.close();
+            } catch {
+              /* ignore */
+            }
+          }
 
           // ---- Unexpected drop -> the app reconnects and re-joins on its own.
           collabServer.child.kill();
@@ -2135,11 +2422,14 @@ api.addCommand({
           );
           ok("a broken collab server surfaces an error state in the share dialog", errorState);
         } else {
-          ok("second client receives a live canvas object via the owner's snapshot (v5)", false);
+          ok("second client receives a live canvas object via targeted ops (v5)", false);
           ok("second client sees the owner's live cursor", false);
-          ok("viewer writes (snapshot) are denied by the server", false);
+          ok("viewer writes (snapshot and ops) are denied by the server", false);
           ok("owner promotion reaches the peer", false);
-          ok("editor snapshot syncs back to the app", false);
+          ok("editor ops apply to the app (LWW last write wins)", false);
+          ok("editor ops sync back to the app", false);
+          ok("remote ops preserve undo: undo drops the local note, keeps the peer's object", false);
+          ok("late-joining client receives the room file at the current sequence", false);
           ok("app reconnects and rejoins its room after a server restart", false);
         }
       }

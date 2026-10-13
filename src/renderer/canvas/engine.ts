@@ -90,6 +90,15 @@ export class CanvasEngine implements InteractionHost {
   private width = 0;
   private height = 0;
   private renderQueued = false;
+  /**
+   * The single cached 2D context for the on-screen canvas. It is acquired once
+   * (with an opaque, potentially desynchronized compositor target) and reused
+   * for every frame, so the browser can keep the fastest path between the JS
+   * rendering raster and the display — no per-frame `getContext` churn and no
+   * intermediate alpha blending. `desynchronized` is a hint, not a guarantee:
+   * if the display pipeline can't honour it the context falls back gracefully.
+   */
+  private ctx: CanvasRenderingContext2D | null = null;
   private resizeObserver: ResizeObserver;
   private images = new ImageCache();
   private spatial = new SpatialGrid();
@@ -1262,7 +1271,7 @@ export class CanvasEngine implements InteractionHost {
   }
 
   render(): void {
-    const ctx = this.canvasEl.getContext("2d");
+    const ctx = this.canvasContext();
     if (!ctx) return;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.width, this.height);
@@ -1364,6 +1373,31 @@ export class CanvasEngine implements InteractionHost {
       this.renderQueued = false;
       this.render();
     });
+  }
+
+  /**
+   * Lazily acquire the single cached canvas context. Rendering is opaque (the
+   * canvas is fully covered by the page background every frame), so `alpha:
+   * false` lets the compositor skip blending. `desynchronized: true` makes the
+   * browser free to paint as soon as the frame is ready instead of aligning to
+   * the display's vertical sync — a hint the JS frame rate is display-driven
+   * and never artificially capped by Spatia itself.
+   */
+  private canvasContext(): CanvasRenderingContext2D | null {
+    if (this.ctx) return this.ctx;
+    try {
+      this.ctx = this.canvasEl.getContext("2d", { alpha: false, desynchronized: true });
+    } catch {
+      this.ctx = null;
+    }
+    if (!this.ctx) {
+      try {
+        this.ctx = this.canvasEl.getContext("2d", { alpha: false });
+      } catch {
+        this.ctx = null;
+      }
+    }
+    return this.ctx;
   }
 
   private handleResize(): void {

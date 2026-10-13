@@ -95,6 +95,7 @@ html.mb-active #web-host #minimap,
 html.mb-active #web-host #statusbar,
 html.mb-active #web-host #inspector,
 html.mb-active #web-host #inspector.open,
+html.mb-active #web-host #inspector-reopen,
 html.mb-active #web-host .url-dialog,
 html.mb-active .web-chrome-link,
 html.mb-active .web-chrome-badge {
@@ -130,6 +131,16 @@ html.mb-active .spatia-context-menu {
 @keyframes mb-zoom-in {
   from { transform: translateY(8px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes mb-sheet-up-center {
+  from { transform: translateX(-50%) translateY(36px); opacity: 0.35; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+@keyframes mb-top-in-center {
+  from { transform: translateX(-50%) translateY(-12px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
 
 @keyframes mb-splash-run {
@@ -225,6 +236,50 @@ html.mb-active .spatia-context-menu {
   -webkit-touch-callout: none;
 }
 
+/* Project title button — mirrors the iPad top bar's title, flexed to push the
+   action buttons to the right and truncating on narrow phones. */
+.mb-top-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--mb-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.15s ease;
+}
+
+.mb-top-title:active {
+  background: var(--mb-bg-hover);
+}
+
+.mb-title-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(139, 145, 153, 0.5);
+}
+
+.mb-title-dot.mb-dirty {
+  background: var(--mb-accent);
+}
+
+.mb-title-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .mb-top-action {
   flex: 0 0 auto;
   width: 38px;
@@ -233,7 +288,7 @@ html.mb-active .spatia-context-menu {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 11px;
+  border-radius: 10px;
   background: transparent;
   color: var(--mb-text);
   cursor: pointer;
@@ -256,50 +311,56 @@ html.mb-active .spatia-context-menu {
   pointer-events: none;
 }
 
-.mb-top-spacer {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* ---------- Bottom tool toolbar (tab-style) ---------- */
+/* ---------- Bottom tool dock (floating pill, iPad-style) ----------
+   Mirrors the iPad dock (#tb-dock): a floating rounded pill of icon-forward
+   tools, with the active tool filled with the accent colour. On a phone the
+   tabs keep their tiny labels for discoverability and the Add primary action
+   keeps its accent badge. */
 .mb-toolbar {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  transform: translateX(-50%);
   z-index: 100;
   display: flex;
   align-items: center;
-  justify-content: space-evenly;
-  padding-bottom: env(safe-area-inset-bottom);
-  background: rgba(20, 22, 26, 0.88);
-  border-top: 1px solid var(--mb-border);
+  gap: 2px;
+  max-width: calc(100vw - 20px);
+  padding: 6px;
+  background: rgba(24, 26, 30, 0.92);
+  border: 1px solid var(--mb-border);
+  border-radius: 22px;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(24px) saturate(1.5);
   -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  animation: mb-sheet-up 0.3s var(--mb-ease) both;
+  animation: mb-sheet-up-center 0.3s var(--mb-ease) both;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .mb-tab {
-  flex: 1 1 0;
-  min-width: 0;
-  max-width: 110px;
-  height: 58px;
+  flex: 0 0 auto;
+  min-width: 54px;
+  height: 50px;
+  padding: 0 6px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 16px;
   background: transparent;
-  color: #9aa0aa;
-  font: 500 10.5px var(--mb-font);
+  color: var(--mb-text-dim);
+  font: 500 10px var(--mb-font);
   letter-spacing: 0.01em;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
   touch-action: manipulation;
-  transition: color 0.16s ease, transform 0.1s ease;
+  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease, transform 0.1s ease;
 }
 
 .mb-tab:active {
@@ -312,20 +373,10 @@ html.mb-active .spatia-context-menu {
   flex: none;
 }
 
-.mb-tab-pill {
-  width: 22px;
-  height: 2.5px;
-  border-radius: 99px;
-  background: transparent;
-  transition: background 0.2s ease;
-}
-
 .mb-tab.mb-active {
-  color: #bcc8ff;
-}
-
-.mb-tab.mb-active .mb-tab-pill {
-  background: var(--mb-accent);
+  color: var(--mb-text);
+  background: var(--mb-accent-soft);
+  border-color: rgba(91, 124, 250, 0.42);
 }
 
 .mb-tab[disabled] {
@@ -343,14 +394,13 @@ html.mb-active .spatia-context-menu {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 11px;
   background: var(--mb-accent);
   color: #fff;
   box-shadow: 0 4px 14px rgba(91, 124, 250, 0.4);
   transition: transform 0.12s var(--mb-ease), background 0.15s ease;
-  margin-top: -4px;
 }
 
 .mb-tab[data-tab="add"].mb-active .mb-tab-add-badge {
@@ -362,14 +412,14 @@ html.mb-active .spatia-context-menu {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom) + 66px);
+  bottom: calc(env(safe-area-inset-bottom) + 84px);
   z-index: 96;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: 4px;
-  max-width: min(460px, calc(100vw - 24px));
+  max-width: min(560px, calc(100vw - 20px));
   padding: 6px 8px;
   border-radius: 18px;
   background: rgba(20, 22, 26, 0.9);
@@ -377,7 +427,7 @@ html.mb-active .spatia-context-menu {
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(22px) saturate(1.4);
   -webkit-backdrop-filter: blur(22px) saturate(1.4);
-  animation: mb-sheet-up 0.28s var(--mb-ease) both;
+  animation: mb-sheet-up-center 0.28s var(--mb-ease) both;
 }
 
 #mb-penbar[hidden] {
@@ -392,56 +442,6 @@ html.mb-active .spatia-context-menu {
 
 #mb-penbar:not(.mb-collapsed) {
   transition: opacity 0.16s ease, transform 0.16s ease;
-}
-
-.mb-pen-collapse {
-  color: var(--mb-text-dim);
-  border-left: 1px solid var(--mb-border);
-}
-
-/* Floating chip that reopens the collapsed pen bar. Sits exactly where the
-   bar did so the canvas never shifts when it appears. */
-#mb-props-chip {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%) translateY(8px);
-  bottom: calc(env(safe-area-inset-bottom) + 66px);
-  z-index: 96;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border: 1px solid var(--mb-border);
-  border-radius: 999px;
-  background: rgba(20, 22, 26, 0.92);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(22px) saturate(1.4);
-  -webkit-backdrop-filter: blur(22px) saturate(1.4);
-  color: var(--mb-text);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  touch-action: manipulation;
-  animation: mb-sheet-up 0.28s var(--mb-ease) both;
-}
-
-#mb-props-chip[hidden] {
-  display: none !important;
-}
-
-#mb-props-dot {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--mb-accent);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-}
-
-#mb-props-chip svg {
-  width: 16px;
-  height: 16px;
-  color: var(--mb-text-dim);
 }
 
 .mb-pen-btn {
@@ -472,6 +472,38 @@ html.mb-active .spatia-context-menu {
 .mb-pen-btn.mb-active {
   background: var(--mb-accent-soft);
   color: var(--mb-accent);
+}
+
+/* Hide button: clearly labelled so the panel can always be collapsed back
+   into the toolbar without deselecting the pen tool. */
+.mb-pen-hide {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--mb-text-dim);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.mb-pen-hide svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mb-pen-hide-label {
+  font: 600 11px var(--mb-font);
+  letter-spacing: 0.01em;
+}
+
+.mb-pen-hide:active {
+  background: var(--mb-bg-hover);
+  color: var(--mb-text);
 }
 
 .mb-pen-sep {
@@ -540,7 +572,7 @@ html.mb-active .spatia-context-menu {
 #mb-zoom {
   position: fixed;
   right: calc(env(safe-area-inset-right, 0px) + 12px);
-  bottom: calc(env(safe-area-inset-bottom) + 72px);
+  bottom: calc(env(safe-area-inset-bottom) + 88px);
   z-index: 85;
   display: flex;
   flex-direction: column;
@@ -591,7 +623,7 @@ html.mb-active .spatia-context-menu {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom) + 72px);
+  bottom: calc(env(safe-area-inset-bottom) + 88px);
   z-index: 99;
   display: flex;
   gap: 6px;
@@ -602,7 +634,7 @@ html.mb-active .spatia-context-menu {
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  animation: mb-sheet-up 0.24s var(--mb-ease) both;
+  animation: mb-sheet-up-center 0.24s var(--mb-ease) both;
 }
 
 .mb-selrow[hidden] {
@@ -643,7 +675,7 @@ html.mb-active .spatia-context-menu {
   text-align: center;
   user-select: none;
   -webkit-user-select: none;
-  animation: mb-top-in 0.24s var(--mb-ease) both;
+  animation: mb-top-in-center 0.24s var(--mb-ease) both;
 }
 
 .mb-hint[hidden] {
@@ -655,7 +687,7 @@ html.mb-active .spatia-context-menu {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom) + 84px);
+  bottom: calc(env(safe-area-inset-bottom) + 104px);
   z-index: 200;
   max-width: min(86vw, 430px);
   padding: 10px 18px;
@@ -1021,36 +1053,38 @@ html.mb-active .spatia-text-editor {
 
 /* ---------- Portrait / landscape handling ---------- */
 @media (orientation: landscape) and (max-height: 560px) {
+  .mb-toolbar {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+    padding: 5px;
+  }
+
   .mb-tab {
-    height: 50px;
+    min-width: 46px;
+    height: 42px;
   }
 
   #mb-penbar {
-    bottom: calc(env(safe-area-inset-bottom) + 58px);
+    bottom: calc(env(safe-area-inset-bottom) + 68px);
     left: 50%;
     right: auto;
   }
 
-  #mb-props-chip {
-    bottom: calc(env(safe-area-inset-bottom) + 58px);
-  }
-
   #mb-zoom {
-    bottom: calc(env(safe-area-inset-bottom) + 62px);
+    bottom: calc(env(safe-area-inset-bottom) + 68px);
     right: calc(env(safe-area-inset-right, 0px) + 8px);
   }
 
   .mb-zoom-btn {
-    width: 44px;
-    height: 34px;
+    width: 42px;
+    height: 32px;
   }
 
   .mb-selrow {
-    bottom: calc(env(safe-area-inset-bottom) + 62px);
+    bottom: calc(env(safe-area-inset-bottom) + 68px);
   }
 
   .mb-toast {
-    bottom: calc(env(safe-area-inset-bottom) + 72px);
+    bottom: calc(env(safe-area-inset-bottom) + 88px);
   }
 
   #mb-topbar {

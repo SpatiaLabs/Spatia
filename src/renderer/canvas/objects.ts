@@ -9,6 +9,7 @@ import {
 import { isStrokeOnly } from "../../shared/geometry/shapes.js";
 import { tableLayout } from "../../shared/geometry/tableLayout.js";
 import { isRtlLine } from "../../shared/geometry/ink.js";
+import { parseMarkup, type MarkupLine, type MarkupRun } from "../../shared/text/markup.js";
 
 const STROKE = "rgba(91,124,250,0.5)";
 const SELECTION = "#5b7cfa";
@@ -213,11 +214,16 @@ function drawText(ctx: CanvasRenderingContext2D, frame: ViewportFrame, obj: Text
   const textAlign = obj.align;
   const pad = 6;
   const maxWidth = Math.max(0, w - pad * 2);
-  const lines = wrapText(ctx, obj.text || "", maxWidth);
   const lineHeight = fontPx * 1.25;
   let cursorY = -h / 2 + pad;
   const alignMap = { left: "left", center: "center", right: "right" } as const;
   const a = alignMap[textAlign] ?? "left";
+  if (obj.metadata?.richText === true) {
+    drawMarkup(ctx, obj.text || "", -w / 2 + pad, cursorY, maxWidth, h - pad * 2, fontPx, family, TEXT_FILL, a);
+    ctx.restore();
+    return;
+  }
+  const lines = wrapText(ctx, obj.text || "", maxWidth);
   for (let i = 0; i < lines.length; i++) {
     // RTL (Arabic / Hebrew) lines grow leftward and read from the right edge;
     // mirror the align per line so they never overflow the opposite padding.
@@ -256,6 +262,11 @@ function drawNote(ctx: CanvasRenderingContext2D, frame: ViewportFrame, obj: Extr
   ctx.fillStyle = NOTE_BODY;
   ctx.font = `${bodyPx}px ${FONT}`;
   const startY = -h / 2 + pad + (obj.title ? titlePx * 1.3 : 0);
+  if (obj.metadata?.richText === true) {
+    drawMarkup(ctx, obj.text || "", -w / 2 + pad, startY, w - pad * 2, h - pad * 2 - (startY + h / 2), bodyPx, FONT, NOTE_BODY);
+    ctx.restore();
+    return;
+  }
   const lines = wrapText(ctx, obj.text || "", w - pad * 2);
   const lineH = bodyPx * 1.25;
   let y = startY;
@@ -1141,6 +1152,154 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
     if (line !== "") out.push(line);
   }
   return out;
+}
+
+// -------- Rich text (note/text markup) --------
+
+const LINK_FILL = "#5b7cfa";
+const CODE_BG = "rgba(91,124,250,0.16)";
+
+interface RichToken {
+  text: string;
+  run: MarkupRun;
+}
+
+interface RichLine {
+  tokens: RichToken[];
+  width: number;
+}
+
+/** Inline tokens for a markup line (preserves whitespace for wrapping). */
+function richTokens(runs: MarkupRun[]): RichToken[] {
+  const tokens: RichToken[] = [];
+  for (const run of runs) {
+    for (const part of String(run.text).split(/(\s+)/)) {
+      if (part) tokens.push({ text: part, run });
+    }
+  }
+  return tokens;
+}
+
+function richFont(run: MarkupRun, size: number, family: string): string {
+  const fam = run.code ? '"Cascadia Code", Consolas, monospace' : family;
+  const style = run.italic ? "italic " : "";
+  const weight = run.bold ? "bold " : "";
+  return `${style}${weight}${size}px ${fam}`;
+}
+
+/** Prefix used for bullet/numbered lines (nested lists indent by level). */
+function richPrefix(line: MarkupLine, numberCount: number): string {
+  if (line.kind === "bullet") return `${"    ".repeat(Math.max(0, line.level - 1))}• `;
+  if (line.kind === "numbered") return `${numberCount}. `;
+  return "";
+}
+
+/**
+ * Wrap one parsed markup line into visual lines whose tokens fit `maxWidth`,
+ * then draw them at (x, y) with the given base size. Headings are scaled and
+ * bolded; bullet/numbered lines get their marker and hanging indents. Returns
+ * the drawn height so callers can stack following lines.
+ */
+function drawRichLine(
+  ctx: CanvasRenderingContext2D,
+  line: MarkupLine,
+  x: number,
+  y: number,
+  baseSize: number,
+  family: string,
+  maxWidth: number,
+  numberCount: number,
+  baseColor: string,
+  align: "left" | "center" | "right"
+): { height: number; usedNumber: number } {
+  const isHeading = line.kind === "heading";
+  const scale = isHeading ? (line.level === 1 ? 1.5 : line.level === 2 ? 1.25 : 1.1) : 1;
+  const size = Math.max(1, baseSize * scale);
+  const lineHeight = size * 1.25;
+  const prefix = richPrefix(line, numberCount);
+  const usedNumber = line.kind === "numbered" ? numberCount + 1 : numberCount;
+  const headingRun: MarkupRun = { text: "", bold: true };
+
+  const ctxFont = (run: MarkupRun): void => {
+    ctx.font = richFont(run, size, family);
+  };
+  // Measure prefix width at the heading font weight.
+  ctx.font = richFont(headingRun, size, family);
+  const prefixWidth = isHeading ? 0 : prefix ? ctx.measureText(prefix).width : 0;
+
+  let tokens = richTokens(line.runs);
+  if (isHeading) {
+    tokens = tokens.map((t) => ({ text: t.text, run: { text: t.text, bold: true, ...(t.run.italic ? { italic: true } : {}) } }));
+  } else if (prefix) {
+    tokens = [{ text: prefix, run: { text: prefix } }, ...tokens];
+  }
+
+  // Greedy wrap into visual lines (never measure per-char more than needed).
+  const lines: RichLine[] = [];
+  let cur: RichLine = { tokens: [], width: prefixWidth };
+  for (const token of tokens) {
+    ctxFont(token.run);
+    const w = ctx.measureText(token.text).width;
+    if (cur.tokens.length > 0 && cur.width + w > maxWidth) {
+      lines.push(cur);
+      cur = { tokens: [], width: prefixWidth };
+    }
+    cur.tokens.push(token);
+    cur.width += w;
+  }
+  if (cur.tokens.length > 0) lines.push(cur);
+
+  // Draw each visual line, honoring alignment and RTL per line.
+  for (const vis of lines) {
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    const full = vis.tokens.map((t) => t.text).join("");
+    const isRtl = isRtlLine(full);
+    let drawX = x;
+    if (isRtl) drawX = x + maxWidth - vis.width;
+    else if (align === "center") drawX = x + (maxWidth - vis.width) / 2;
+    else if (align === "right") drawX = x + maxWidth - vis.width;
+    for (const token of vis.tokens) {
+      ctxFont(token.run);
+      const w = ctx.measureText(token.text).width;
+      ctx.fillStyle = token.run.link ? LINK_FILL : baseColor;
+      if (token.run.code && !token.run.link) {
+        ctx.fillStyle = CODE_BG;
+        ctx.fillRect(drawX, y + size * 0.08, w, size * 0.96);
+        ctx.fillStyle = baseColor;
+      }
+      ctx.fillText(token.text, drawX, y);
+      if (token.run.underline || token.run.link) {
+        ctx.fillStyle = token.run.link ? LINK_FILL : baseColor;
+        ctx.fillRect(drawX, y + size * 1.08, w, Math.max(1, size * 0.08));
+      }
+      drawX += w;
+    }
+    y += lineHeight;
+  }
+  return { height: lines.length * lineHeight, usedNumber };
+}
+
+/** Render the full markup of a note/text body into the given box. */
+function drawMarkup(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  maxHeight: number,
+  baseSize: number,
+  family: string,
+  baseColor: string,
+  align: "left" | "center" | "right" = "left"
+): void {
+  let numberCount = 0;
+  for (const line of parseMarkup(text)) {
+    const res = drawRichLine(ctx, line, x, y, baseSize, family, maxWidth, numberCount, baseColor, align);
+    numberCount = res.usedNumber;
+    y += res.height;
+    if (y >= maxHeight) break;
+  }
 }
 
 function clipText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, prefix = false): string {

@@ -650,6 +650,20 @@ window.spatia = {
     return { canceled: false, contents };
   },
 
+  async pickImportText(title, extensions) {
+    const extList = extensions && extensions.length ? extensions : ["txt", "md", "json", "xml", "mm", "opml"];
+    const acceptItems = [
+      {
+        description: title || "Importable files",
+        accept: { "*/*": extList.map((e) => "." + e.replace(/^\./, "")) },
+      },
+    ];
+    const file = await pickFile(title || "Import", acceptItems);
+    if (!file) return { canceled: true, name: "", contents: "" };
+    const contents = await file.text();
+    return { canceled: false, name: file.name, contents };
+  },
+
   async getRecentProjects() {
     const recents = await getRecents();
     return recents.map(({ filePath, name, openedAt }) => ({ filePath, name, openedAt }));
@@ -910,6 +924,13 @@ window.spatia = {
     const fresh = { id: "user_" + crypto.randomUUID(), name: "Guest" };
     await idbPut(STORES.settings, "collab.identity", fresh);
     return fresh;
+  },
+
+  async collabStartServer() {
+    // The web build cannot run a local node server; the public/compatible
+    // default is the documented ws://localhost:8787 endpoint or a self-hosted
+    // one. Return a safe no-op so the UI still offers Connect/Join.
+    return { started: false, reason: "browser" };
   },
 
   onJoinRequest(cb) {

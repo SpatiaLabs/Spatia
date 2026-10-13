@@ -621,6 +621,36 @@ body {
   box-shadow: 0 0 0 2px rgba(91, 124, 250, 0.25);
 }
 
+.spatia-text-toolbar {
+  position: fixed;
+  z-index: 901;
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px;
+  background: #15181c;
+  border: 1px solid #333a41;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.spatia-text-toolbar-btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  background: transparent;
+  color: rgba(232, 234, 237, 0.9);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.spatia-text-toolbar-btn:hover {
+  background: rgba(91, 124, 250, 0.2);
+  border-color: rgba(91, 124, 250, 0.5);
+}
+
 /* ---------- Inline table cell editor ---------- */
 .spatia-cell-editor {
   position: fixed;
@@ -763,6 +793,57 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Reopen affordance shown in place of the panel once the user hides it.
+ * Positioned in the same upper-left corner the panel occupies. */
+.inspector-reopen {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 19;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--elev-2);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.inspector-reopen:hover {
+  background: var(--surface-2);
+}
+
+.inspector-reopen:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.inspector-reopen-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex: 0 0 auto;
+}
+
+.inspector-reopen[hidden] {
+  display: none !important;
+}
+
+html.tb-active .inspector-reopen {
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  min-height: 44px;
+  z-index: 36;
 }
 
 .inspector-empty {
@@ -1788,6 +1869,12 @@ body {
   grid-template-columns: 1fr auto auto;
 }
 
+.share-server-hint {
+  font-size: 11px;
+  color: var(--color-text-dim);
+  margin: 0 0 10px;
+}
+
 .share-room-label {
   font-size: 12.5px;
   font-weight: 600;
@@ -2322,15 +2409,16 @@ html.tb-active #tb-scrim:not([hidden]) {
   touch-action: manipulation;
 }
 
-/* Vertical divider that resizes the right-side Properties sheet. Lives on the
-   canvas side of the pane edge (right == pane width), so grabbing it never
-   overlaps the pane contents; the hairline sits exactly on the boundary. */
+/* Vertical divider that resizes the upper-left Properties card. Rides the
+   card's right edge (position/height applied inline by TabletUI), so grabbing
+   it never overlaps the card contents; the hairline sits exactly on the
+   boundary. */
 html.tb-active #tb-resizer {
   position: fixed;
   top: 0;
-  bottom: 0;
-  right: min(360px, 92vw);
+  left: 0;
   width: 22px;
+  height: 0;
   z-index: 8;
   pointer-events: auto;
   touch-action: none;
@@ -2598,6 +2686,11 @@ html.tb-active .tb-ctx.tb-danger .tb-ctx-label {
   to { transform: translateX(0); opacity: 1; }
 }
 
+@keyframes tb-pop-in {
+  from { transform: translateY(-6px) scale(0.98); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
 html.tb-active .tb-pane:not([hidden]) {
   position: fixed;
   display: flex;
@@ -2820,20 +2913,18 @@ html.tb-active .url-dialog-box select {
 /* ---- Inspector + assets panels become right sheets ---- */
 html.tb-active #inspector {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: auto;
-  width: min(360px, 92vw);
-  max-height: none;
-  border: none;
-  border-left: 1px solid var(--color-border);
-  border-radius: 0;
-  padding: calc(env(safe-area-inset-top, 0px) + 68px)
-    calc(env(safe-area-inset-right, 0px) + 18px)
-    calc(env(safe-area-inset-bottom, 0px) + 18px);
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  right: auto;
+  bottom: auto;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(58vh, calc(100vh - env(safe-area-inset-top, 0px) - 200px));
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 12px;
   z-index: 35;
-  animation: tb-slide-right 0.2s ease;
+  animation: tb-pop-in 0.16s ease;
 }
 
 html.tb-active .inspector-header {
@@ -2858,21 +2949,20 @@ html.tb-active .tb-inspector-close {
   touch-action: manipulation;
 }
 
-/* On tablet the minimized Properties panel becomes a small floating chip near
- * the right edge so the workspace below it is never covered. */
+/* On tablet the minimized Properties panel becomes a small floating chip in
+ * the same upper-left spot so the workspace is never covered. */
 html.tb-active #inspector.minimized {
   position: fixed;
-  top: auto;
-  right: 14px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
-  left: auto;
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
+  left: calc(env(safe-area-inset-left, 0px) + 12px);
+  right: auto;
+  bottom: auto;
   width: 52px;
   height: 52px;
   max-height: 52px;
   border: 1px solid var(--color-border);
   border-radius: 14px;
   padding: 5px;
-  border-left: 1px solid var(--color-border);
   z-index: 36;
 }
 
