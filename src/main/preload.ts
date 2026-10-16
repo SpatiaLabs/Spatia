@@ -276,4 +276,12 @@ const api: SpatiaApi = {
 
 contextBridge.exposeInMainWorld("spatia", api);
 
+// Startup instrumentation flag. Set only when the main process launches with
+// SPATIA_BENCH=1 (see window.ts). Purely diagnostic; absent in normal runs.
+if (process.argv.includes("--spatia-bench")) {
+  contextBridge.exposeInMainWorld("__spatiaBench", true);
+  const t0 = process.argv.find((a) => a.startsWith("--spatia-t0="));
+  if (t0) contextBridge.exposeInMainWorld("__spatiaBenchT0", Number(t0.slice(12)));
+}
+
 export type { AssetMeta };

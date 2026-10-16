@@ -27,15 +27,37 @@
         </div>
         <div id="hud">
           <div id="hud-controls">
-            <button id="btn-menu" class="btn btn-icon" title="Toggle tools panel">&#9776;</button>
-            <button id="btn-zoom-out" class="btn btn-icon" title="Zoom out">-</button>
-            <button id="btn-zoom-reset" class="btn" title="Reset view">Reset</button>
-            <button id="btn-zoom-in" class="btn btn-icon" title="Zoom in">+</button>
+            <button id="btn-hud-select" class="btn btn-tool" title="Select / move objects" aria-label="Select tool">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3l6.5 16 2-6.3 6.3-2z" /></svg>
+            </button>
+            <button id="btn-pen" class="btn btn-tool" title="Pen tool (draw freely)" aria-label="Pen tool">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 19.5l4.2-1.2L19 8l-3-3L5.7 15.3z" /><path d="M14.8 6.2l3 3" /></svg>
+            </button>
+            <button id="btn-hud-text" class="btn btn-tool" title="Add text" aria-label="Add text">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 5h12" /><path d="M12 5v14" /><path d="M9 19h6" /></svg>
+            </button>
+            <button id="btn-hud-note" class="btn btn-tool" title="Add sticky note" aria-label="Add sticky note">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14v10l-5 6H5z" /><path d="M14 20v-6h5" /></svg>
+            </button>
+            <button id="btn-hud-rect" class="btn btn-tool" title="Add rectangle" aria-label="Add rectangle">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" /></svg>
+            </button>
             <span class="divider" aria-hidden="true"></span>
-            <button id="btn-pen" class="btn btn-tool" title="Pen tool (draw freely)">&#9997;</button>
+            <button id="btn-zoom-out" class="btn btn-icon" title="Zoom out" aria-label="Zoom out">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12" /></svg>
+            </button>
+            <button id="btn-zoom-reset" class="btn btn-icon" title="Reset view" aria-label="Reset view">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9" /><path d="M20 9V5.5A1.5 1.5 0 0 0 18.5 4H15" /><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20H9" /><path d="M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15" /></svg>
+            </button>
+            <button id="btn-zoom-in" class="btn btn-icon" title="Zoom in" aria-label="Zoom in">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12" /><path d="M12 6v12" /></svg>
+            </button>
           </div>
           <div id="zoom-label" title="Zoom level">100%</div>
         </div>
+        <button id="btn-menu" class="btn btn-icon" title="Toggle tools panel" aria-label="Toggle tools panel">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></svg>
+        </button>
         <canvas id="minimap" title="Workspace overview — click to navigate"></canvas>
         <div id="presence-layer" class="presence-layer" aria-hidden="true"></div>
         <div id="browser-layer" class="browser-layer" aria-hidden="true"></div>
@@ -363,6 +385,7 @@
         </div>
       </div>
     </div>
+    <script type="module" src="./renderer/probe.js"></script>
     <script type="module" src="./renderer/main.js"></script>
   </body>
 </html>

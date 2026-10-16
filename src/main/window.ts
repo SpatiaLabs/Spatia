@@ -24,6 +24,11 @@ export function createMainWindow(): BrowserWindow {
       // Enables the `<webview>` tag used by the Browser Frame plugin's canvas
       // rendering primitive. Guests are hardened by will-attach-webview below.
       webviewTag: true,
+      // Only forwarded when the process is started with SPATIA_BENCH=1; lets the
+      // renderer emit startup marks on the main process's clock (see main.ts).
+      additionalArguments: process.env.SPATIA_BENCH === "1"
+        ? ["--spatia-bench", `--spatia-t0=${process.env.SPATIA_BENCH_T0 ?? Date.now()}`]
+        : [],
     },
   });
 

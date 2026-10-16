@@ -6,9 +6,10 @@ import { SHAPE_KINDS, shapeLabel } from "../../shared/geometry/shapes.js";
 import type { Command } from "../command/commandManager.js";
 import { setPropsCommand } from "../command/commands.js";
 import { isEditingText } from "./textEditor.js";
+import { shortcutIdFor } from "../../shared/input/shortcuts.js";
 
 /**
- * Dedicated iPad / tablet interface (web context only).
+ * Dedicated iPad / tablet interface.
  *
  * Turns the canvas into the primary surface:
  *  - a compact top command bar (project, save, undo/redo, search, …),
@@ -21,9 +22,10 @@ import { isEditingText } from "./textEditor.js";
  *    (the same gesture model the phone layer uses), larger selection handles
  *    + a rotation knob, action/color/rotate popovers and a "More" menu.
  *
- * Desktop (Electron, file://) is untouched: this module only activates when the
- * renderer runs in a web context on a tablet device (or when forced for tests).
- * Nothing here mutates document state except through undoable commands.
+ * The website mounts this automatically on a tablet device; the desktop app
+ * mounts it on demand through a secret toggle. Both paths are lossless:
+ * nothing here mutates document state except through undoable commands, so
+ * attaching/detaching never touches the document, selection or viewport.
  */
 export class TabletUI {
   private readonly app: AppLike;
@@ -63,6 +65,10 @@ export class TabletUI {
   private ptRedoBtn!: HTMLButtonElement;
   private resizerDrag: { id: number; startX: number; startWidth: number } | null = null;
   private inspectorObs: MutationObserver | null = null;
+  private subs: Array<() => void> = [];
+  private statusOrig: ((text: string) => void) | null = null;
+  private prevInspectorMinimized = false;
+  private mounted = false;
 
   constructor(app: App) {
     // App fields are TypeScript-private but exist at runtime; the layers that
@@ -72,7 +78,8 @@ export class TabletUI {
 
   attach(): void {
     const host = document.getElementById("app");
-    if (!host) return;
+    if (!host || this.mounted) return;
+    this.mounted = true;
     document.documentElement.classList.add("tb-active");
     document.documentElement.classList.remove("mb-active");
     this.app.engine.setCoarseHandles(true);
@@ -80,15 +87,72 @@ export class TabletUI {
     this.buildShell(host);
     this.captureRefs();
     this.patchStatus();
+    const inspector = document.getElementById("inspector");
+    this.prevInspectorMinimized = !!inspector && inspector.classList.contains("minimized");
     this.app.setInspectorMinimized(false);
     this.wire();
 
-    this.app.selection.changed.subscribe(() => this.refresh());
-    this.app.commands.changed.subscribe(() => this.refresh());
-    this.app.project.changed.subscribe(() => this.refresh());
-    this.app.viewport.changed.subscribe(() => this.updateZoom());
+    this.subs.push(
+      this.app.selection.changed.subscribe(() => this.refresh()),
+      this.app.commands.changed.subscribe(() => this.refresh()),
+      this.app.project.changed.subscribe(() => this.refresh()),
+      this.app.viewport.changed.subscribe(() => this.updateZoom())
+    );
     this.initInspectorResizer();
     this.refresh();
+  }
+
+  isAttached(): boolean {
+    return this.mounted;
+  }
+
+  /** Flip between the desktop chrome and this tablet interface in place. */
+  toggle(): void {
+    if (this.mounted) this.detach();
+    else this.attach();
+  }
+
+  /**
+   * Reverse `attach()` exactly: drop every listener, observer and subscription,
+   * remove the shell, and restore the desktop chrome and inspector state. The
+   * document, selection and viewport are never touched, so a detach/re-attach
+   * cycle is lossless and instant.
+   */
+  detach(): void {
+    if (!this.mounted) return;
+    this.mounted = false;
+
+    for (const off of this.subs) {
+      try {
+        off();
+      } catch {
+        /* a stale unsubscribe must not break the switch back */
+      }
+    }
+    this.subs = [];
+    this.inspectorObs?.disconnect();
+    this.inspectorObs = null;
+
+    window.removeEventListener("keydown", this.onKeyDown, true);
+    window.removeEventListener("resize", this.onResize);
+    document.removeEventListener("click", this.onDialogScrim, true);
+    const canvas = this.app.engine.canvas();
+    canvas.removeEventListener("pointerdown", this.onCanvasDown, true);
+    canvas.removeEventListener("pointermove", this.onCanvasMove, true);
+    canvas.removeEventListener("pointerup", this.onCanvasUp, true);
+    canvas.removeEventListener("pointercancel", this.onCanvasUp, true);
+    canvas.removeEventListener("contextmenu", this.onCanvasContext, true);
+
+    this.closePops();
+    document.getElementById("tb-topbar")?.remove();
+    this.root?.remove();
+    document.documentElement.classList.remove("tb-active");
+    this.app.engine.setCoarseHandles(false);
+    this.app.setInspectorMinimized(this.prevInspectorMinimized);
+    if (this.statusOrig) {
+      this.app.ui.setStatus = this.statusOrig;
+      this.statusOrig = null;
+    }
   }
 
   // ------------------------------------------------------------------ shell
@@ -139,6 +203,7 @@ export class TabletUI {
   private patchStatus(): void {
     const ui = this.app.ui;
     const orig = ui.setStatus.bind(ui);
+    this.statusOrig = ui.setStatus;
     ui.setStatus = (text: string): void => {
       orig(text);
       if (text && text !== "Ready.") {
@@ -624,12 +689,13 @@ export class TabletUI {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (e.metaKey || e.ctrlKey) {
-      const key = (e.key || "").toLowerCase();
-      if (key === "s") {
+      // Resolve from the physical key so a non-Latin layout or AltGr cannot
+      // turn Ctrl+S into a no-op (the classic "save sometimes ignores me").
+      const id = shortcutIdFor({ code: e.code, key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey });
+      if (id === "save") {
         e.preventDefault();
         e.stopImmediatePropagation();
         void this.invokeApp("saveProject");
-        return;
       }
       return;
     }

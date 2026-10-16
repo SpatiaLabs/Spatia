@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   eraseStroke,
   smoothStroke,
+  catmullRomStroke,
   stabilizeStroke,
   cornerMask,
   resampleStroke,
@@ -13,6 +14,7 @@ import {
   strokeTouchesRect,
   isRtlLine,
   distPointToPolyline,
+  strokeOutline,
 } from "../shared/geometry/ink.js";
 import type { WorldPoint } from "../shared/types/object.js";
 
@@ -297,4 +299,142 @@ test("isRtlLine detects Arabic and Hebrew", () => {
   assert.ok(!isRtlLine("hello world"));
   assert.ok(!isRtlLine(""));
   assert.ok(isRtlLine("Switch to العربية"));
+});
+
+// ---------------------------------------------------------------------------
+// Variable-width ribbon outline
+
+test("strokeOutline offsets a straight run by half the width on each side", () => {
+  const outline = strokeOutline([pt(0, 0), pt(10, 0)], 4);
+  assert.ok(outline);
+  // Segment points +x, so the left rail is +y and the right rail is -y.
+  assert.deepEqual(outline.left, [pt(0, 2), pt(10, 2)]);
+  assert.deepEqual(outline.right, [pt(0, -2), pt(10, -2)]);
+});
+
+test("strokeOutline keeps collinear points on the same rails", () => {
+  const outline = strokeOutline([pt(0, 0), pt(5, 0), pt(10, 0)], 6);
+  assert.ok(outline);
+  for (const p of outline.left) assert.ok(Math.abs(p.y - 3) < 1e-9);
+  for (const p of outline.right) assert.ok(Math.abs(p.y + 3) < 1e-9);
+  assert.equal(outline.left.length, 3);
+  assert.equal(outline.right.length, 3);
+});
+
+test("strokeOutline mitres an L-corner to the exact mitered vertices", () => {
+  const outline = strokeOutline([pt(0, 0), pt(10, 0), pt(10, 10)], 4);
+  assert.ok(outline);
+  // Clockwise turn at (10,0): outer rail corner (8,2), inner rail corner (12,-2).
+  assert.ok(Math.abs(outline.left[1].x - 8) < 1e-9 && Math.abs(outline.left[1].y - 2) < 1e-9);
+  assert.ok(Math.abs(outline.right[1].x - 12) < 1e-9 && Math.abs(outline.right[1].y + 2) < 1e-9);
+});
+
+test("strokeOutline tapers each rail to that vertex's own half-width", () => {
+  const outline = strokeOutline([pt(0, 0, 2), pt(10, 0, 12)], 3);
+  assert.ok(outline);
+  // Left rail at x=0 sits 1px above the centerline (width 2); at x=10, 6px.
+  assert.ok(Math.abs(outline.left[0].y - 1) < 1e-9);
+  assert.ok(Math.abs(outline.left[1].y - 6) < 1e-9);
+  assert.ok(Math.abs(outline.right[0].y + 1) < 1e-9);
+  assert.ok(Math.abs(outline.right[1].y + 6) < 1e-9);
+});
+
+test("strokeOutline clamps a near-180° spike to a finite miter", () => {
+  const outline = strokeOutline([pt(0, 0), pt(10, 0), pt(0.001, 0.001)], 4);
+  assert.ok(outline);
+  for (const p of [...outline.left, ...outline.right]) {
+    assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y));
+  }
+  // The clamped offset can never exceed the miter limit times the half-width.
+  assert.ok(Math.hypot(outline.left[1].x - 10, outline.left[1].y - 0) <= 2 * 3 + 1e-6);
+});
+
+test("strokeOutline returns null for fewer than two points", () => {
+  assert.equal(strokeOutline([pt(0, 0)], 4), null);
+  assert.equal(strokeOutline([], 4), null);
+});
+
+// ---------------------------------------------------------------------------
+// Catmull-Rom curve smoothing
+
+test("catmullRomStroke keeps endpoints and passes through every input vertex", () => {
+  const stroke = [pt(0, 0), pt(10, 4), pt(20, -2), pt(30, 6), pt(40, 0)];
+  const out = catmullRomStroke(stroke, { subdivisions: 8 });
+  assert.ok(Math.abs(out[0].x) < 1e-9 && Math.abs(out[0].y) < 1e-9, "start must be exact");
+  const last = out[out.length - 1];
+  assert.ok(Math.abs(last.x - 40) < 1e-9 && Math.abs(last.y) < 1e-9, "end must be exact");
+  for (const v of stroke) {
+    assert.ok(
+      out.some((p) => Math.hypot(p.x - v.x, p.y - v.y) < 1e-6),
+      `interpolating curve must pass through (${v.x},${v.y})`
+    );
+  }
+  assert.ok(out.length > stroke.length, "subdivision must add intermediate points");
+});
+
+test("catmullRomStroke rounds a gentle bend between vertices", () => {
+  const stroke = [pt(0, 0), pt(10, 0), pt(20, 0), pt(30, 10)];
+  const out = catmullRomStroke(stroke, { subdivisions: 8 });
+  const deviates = out.some((p) => p.x > 2 && p.x < 28 && Math.abs(p.y) > 0.1);
+  assert.ok(deviates, "curve smoothing must bend away from the straight chord");
+});
+
+test("catmullRomStroke preserves a right-angle corner", () => {
+  const stroke = [pt(0, 0), pt(10, 0), pt(10, 10), pt(10, 20)];
+  const out = catmullRomStroke(stroke, { subdivisions: 8 });
+  assert.ok(
+    out.some((p) => Math.abs(p.x - 10) < 1e-9 && Math.abs(p.y) < 1e-9),
+    "the exact corner vertex must survive"
+  );
+  for (const p of out) {
+    if (p.x < 10 - 1e-9) assert.ok(Math.abs(p.y) < 1e-9, `horizontal leg drifted to y=${p.y}`);
+    if (p.y > 1e-9) assert.ok(Math.abs(p.x - 10) < 1e-9, `vertical leg drifted to x=${p.x}`);
+  }
+});
+
+test("catmullRomStroke keeps a hairpin corner finite and preserves it", () => {
+  const stroke = [pt(0, 0), pt(10, 0), pt(0.001, 0.001)];
+  const out = catmullRomStroke(stroke, { subdivisions: 8 });
+  for (const p of out) assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y));
+  assert.ok(out.some((p) => Math.abs(p.x - 10) < 1e-9 && Math.abs(p.y) < 1e-9), "hairpin apex preserved");
+});
+
+test("catmullRomStroke interpolates per-vertex width along the taper", () => {
+  const stroke = [pt(0, 0, 2), pt(10, 0, 6), pt(20, 0, 10)];
+  const out = catmullRomStroke(stroke, { subdivisions: 4 });
+  // Straight (collinear) input keeps the smoothed centreline on y = 0.
+  for (const p of out) assert.ok(Math.abs(p.y) < 1e-9);
+  for (let i = 1; i < out.length; i++) {
+    assert.ok(out[i].width !== undefined, "every emitted point carries a width");
+    assert.ok(out[i].width! >= out[i - 1].width! - 1e-9, "width must not go backwards along the taper");
+  }
+  const at10 = out.find((p) => Math.abs(p.x - 10) < 1e-9);
+  assert.ok(at10 && Math.abs((at10.width ?? 0) - 6) < 1e-6, "vertex width survives exactly");
+});
+
+test("catmullRomStroke returns a value-equal copy for short strokes or zero subdivisions", () => {
+  const two = [pt(0, 0), pt(5, 5)];
+  const a = catmullRomStroke(two, { subdivisions: 8 });
+  assert.deepEqual(a, two);
+  assert.notEqual(a, two, "a fresh array is returned");
+  const line = [pt(0, 0, 3), pt(10, 0, 3)];
+  const b = catmullRomStroke(line, { subdivisions: 0 });
+  assert.deepEqual(b, line);
+  assert.notEqual(b, line);
+});
+
+test("catmullRomStroke bounds output size and stays fast on large inputs", () => {
+  const big: WorldPoint[] = [];
+  for (let i = 0; i < 20000; i++) big.push(pt(i, Math.sin(i / 40) * 20));
+  const t0 = Date.now();
+  const out = catmullRomStroke(big, { subdivisions: 12, maxPoints: 8000 });
+  const elapsed = Date.now() - t0;
+  assert.ok(out.length <= 8000 + big.length, "the point ceiling is respected");
+  assert.equal(out[out.length - 1].x, 19999, "the whole stroke is kept, never truncated");
+  assert.ok(elapsed < 2000, `smoothing should stay fast (took ${elapsed}ms)`);
+
+  const mid: WorldPoint[] = [];
+  for (let i = 0; i < 1000; i++) mid.push(pt(i, Math.sin(i / 10)));
+  const bounded = catmullRomStroke(mid, { subdivisions: 12, maxPoints: 8000 });
+  assert.ok(bounded.length <= 8010, "subdivision count shrinks to honour the ceiling");
 });

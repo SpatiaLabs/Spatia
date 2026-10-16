@@ -68,6 +68,10 @@ export class AppUI {
   readonly btnPen = el<HTMLButtonElement>("btn-pen");
   readonly btnPenSidebar = el<HTMLButtonElement>("btn-pen-sidebar");
   readonly btnSelect = el<HTMLButtonElement>("btn-select");
+  readonly btnHudSelect = el<HTMLButtonElement>("btn-hud-select");
+  readonly btnHudText = el<HTMLButtonElement>("btn-hud-text");
+  readonly btnHudNote = el<HTMLButtonElement>("btn-hud-note");
+  readonly btnHudRect = el<HTMLButtonElement>("btn-hud-rect");
   readonly sidebar = el<HTMLElement>("sidebar");
   readonly btnMenu = el<HTMLButtonElement>("btn-menu");
   readonly btnPlugins = el<HTMLButtonElement>("btn-plugins");
@@ -443,6 +447,7 @@ export class AppUI {
   setTools(penActive: boolean): void {
     this.btnPen.classList.toggle("active", penActive);
     this.btnPenSidebar.classList.toggle("active", penActive);
+    this.btnHudSelect.classList.toggle("active", !penActive);
     this.btnSelect.classList.toggle("active", !penActive);
   }
 

@@ -261,8 +261,8 @@ app.whenReady().then(async () => {
     ok("Open Graph title + description present", /Infinite Canvas/.test(landing.ogTitle) && /local-first/.test(landing.ogDescription));
     ok("structured data present", landing.hasJsonLd);
     ok("structured data includes keywords", /"keywords"/.test(landing.ldText));
-    ok("structured data softwareVersion is 0.5.1", /"softwareVersion"\s*:\s*"0\.5\.1"/.test(landing.ldText));
-    ok("landing announces version 0.5.1", /0\.5\.1/.test(landing.text));
+    ok("structured data softwareVersion is 0.5.2", /"softwareVersion"\s*:\s*"0\.5\.2"/.test(landing.ldText));
+    ok("landing announces version 0.5.2", /0\.5\.2/.test(landing.text));
     ok("landing offers Windows + Web paths", landing.downloadLinks.length >= 1 && /Web.*Windows/.test(landing.text));
     ok("landing offers an FAQ", landing.faqCount >= 6);
     ok("og:image hosted on the website itself", landing.ogImage === "https://spatiaweb.surge.sh/assets/icon-512.png");
@@ -270,7 +270,7 @@ app.whenReady().then(async () => {
     ok("landing introduces no open-source claims", !/open[-\s]?source|MIT license/i.test(landing.text));
     ok("download CTAs point to the GitHub release MSI", landing.downloadLinks.length >= 1 && landing.downloadLinks.every((h) => {
       const u = new URL(h);
-      return u.host === "github.com" && u.pathname === "/SpatiaLabs/Spatia/releases/download/v0.5.1/Spatia-0.5.1-win-x64.msi";
+      return u.host === "github.com" && u.pathname === "/SpatiaLabs/Spatia/releases/download/v0.5.2/Spatia-0.5.2-win-x64.msi";
     }));
     ok("public site links the GitHub release for downloads", landing.hasGithub);
     ok("landing copy names the GitHub-hosted installer", /hosted on GitHub Releases/i.test(landing.text));
@@ -403,7 +403,7 @@ app.whenReady().then(async () => {
     ok("report: dialog absent inside the web workspace", repWeb.dialogGone && repWeb.noAttr && repWeb.noTrigger);
     execute(win, () => { window.__appId = window.__spatia; });
 
-    // ---- 2a) Render cadence (0.5.1): display-driven, no artificial cap ----
+    // ---- 2a) Render cadence (0.5.x): display-driven, no artificial cap ----
     // The hidden window pauses rAF (no vsync being driven), so briefly reveal it
     // so the compositor clocks requestAnimationFrame like a real display, then
     // hide it again. A fallback timer guarantees the measurement never blocks.
@@ -1043,6 +1043,65 @@ api.addCommand({
     ok("ink: heavy press finishes full (~10.4px @ pressure 1.0)", press.lastW > 9 && press.lastW < 11);
     ok("ink: stroke width setting honored", press.sw === 8);
 
+    // 4b-6) The variable-width branch paints one continuous ribbon. Sample the
+    // live canvas pixels to prove the taper is actually rendered (opaque ink
+    // core) and that the heavy end is measurably wider than the light end.
+    const taperPixels = await execute(win, async () => {
+      const eng = window.__spatia.engine;
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const c = eng.canvas();
+      const r = c.getBoundingClientRect();
+      const ctx = c.getContext("2d");
+      const sx = c.width / r.width;
+      const sy = c.height / r.height;
+      // Background = the most common colour in a clear band near the bottom,
+      // which is well away from the stroke at cy-40.
+      const band = ctx.getImageData(
+        Math.max(0, Math.round((r.width / 2 - 100) * sx)),
+        Math.max(0, Math.round((r.height - 50) * sy)),
+        Math.max(1, Math.round(200 * sx)),
+        Math.max(1, Math.round(20 * sy))
+      ).data;
+      const counts = new Map();
+      for (let i = 0; i < band.length; i += 4) {
+        const key = (band[i] << 16) | (band[i + 1] << 8) | band[i + 2];
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      let bgKey = 0;
+      let best = -1;
+      for (const [k, v] of counts) {
+        if (v > best) {
+          best = v;
+          bgKey = k;
+        }
+      }
+      const bgr = (bgKey >> 16) & 255;
+      const bgg = (bgKey >> 8) & 255;
+      const bgb = bgKey & 255;
+      const colInk = (screenX, screenY) => {
+        const x = Math.round((screenX - r.left) * sx);
+        const yc = Math.round((screenY - r.top) * sy);
+        let n = 0;
+        for (let dy = -30; dy <= 30; dy++) {
+          const y = yc + dy;
+          if (y < 0 || y >= c.height || x < 0 || x >= c.width) continue;
+          const d = ctx.getImageData(x, y, 1, 1).data;
+          if (Math.abs(d[0] - bgr) + Math.abs(d[1] - bgg) + Math.abs(d[2] - bgb) > 90) n++;
+        }
+        return n;
+      };
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      return {
+        thin: colInk(cx - 150, cy - 40),
+        thick: colInk(cx + 150, cy - 40),
+        cw: c.width,
+        ch: c.height,
+      };
+    });
+    ok("ink: tapered stroke renders opaque ink", taperPixels.cw > 0 && taperPixels.thin >= 1 && taperPixels.thick >= 1);
+    ok("ink: ribbon widens toward the heavy end", taperPixels.thick > taperPixels.thin + 2);
+
     // Leave an empty project + pen off so the mobile layer starts from the
     // same clean state as the pre-mobile reset above.
     const cleanedInk = await execute(win, async () => {
@@ -1054,6 +1113,163 @@ api.addCommand({
       return window.__spatiaQA.pens().length === 0;
     });
     ok("ink: suite cleans up to an empty project", cleanedInk);
+
+    // The broken-plugin sandbox raises errors in its iframe; those must not
+    // count against the global console-error check at the end of the run.
+    errors.length = 0;
+
+    // ---- 4c) Desktop chrome: bottom-right menu, tablet toggle, brush presets ----
+    // The menu button must sit in the absolute bottom-right corner (regression:
+    // it used to be pinned top-right).
+    const menuPos = await execute(win, () => {
+      const btn = document.getElementById("btn-menu");
+      if (!btn) return null;
+      const r = btn.getBoundingClientRect();
+      return {
+        visible: getComputedStyle(btn).display !== "none" && r.width >= 30 && r.height >= 30,
+        right: Math.round(innerWidth - r.right),
+        bottom: Math.round(innerHeight - r.bottom),
+        lowerHalf: r.top + r.height / 2 > innerHeight / 2,
+      };
+    });
+    ok(
+      "menu: hamburger is pinned to the bottom-right corner",
+      !!menuPos && menuPos.visible && menuPos.right >= 4 && menuPos.right <= 24 && menuPos.bottom >= 4 && menuPos.bottom <= 24 && menuPos.lowerHalf
+    );
+
+    // The hidden Alt+I chord swaps the desktop chrome for the app's real tablet
+    // interface in place — the same TabletUI the website mounts on an iPad. It
+    // must be instant, lossless (document + selection untouched) and reversible.
+    const tabletToggle = await execute(win, async () => {
+      const keydown = () =>
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "i", code: "KeyI", altKey: true, bubbles: true, cancelable: true })
+        );
+      const app = window.__spatia;
+      const rootEl = document.documentElement;
+      const objectsBefore = app.project.getObjects().length;
+      const selBefore = app.selection.get().join(",");
+      const startedDesktop = !rootEl.classList.contains("tb-active");
+      const t0 = performance.now();
+      keydown();
+      const activationMs = performance.now() - t0;
+      const on = {
+        tb: rootEl.classList.contains("tb-active"),
+        topbar: !!document.getElementById("tb-topbar"),
+        dock: !!document.getElementById("tb-dock"),
+        dockTools: Array.prototype.map
+          .call(document.querySelectorAll("#tb-dock [data-tool]"), (b) => b.dataset.tool)
+          .join(","),
+        zoom: (document.getElementById("tb-zoom-label") || {}).textContent || "",
+        objects: app.project.getObjects().length,
+        sel: app.selection.get().join(","),
+      };
+      // A second press must return to the normal desktop chrome.
+      keydown();
+      const off = {
+        tb: rootEl.classList.contains("tb-active"),
+        topbar: !!document.getElementById("tb-topbar"),
+        dock: !!document.getElementById("tb-dock"),
+        objects: app.project.getObjects().length,
+        sel: app.selection.get().join(","),
+      };
+      return { startedDesktop, objectsBefore, selBefore, on, off, activationMs: +activationMs.toFixed(2) };
+    });
+    ok("tablet toggle: desktop starts without tb-active", tabletToggle.startedDesktop);
+    ok(
+      "tablet toggle: Alt+I switches to the real tablet interface",
+      tabletToggle.on.tb && tabletToggle.on.topbar && tabletToggle.on.dock
+    );
+    ok(
+      "tablet toggle: dock has select/hand/pen plus create tools",
+      /^select,hand,pen,/.test(tabletToggle.on.dockTools) && /note,shape,media$/.test(tabletToggle.on.dockTools)
+    );
+    ok("tablet toggle: zoom label shows a percentage", /%$/.test(tabletToggle.on.zoom));
+    ok(
+      "tablet toggle: document and selection preserved across the switch",
+      tabletToggle.on.objects === tabletToggle.objectsBefore &&
+        tabletToggle.off.objects === tabletToggle.objectsBefore &&
+        tabletToggle.on.sel === tabletToggle.selBefore &&
+        tabletToggle.off.sel === tabletToggle.selBefore
+    );
+    ok(
+      "tablet toggle: Alt+I again returns to the desktop interface",
+      tabletToggle.off.tb === false && !tabletToggle.off.topbar && !tabletToggle.off.dock
+    );
+    ok(
+      "tablet toggle: activation is immediate (synchronous, < 100ms)",
+      tabletToggle.activationMs < 100
+    );
+
+    // ---- 4d) Brush presets (pen panel) ------------------------------------
+    // Picking a built-in preset applies its live style; a custom preset saved
+    // through the naming dialog round-trips via localStorage and can be deleted.
+    const brush = await execute(win, async () => {
+      const app = window.__spatia;
+      const eng = app.engine;
+      const STEP = "spatia.brushPresets.v1";
+      localStorage.removeItem(STEP);
+      eng.setPenTool(true);
+      eng.setPenToolMode("pen");
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const body = document.getElementById("inspector-body");
+      const select = body ? body.querySelector('[data-pen="preset"]') : null;
+      const hasSave = !!body && !!body.querySelector('[data-preset="save"]');
+      const hasDelete = !!body && !!body.querySelector('[data-preset="delete"]');
+      if (!select) return { hasSelect: false };
+
+      // Apply the built-in Marker preset (width 8, opacity 0.9, pressure off).
+      select.value = "builtin:marker";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const s1 = eng.getPenSettings();
+      const markerApplied = Math.abs(s1.width - 8) < 1e-6 && Math.abs(s1.opacity - 0.9) < 1e-6 && s1.pressure === false;
+      const selectReflects = document.getElementById("inspector-body").querySelector('[data-pen="preset"]').value === "builtin:marker";
+
+      // Save the live style as a custom preset through the naming dialog.
+      document.querySelector('#inspector-body [data-preset="save"]').click();
+      await new Promise((r) => requestAnimationFrame(r));
+      const dialogOpen = !!document.getElementById("url-dialog").classList.contains("open");
+      document.getElementById("url-input").value = "Verify brush";
+      document.getElementById("url-confirm").click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const stored = JSON.parse(localStorage.getItem(STEP) || "[]");
+      const savedEntry = stored.find((p) => p.name === "Verify brush" && Math.abs(p.width - 8) < 1e-6);
+      const savedId = savedEntry ? savedEntry.id : "";
+      const savedOk = !!savedEntry;
+      const selAfterSave = document.getElementById("inspector-body").querySelector('[data-pen="preset"]');
+      const optionShown = !!savedId && !!selAfterSave.querySelector(`option[value="${savedId}"]`);
+
+      // Delete it again (the select now points at the custom preset).
+      const del = document.querySelector('#inspector-body [data-preset="delete"]');
+      const deleteEnabled = !del.disabled;
+      del.click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const storedAfter = JSON.parse(localStorage.getItem(STEP) || "[]");
+      const goneFromSelect = !document.getElementById("inspector-body").querySelector(`option[value="${savedId}"]`);
+      const goneFromStore = !storedAfter.some((p) => p.id === savedId);
+      localStorage.removeItem(STEP);
+
+      eng.setPenTool(false);
+      return {
+        hasSelect: true,
+        hasSave,
+        hasDelete,
+        markerApplied,
+        selectReflects,
+        dialogOpen,
+        savedOk,
+        optionShown,
+        deleteEnabled,
+        deletedOk: goneFromStore && goneFromSelect,
+      };
+    });
+    ok("brush: pen panel offers a preset picker", brush.hasSelect && brush.hasSave && brush.hasDelete);
+    ok("brush: choosing a built-in preset applies its style", brush.markerApplied);
+    ok("brush: the picker reflects the active preset", brush.selectReflects);
+    ok("brush: saving a custom preset opens the naming dialog", brush.dialogOpen);
+    ok("brush: a custom preset persists to localStorage", brush.savedOk && brush.optionShown);
+    ok("brush: a custom preset can be deleted again", brush.deleteEnabled && brush.deletedOk);
 
     // The broken-plugin sandbox raises errors in its iframe; those must not
     // count against the global console-error check at the end of the run.
@@ -1601,7 +1817,7 @@ api.addCommand({
     }));
     ok("tablet: stage-manager resize keeps tablet UI", resized.tbActive && resized.topbar && resized.dockVisible);
 
-    // ---- 5f0) Apple Pencil really inks on the iPad shell --------------------
+    // ---- 5f0) Apple Pencil really inks in the tablet interface ----------------
     // A stylus (pointerType "pen") stroke must draw through the tablet layer's
     // canvas handlers — this is the drawing path a real Apple Pencil uses while
     // a finger still pans.
@@ -1647,7 +1863,7 @@ api.addCommand({
     const trest = await execute(win, () => ({ penOff: !window.__spatia.engine.isPenTool() }));
     ok("tablet: select tool restored after pencil test", trest.penOff);
 
-    // ---- 5f1) iPad Properties card is compact, upper-left and dismissible ----
+    // ---- 5f1) tablet Properties card is compact, upper-left and dismissible -
     // Select an object so the Properties card opens, then verify it is a small
     // upper-left card (not a full-height right sheet).
     await execute(win, () => {
@@ -1891,7 +2107,7 @@ api.addCommand({
     await httpOk("PWA manifest served", "/manifest.webmanifest", (b) => {
       try {
         const j = JSON.parse(b.toString("utf-8"));
-        return j.name === "Spatia" && j.start_url.indexOf("#/web") !== -1 && j.display === "standalone" && j.version === "0.5.1";
+        return j.name === "Spatia" && j.start_url.indexOf("#/web") !== -1 && j.display === "standalone" && j.version === "0.5.2";
       } catch {
         return false;
       }
@@ -1906,13 +2122,13 @@ api.addCommand({
         /infinite canvas/i.test(t) &&
         !/not open source/i.test(t) &&
       /github\.com\/SpatiaLabs\/Spatia/.test(t) &&
-        t.indexOf("0.5.1") !== -1 &&
+        t.indexOf("0.5.2") !== -1 &&
         /Linux \(x64\) desktop app/.test(t) &&
         t.indexOf("#/wiki/getting-started") !== -1;
     });
     await httpOk("sitemap lists the production URL", "/sitemap.xml", (b) => b.toString("utf-8").indexOf("https://spatiaweb.surge.sh/") !== -1);
     const landingHtml = fs.readFileSync(path.join(BASE, "index.html"), "utf-8");
-    ok("landing downloads the MSI from the GitHub release", landingHtml.indexOf("https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.1/Spatia-0.5.1-win-x64.msi") !== -1);
+    ok("landing downloads the MSI from the GitHub release", landingHtml.indexOf("https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.2/Spatia-0.5.2-win-x64.msi") !== -1);
 
     const page = await execute(win, () => ({
       manifestHref: (document.querySelector('link[rel="manifest"]') || {}).href || "",

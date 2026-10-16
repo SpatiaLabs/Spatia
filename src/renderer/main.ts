@@ -1,5 +1,8 @@
 import { App } from "./app.js";
 import { TabletUI } from "./ui/tabletUI.js";
+import { bench, benchEnabled } from "./util/bench.js";
+
+bench("script-start");
 
 interface SpatiaSiteHooks {
   isTablet?(): boolean;
@@ -27,23 +30,33 @@ function isTabletDevice(): boolean {
 }
 
 function bootstrap(): void {
+  bench("bootstrap");
   const canvas = document.getElementById("canvas");
   if (!(canvas instanceof HTMLCanvasElement)) {
     throw new Error("Canvas element not found.");
   }
 
   const app = new App(canvas);
+  bench("app-constructed");
   app.start();
+  bench("app-started");
 
   const tablet = isTabletDevice();
   // Desktop panels stay anchored at their CSS positions; the tablet gets its
   // own shell (web context only), so mount it after the shared app starts.
   if (tablet) {
     new TabletUI(app).attach();
+    bench("tablet-mounted");
   }
 
   // Keep a handle for future debugging/tests.
   (window as unknown as Record<string, unknown>).__spatia = app;
+
+  // Mark the first frame after the app is usable. The main process uses this to
+  // end a SPATIA_BENCH run (see src/main/main.ts).
+  if (benchEnabled()) {
+    requestAnimationFrame(() => requestAnimationFrame(() => bench("interactive")));
+  }
 }
 
 if (document.readyState === "loading") {

@@ -113,6 +113,99 @@ export function smoothStroke(points: readonly WorldPoint[], iterations: number):
   return pts;
 }
 
+// ---------------------------------------------------------------------------
+// Catmull-Rom curve smoothing
+
+export interface CurveSmoothing {
+  /** Subdivisions emitted per input segment. `<= 0` disables curve smoothing. */
+  subdivisions?: number;
+  /** Corner threshold, with the same meaning as `cornerMask`. */
+  cornerThreshold?: number;
+  /** Hard ceiling on the output point count (perf guard); the subdivision
+   *  count is reduced automatically so the whole stroke is always kept. */
+  maxPoints?: number;
+}
+
+function mixPoint(a: Point, b: Point, u: number): Point {
+  return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
+}
+
+function knotDelta(a: Point, b: Point): number {
+  // Centripetal knot spacing: distance^0.5. Clamped so knots stay strictly
+  // increasing even when two samples coincide.
+  return Math.max(Math.pow(Math.hypot(b.x - a.x, b.y - a.y), 0.5), 1e-3);
+}
+
+/** One point on the centripetal Catmull-Rom spline through p1..p2 at t in [0,1]. */
+function catmullRomPoint(p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point {
+  const t0 = 0;
+  const t1 = t0 + knotDelta(p0, p1);
+  const t2 = t1 + knotDelta(p1, p2);
+  const t3 = t2 + knotDelta(p2, p3);
+  const tt = t1 + (t2 - t1) * t;
+  const a1 = mixPoint(p0, p1, (tt - t0) / (t1 - t0));
+  const a2 = mixPoint(p1, p2, (tt - t1) / (t2 - t1));
+  const a3 = mixPoint(p2, p3, (tt - t2) / (t3 - t2));
+  const b1 = mixPoint(a1, a2, (tt - t0) / (t2 - t0));
+  const b2 = mixPoint(a2, a3, (tt - t1) / (t3 - t1));
+  return mixPoint(b1, b2, (tt - t1) / (t2 - t1));
+}
+
+/**
+ * Centripetal Catmull-Rom subdivision ("curve smoothing"). Interpolates a
+ * naturally smooth curve through every input vertex while:
+ *  - keeping the exact first and last vertices (no endpoint drift, so tiny
+ *    strokes and stroke ends stay where the user put them);
+ *  - preserving sharp corners detected by `cornerMask` — segments touching a
+ *    corner are emitted straight, so right angles and hairpins stay crisp while
+ *    gentle curves are rounded;
+ *  - interpolating per-vertex `width` linearly, so a pressure taper survives
+ *    and stays aligned with the smoothed centreline.
+ *
+ * Centripetal parameterisation (alpha = 0.5) is used because it avoids the
+ * cusps / self-intersections that uniform Catmull-Rom produces on unevenly
+ * spaced samples — exactly what pointer input looks like.
+ *
+ * `subdivisions <= 0`, fewer than three points, or a vertical/horizontal
+ * stroke returns the input unchanged (a copy is still returned so callers can
+ * mutate freely).
+ */
+export function catmullRomStroke(points: readonly WorldPoint[], options: CurveSmoothing = {}): WorldPoint[] {
+  const n = points.length;
+  const sub = Math.max(0, Math.floor(options.subdivisions ?? 0));
+  if (sub <= 0 || n < 3) return points.map((p) => ({ ...p }));
+
+  const corners = cornerMask(points, options.cornerThreshold ?? -0.5);
+  const maxPoints = Math.max(n, options.maxPoints ?? 8000);
+  // Never exceed the ceiling: shrink the per-segment subdivision count instead
+  // of truncating the stroke (keeping every vertex is more important than the
+  // exact curve density).
+  const effSub = Math.max(1, Math.min(sub, Math.floor(maxPoints / Math.max(1, n - 1))));
+
+  const out: WorldPoint[] = [{ ...points[0] }];
+  for (let i = 0; i < n - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    if (corners[i] || corners[i + 1]) {
+      out.push({ ...p2 });
+      continue;
+    }
+    const p0 = i > 0 ? points[i - 1] : p1;
+    const p3 = i + 2 < n ? points[i + 2] : p2;
+    const hasWidth = p1.width !== undefined || p2.width !== undefined;
+    const w1 = p1.width ?? p2.width ?? 0;
+    const w2 = p2.width ?? p1.width ?? 0;
+    for (let s = 1; s <= effSub; s++) {
+      const t = s / effSub;
+      const c = catmullRomPoint(p0, p1, p2, p3, t);
+      const wp: WorldPoint = { x: c.x, y: c.y };
+      if (hasWidth) wp.width = w1 + (w2 - w1) * t;
+      out.push(wp);
+    }
+  }
+  return out;
+}
+
 /**
  * Rubber-band stabilizer: roll the final `lag` raw samples into a single
  * trailing-average tip. The stroke trails the pen by a handful of samples, so
@@ -169,6 +262,79 @@ export function translatePoints(points: readonly WorldPoint[], dx: number, dy: n
     ...(p.width !== undefined ? { width: p.width } : {}),
   }));
 }
+
+// ---------------------------------------------------------------------------
+// Variable-width ribbon outline
+
+/** A stroke outline as two offset rails (left/right of the direction of travel). */
+export interface StrokeOutline {
+  left: Point[];
+  right: Point[];
+}
+
+/**
+ * Miter clamp in units of the half-width. 3 keeps ordinary joins exact while
+ * stopping near-180° turns from throwing out an arbitrarily long spike.
+ */
+const MITER_LIMIT = 3;
+
+/** Unit normal of the segment a→b (90° clockwise), or null if it is degenerate. */
+function segmentNormal(a: Point, b: Point): Point | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return null;
+  return { x: -dy / len, y: dx / len };
+}
+
+/**
+ * Build the outline of a variable-width stroke as two world-space rails. Each
+ * vertex is offset by half its width (per-vertex `width`, else `fallbackWidth`)
+ * along the mitered normal between its adjacent segments; sharp turns are
+ * miter-clamped so the ribbon never spikes. Filling the closed left+right rail
+ * polygon (with round end caps drawn separately) yields one continuous ribbon
+ * instead of a chain of per-segment trapezoids — no banding when the width
+ * changes quickly. Returns null for a stroke with fewer than two points.
+ */
+export function strokeOutline(points: readonly WorldPoint[], fallbackWidth: number): StrokeOutline | null {
+  const n = points.length;
+  if (n < 2) return null;
+  const left: Point[] = [];
+  const right: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    const prevN = i > 0 ? segmentNormal(points[i - 1], points[i]) : null;
+    const nextN = i < n - 1 ? segmentNormal(points[i], points[i + 1]) : null;
+    const p = points[i];
+    const half = Math.max(0.01, p.width === undefined ? fallbackWidth : p.width) / 2;
+
+    let ox = 0;
+    let oy = 0;
+    if (prevN && nextN) {
+      const denom = 1 + (prevN.x * nextN.x + prevN.y * nextN.y);
+      if (denom > 1e-4) {
+        ox = (prevN.x + nextN.x) / denom;
+        oy = (prevN.y + nextN.y) / denom;
+      } else {
+        // Exact 180° reversal: one rail folds onto the other; use one normal.
+        ox = prevN.x;
+        oy = prevN.y;
+      }
+    } else {
+      const normal = prevN ?? nextN ?? { x: 0, y: 0 };
+      ox = normal.x;
+      oy = normal.y;
+    }
+    const len = Math.hypot(ox, oy);
+    if (len > MITER_LIMIT) {
+      ox = (ox / len) * MITER_LIMIT;
+      oy = (oy / len) * MITER_LIMIT;
+    }
+    left.push({ x: p.x + ox * half, y: p.y + oy * half });
+    right.push({ x: p.x - ox * half, y: p.y - oy * half });
+  }
+  return { left, right };
+}
+
 
 // ---------------------------------------------------------------------------
 // Distance helpers

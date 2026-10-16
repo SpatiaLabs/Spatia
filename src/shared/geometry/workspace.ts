@@ -293,3 +293,68 @@ export function groupBounds(group: GroupObject, objects: readonly CanvasObject[]
   if (u) return u;
   return { x: group.x, y: group.y, width: group.width <= 0 ? 120 : group.width, height: group.height <= 0 ? 90 : group.height };
 }
+
+// ---------------------------------------------------------------------------
+// Connection graph helpers (branching links)
+
+/** True when a connection references any id in `ids` (from or object target). */
+export function connectionTouches(
+  conn: { from: string; to: string },
+  ids: ReadonlySet<string>
+): boolean {
+  return ids.has(conn.from) || (conn.to !== "" && ids.has(conn.to));
+}
+
+/**
+ * Ids of every connection whose endpoint touches one of `ids`. Used so that
+ * deleting a frame also removes the links attached to it (no dangling edges),
+ * and duplicating a set can carry its internal edges along.
+ */
+export function connectionsTouching(
+  objects: readonly CanvasObject[],
+  ids: ReadonlySet<string>
+): string[] {
+  const out: string[] = [];
+  for (const o of objects) {
+    if (o.type === "connection" && connectionTouches(o, ids)) out.push(o.id);
+  }
+  return out;
+}
+
+/**
+ * Parse a connection's edge choice. `auto` snaps to the facing edge; `none`
+ * (free endpoint) is only valid when the matching endpoint object is absent.
+ * Exposed so the UI/commands can validate before creating an edge.
+ */
+export function isConnectableEndpoint(o: CanvasObject | undefined): boolean {
+  return o !== undefined && o.type !== "connection";
+}
+
+/** True when a directed edge from `from` to `to` already exists. */
+export function connectionBetween(
+  objects: readonly CanvasObject[],
+  from: string,
+  to: string
+): string | undefined {
+  for (const o of objects) {
+    if (o.type === "connection" && o.from === from && o.to === to) return o.id;
+  }
+  return undefined;
+}
+
+/**
+ * Remap a connection's endpoints through an old-id -> new-id map, preserving
+ * any endpoint that is not part of the map (e.g. a free endpoint or a link that
+ * points outside the duplicated selection). This is what lets a duplicated
+ * cluster keep its internal branching graph instead of re-pointing at the
+ * originals.
+ */
+export function remapConnection<T extends { from: string; to: string }>(
+  conn: T,
+  idMap: ReadonlyMap<string, string>
+): T {
+  const from = idMap.get(conn.from) ?? conn.from;
+  const to = conn.to === "" ? "" : idMap.get(conn.to) ?? conn.to;
+  if (from === conn.from && to === conn.to) return conn;
+  return { ...conn, from, to };
+}

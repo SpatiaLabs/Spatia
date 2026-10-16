@@ -5,6 +5,17 @@ import { registerIpc } from "./ipc.js";
 let mainWindow: BrowserWindow | null = null;
 let pendingInvite: string | null = null;
 let inviteDeliveryReady = false;
+let quitScheduled = false;
+
+// ── Startup instrumentation (diagnostic only; enabled with SPATIA_BENCH=1) ──
+const BENCH = process.env.SPATIA_BENCH === "1";
+const benchT0 = Date.now();
+if (BENCH) process.env.SPATIA_BENCH_T0 = String(benchT0);
+function bench(label: string): void {
+  if (!BENCH) return;
+  process.stdout.write(`[bench] ${label} +${Date.now() - benchT0}ms\n`);
+}
+bench("main:module-start");
 
 app.setName("Spatia");
 
@@ -15,8 +26,16 @@ if (process.platform === "win32") {
 }
 
 const SPDT_URL_SCHEME = "spatia";
-// Flags used by the packaged app; ignored (but harmless) in dev.
-app.setAsDefaultProtocolClient(SPDT_URL_SCHEME);
+// The protocol client registration writes HKCU and is only needed for invite
+// links. It used to run at module load, on the startup critical path, before
+// the window existed; schedule it after the window is up instead.
+function registerProtocolClient(): void {
+  try {
+    app.setAsDefaultProtocolClient(SPDT_URL_SCHEME);
+  } catch {
+    /* protocol registration is best-effort */
+  }
+}
 
 /** A Jump List task = a one-click entry in the taskbar's right-click menu. */
 function installWindowsJumpList(): void {
@@ -77,9 +96,42 @@ if (!gotLock) {
   });
 
   function onReady(): void {
+    bench("app:ready");
     registerIpc();
-    installWindowsJumpList();
+    bench("ipc-registered");
     mainWindow = createMainWindow();
+    bench("window:created");
+    // Registry writes (Jump List tasks, protocol client) are not needed for the
+    // window to become usable, so run them once the window is on screen.
+    mainWindow.once("ready-to-show", () => {
+      registerProtocolClient();
+      installWindowsJumpList();
+      bench("deferred-main-init");
+    });
+    if (BENCH) {
+      const wc = mainWindow.webContents;
+      wc.on("dom-ready", () => bench("renderer:dom-ready"));
+      wc.on("did-finish-load", () => bench("renderer:did-finish-load"));
+      wc.on("did-stop-loading", () => bench("renderer:did-stop-loading"));
+      wc.on("console-message", (...args: unknown[]) => {
+        const msg = typeof args[1] === "object" && args[1] !== null
+          ? (args[1] as { message?: string }).message
+          : String(args[2]);
+        if (typeof msg === "string" && msg.startsWith("[bench]")) {
+          process.stdout.write(msg + "\n");
+          // The renderer marks "interactive" once it has painted the first
+          // usable frame. Give it a short settle window, then exit so the
+          // harness gets a bounded, repeatable measurement.
+          if (msg.includes("renderer:interactive") && !quitScheduled) {
+            quitScheduled = true;
+            setTimeout(() => { bench("harness:exit"); app.exit(0); }, 600);
+          }
+        }
+      });
+      mainWindow.once("ready-to-show", () => bench("window:ready-to-show"));
+      mainWindow.once("show", () => bench("window:show"));
+      mainWindow.once("focus", () => bench("window:focus"));
+    }
     mainWindow.webContents.once("did-finish-load", () => {
       inviteDeliveryReady = true;
       flushInvite();

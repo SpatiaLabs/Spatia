@@ -18,7 +18,7 @@ import { screenToWorld, worldToScreen } from "../../shared/geometry/viewport.js"
 import type { PenObject, WorldPoint } from "../../shared/types/object.js";
 import {
   resampleStroke,
-  smoothStroke,
+  catmullRomStroke,
   stabilizeStroke,
   strokeBounds,
   translatePoints,
@@ -27,6 +27,7 @@ import {
   strokeTouchesRect,
   distPointToPolyline,
 } from "../../shared/geometry/ink.js";
+import { applyBrushGeometry, brushProfile, setPenBrush, penBrushKind, type BrushKind } from "../../shared/input/brushes.js";
 import type { Command } from "../command/commandManager.js";
 import {
   addInkCommand,
@@ -37,7 +38,7 @@ import {
   type PropChange,
 } from "../command/commands.js";
 import type { ProjectStore } from "../project/projectStore.js";
-import { strokeWorldPath } from "./objects.js";
+import { drawBrushStroke } from "./objects.js";
 
 export type PenToolMode = "pen" | "eraser" | "lasso";
 
@@ -68,6 +69,8 @@ export interface InkSettings {
    * erasure math must use half of it as the disc radius.
    */
   eraserRadius: number;
+  /** Rendering character of the pen (pen/pencil/marker/calligraphy nib…). */
+  brush: BrushKind;
 }
 
 export const DEFAULT_INK_SETTINGS: InkSettings = {
@@ -79,6 +82,7 @@ export const DEFAULT_INK_SETTINGS: InkSettings = {
   pressure: true,
   eraserMode: "partial",
   eraserRadius: 18,
+  brush: "pen",
 };
 
 export interface InkHooks {
@@ -131,6 +135,7 @@ export class InkController {
   private usePressure = DEFAULT_INK_SETTINGS.pressure;
   private eraserMode = DEFAULT_INK_SETTINGS.eraserMode;
   private eraserRadius = DEFAULT_INK_SETTINGS.eraserRadius;
+  private brush: BrushKind = DEFAULT_INK_SETTINGS.brush;
   /** Smoothed pressure-to-width state for the current stroke (see PRESS_EMA). */
   private pressureEma = 0;
   /** Active pen-tool sub-mode, mirrored from the engine so the renderer can
@@ -172,6 +177,7 @@ export class InkController {
       pressure: this.usePressure,
       eraserMode: this.eraserMode,
       eraserRadius: this.eraserRadius,
+      brush: this.brush,
     };
   }
 
@@ -196,6 +202,7 @@ export class InkController {
       const r = Number(patch.eraserRadius);
       if (Number.isFinite(r)) this.eraserRadius = Math.min(80, Math.max(6, r));
     }
+    if (patch.brush !== undefined) this.brush = patch.brush;
     this.draftProcessed = null;
     this.hooks.requestRender();
   }
@@ -277,7 +284,7 @@ export class InkController {
         } else if (frags.length === 1 && samePoints(frags[0], pen.points)) {
           continue; // light graze produced no visible change
         } else {
-          const after = frags.map((f) => this.buildStroke(f, pen.zIndex, pen.color, pen.strokeWidth ?? 3, pen.opacity ?? 1));
+          const after = frags.map((f) => this.buildStroke(f, pen.zIndex, pen.color, pen.strokeWidth ?? 3, pen.opacity ?? 1, penBrushKind(pen)));
           ops.push(replaceStrokesCommand(this.hooks.project, [pen], after));
         }
       }
@@ -289,23 +296,38 @@ export class InkController {
     this.cancelStroke();
     const points = this.processStroke(raw);
     if (points.length < 2) return;
-    const pen = this.buildStroke(points, this.hooks.project.nextZIndex(), this.color, this.baseWidth, this.opacity);
+    const profile = brushProfile(this.brush);
+    const width = this.baseWidth * profile.widthScale;
+    const opacity = Math.min(1, Math.max(0.05, this.opacity * profile.opacityScale));
+    const pen = this.buildStroke(points, this.hooks.project.nextZIndex(), this.color, width, opacity, this.brush);
     this.hooks.commitCommand(addInkCommand(this.hooks.project, pen));
   }
 
   private processStroke(raw: WorldPoint[]): WorldPoint[] {
     if (raw.length < 2) return raw;
     const minDist = Math.max(0.3, 0.6 / this.hooks.getFrame().zoom);
-    const hadWidth = raw.some((p) => p.width !== undefined);
     // Rubber-band stabilizer: collapse the tail into one trailing-average tip
     // so the stroke literally chases the pen. Applied before resampling so the
     // committed stroke and the live draft render identically.
     const stabilized = this.useStabilizer > 0 ? stabilizeStroke(raw, this.useStabilizer === 2 ? 6 : 3) : raw;
     const resampled = resampleStroke(stabilized, minDist);
-    // Pressure strokes carry their width per vertex and are rendered as-is
-    // (smoothing would blur their character); uniform strokes get Chaikin.
-    if (hadWidth) return resampled;
-    return smoothStroke(resampled, this.collectSmoothing());
+    // Curve smoothing: centripetal Catmull-Rom rounds the resampled polyline
+    // while keeping sharp corners crisp and interpolating the per-vertex
+    // pressure width, so uniform *and* pressure strokes keep their character
+    // (and render through the variable-width ribbon in objects.ts).
+    const curved = catmullRomStroke(resampled, { subdivisions: this.curveSubdivisions() });
+    // Brush shaping: the active brush decides the final per-vertex widths (a
+    // calligraphy nib derives them from the travel direction, uniform brushes
+    // drop them, pressure brushes keep their taper). Applied here so the live
+    // draft and the committed stroke are shaped identically.
+    return applyBrushGeometry(curved, this.brush, this.baseWidth);
+  }
+
+  private curveSubdivisions(): number {
+    // Map the 0/1/2 smoothing level (already folds in the stabilizer) onto
+    // Catmull-Rom subdivisions; 0 means "keep the raw polyline".
+    const level = this.collectSmoothing();
+    return level <= 0 ? 0 : level === 1 ? 6 : 12;
   }
 
   private collectSmoothing(): number {
@@ -328,10 +350,11 @@ export class InkController {
     zIndex: number,
     color: string,
     width: number,
-    opacity: number
+    opacity: number,
+    brush: BrushKind = "pen"
   ): PenObject {
     const b = strokeBounds(points);
-    return {
+    const pen: PenObject = {
       type: "pen",
       id: uid(),
       points,
@@ -347,6 +370,8 @@ export class InkController {
       locked: false,
       metadata: {},
     };
+    setPenBrush(pen, brush);
+    return pen;
   }
 
   // -------- Eraser geometry --------
@@ -607,13 +632,10 @@ export class InkController {
     }
     const pts = this.draftPoints();
     if (pts.length < 2) return;
-    ctx.save();
-    ctx.strokeStyle = this.color;
-    ctx.globalAlpha = this.opacity;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    strokeWorldPath(ctx, pts, frame, Math.max(1, this.baseWidth * frame.zoom));
-    ctx.restore();
+    const profile = brushProfile(this.brush);
+    const width = this.baseWidth * profile.widthScale;
+    const opacity = Math.min(1, Math.max(0.05, this.opacity * profile.opacityScale));
+    drawBrushStroke(ctx, frame, pts, { color: this.color, width, opacity, brush: this.brush });
   }
 
   /**
@@ -628,19 +650,14 @@ export class InkController {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     for (const pen of this.pens()) {
-      const alpha = pen.opacity ?? 1;
-      const width = Math.max(1, (pen.strokeWidth || 3) * frame.zoom);
+      const style = { color: pen.color, width: pen.strokeWidth || 3, opacity: pen.opacity ?? 1, brush: penBrushKind(pen) };
       if (this.eraserMode === "stroke") {
         if (this.strokeTouched(path, pen)) continue; // whole stroke erased
-        ctx.strokeStyle = pen.color;
-        ctx.globalAlpha = alpha;
-        strokeWorldPath(ctx, pen.points, frame, width);
+        drawBrushStroke(ctx, frame, pen.points, style);
         continue;
       }
       for (const frag of this.eraseWith(pen, path)) {
-        ctx.strokeStyle = pen.color;
-        ctx.globalAlpha = alpha;
-        strokeWorldPath(ctx, frag, frame, width);
+        drawBrushStroke(ctx, frame, frag, style);
       }
     }
     ctx.restore();

@@ -18,6 +18,7 @@ import { estimateTextHeight } from "./canvas/objects.js";
 import { BrowserFrameOverlay } from "./canvas/browserOverlay.js";
 import { browserUrlOf, normalizeBrowserUrl } from "../shared/plugins/browserFrame.js";
 import { AppUI } from "./ui/appUI.js";
+import { bench } from "./util/bench.js";
 import { AssetStore } from "./assets/assetStore.js";
 import { showContextMenu, hideContextMenu, type ContextMenuItem } from "./ui/contextMenu.js";
 import { openTextEditor, closeTextEditor, isEditingText } from "./ui/textEditor.js";
@@ -51,6 +52,25 @@ import { createId } from "../shared/core/id.js";
 import { importMarkdown, importOPML, importFreeMind, importExcalidraw, importMiro } from "../shared/import/importers.js";
 import { AssetsUI } from "./ui/assetsUI.js";
 import { APP_VERSION } from "../shared/core/version.js";
+import { TabletUI } from "./ui/tabletUI.js";
+import { isSecretShortcut } from "../shared/input/secretShortcut.js";
+import { shortcutIdFor } from "../shared/input/shortcuts.js";
+import {
+  allBrushPresets,
+  isBuiltinPresetId,
+  loadCustomPresets,
+  matchPresetId,
+  presetToPenSettings,
+  removeCustomPreset,
+  saveCustomPresets,
+  settingsMatchPreset,
+  upsertCustomPreset,
+  type BrushPreset,
+  type PenStyleValues,
+} from "../shared/input/brushPresets.js";
+import { BRUSH_KINDS, brushProfile, type BrushKind } from "../shared/input/brushes.js";
+import { GamepadController } from "./ui/gamepadController.js";
+import type { GamepadButtonId } from "../shared/input/gamepad.js";
 
 const EFFECTS_KEY = "spatia:reduced-effects";
 
@@ -69,6 +89,24 @@ interface PaletteCommand {
   shortcut?: string;
   enabled: () => boolean;
   run: () => void;
+}
+
+/**
+ * Whether the renderer is the desktop shell (Electron). The hidden tablet
+ * interface toggle is desktop-only, so the secret chord is inert in a plain
+ * browser (where the tablet layout engages on its own on real tablets).
+ */
+function isDesktopHost(): boolean {
+  return /\bElectron\//.test(navigator.userAgent || "");
+}
+
+/** localStorage access that never throws (sandboxed/opaque origins). */
+function safeLocalStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -120,6 +158,18 @@ export class App {
   private recoveryTimer: number | null = null;
   private recoveryBound = false;
 
+  /** Hidden tablet interface (a secret desktop chord toggles the real TabletUI in place). */
+  private tabletUI: TabletUI | null = null;
+
+  /** Optional game-controller input (Gamepad API; a no-op when unavailable). */
+  private gamepad: GamepadController | null = null;
+
+  /** User-saved brush presets (built-ins live in the shared module). */
+  private customBrushes: BrushPreset[] = loadCustomPresets(safeLocalStorage());
+  /** The preset the user last explicitly chose/saved (so a custom preset that
+   *  happens to equal a built-in still reads as selected and is deletable). */
+  private activeBrushId = "";
+
   /** Public plugin manager — used by the UI, the mobile shell and tests. */
   get plugins(): PluginManager {
     return this.pluginsManager;
@@ -128,6 +178,7 @@ export class App {
   constructor(canvas: HTMLCanvasElement) {
     this.project.replace(createNewDocument());
     this.engine = new CanvasEngine(canvas, this.viewport, this.project, this.selection);
+    bench("engine-created");
     this.ui.setFocusReturn(this.engine.canvas());
     this.browserOverlay = new BrowserFrameOverlay(this.engine, this.project, this.selection);
     const minimapEl = document.getElementById("minimap");
@@ -144,6 +195,7 @@ export class App {
 
     this.engine.setHistory((cmd) => this.commands.execute(cmd));
     this.engine.emitContextMenu = (screen, world) => this.showContextMenu(screen, world);
+    bench("before-bind-ui");
 
     this.bindUI();
     this.bindEvents();
@@ -157,11 +209,13 @@ export class App {
     this.bindCollab();
     this.bindAssets();
     this.bindPalette();
+    bench("bindings-done");
     void this.refreshRecent();
 
     this.pluginsUi = new PluginsUI();
     this.pluginsManager = new PluginManager(this.pluginGateway());
     this.bindPlugins();
+    bench("plugins-wired");
     void this.pluginsManager.reload();
   }
 
@@ -212,11 +266,7 @@ export class App {
 
   /** Toggle the pen tool (HUD button, sidebar button and command palette). */
   private togglePenTool(): void {
-    const on = !this.engine.isPenTool();
-    this.engine.setPenTool(on);
-    this.ui.setTools(on);
-    if (on) this.selection.setIds([]);
-    this.refreshUI();
+    this.setPenTool(!this.engine.isPenTool());
   }
 
   /** Recomputed on every query change so enabled state is always current. */
@@ -740,10 +790,156 @@ export class App {
   start(): void {
     this.initReducedEffects();
     this.engine.attach();
+    bench("engine-attached");
     this.refreshUI();
     this.viewport.changed.emit(this.viewport.get());
     this.ui.setStatus("Ready.");
     void this.refreshRecoveryBanner();
+    this.startGamepad();
+  }
+
+  // -------- Game controller --------
+
+  /**
+   * Start polling for a game controller. Safe everywhere: with no Gamepad API
+   * this is a no-op, and the controller never touches canvas/keyboard input.
+   */
+  private startGamepad(): void {
+    if (this.gamepad) return;
+    this.gamepad = new GamepadController({
+      panByScreen: (dx, dy) => this.engine.applyPan(dx, dy),
+      zoomByFactor: (factor) => this.engine.zoomBy(factor),
+      onButton: (id) => this.gamepadButton(id),
+      isInputBlocked: () => this.gamepadInputBlocked(),
+      onConnectionChange: (connected) => this.onGamepadConnection(connected),
+    });
+    this.gamepad.start();
+  }
+
+  private onGamepadConnection(connected: boolean): void {
+    if (!connected) {
+      this.setStatus("Gamepad disconnected.");
+      return;
+    }
+    this.setStatus(
+      "Gamepad: left stick pans, right stick zooms, A open, B cancel, X delete, Y duplicate, LB/RB undo/redo, Start palette."
+    );
+  }
+
+  /** True when a text field or modal owns the input, so the pad stays inert. */
+  private gamepadInputBlocked(): boolean {
+    if (isEditingText() || isEditingData() || isEditingTableCell()) return true;
+    const active = document.activeElement as HTMLElement | null;
+    if (active) {
+      if (active.isContentEditable) return true;
+      const tag = active.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    }
+    return false;
+  }
+
+  private gamepadButton(id: GamepadButtonId): void {
+    switch (id) {
+      case "a":
+        this.gamepadActivate();
+        return;
+      case "b":
+        this.gamepadCancel();
+        return;
+      case "x":
+        this.deleteSelection();
+        this.refreshUI();
+        return;
+      case "y":
+        this.duplicateSelection();
+        this.refreshUI();
+        return;
+      case "lb":
+        this.undo();
+        return;
+      case "rb":
+        this.redo();
+        return;
+      case "lt":
+        this.engine.setPenSettings({ width: Math.max(0.5, this.engine.getPenSettings().width - 1) });
+        this.refreshUI();
+        return;
+      case "rt":
+        this.engine.setPenSettings({ width: Math.min(64, this.engine.getPenSettings().width + 1) });
+        this.refreshUI();
+        return;
+      case "back":
+        this.setSidebar(!this.ui.isSidebarOpen());
+        return;
+      case "start":
+        this.toggleCommandPalette();
+        return;
+      case "l3":
+        this.focusSelection();
+        return;
+      case "r3":
+        this.resetView();
+        return;
+      case "dpad-up":
+        this.gamepadSelectOffset(-1);
+        return;
+      case "dpad-down":
+        this.gamepadSelectOffset(1);
+        return;
+      case "dpad-left":
+        this.setPenTool(false);
+        return;
+      case "dpad-right":
+        this.setPenTool(true);
+        return;
+    }
+  }
+
+  private gamepadActivate(): void {
+    const ids = this.selection.get();
+    if (ids.length === 1) {
+      void this.openObject(this.project.getObject(ids[0]));
+      return;
+    }
+    this.addObjectAt("note", this.centerWorld());
+  }
+
+  private gamepadCancel(): void {
+    if (this.isolation) {
+      this.exitIsolation();
+      return;
+    }
+    if (this.engine.hasInkSelection()) {
+      this.engine.clearInkSelection();
+      this.refreshUI();
+      return;
+    }
+    if (this.ui.isSidebarOpen()) {
+      this.setSidebar(false);
+      return;
+    }
+    this.selection.clear();
+    this.refreshUI();
+  }
+
+  /** Move the selection to the next/previous object (z-ordered). */
+  private gamepadSelectOffset(dir: number): void {
+    const objects = this.project.getObjectsSorted().filter((o) => o.type !== "connection");
+    if (objects.length === 0) return;
+    const current = this.selection.size === 1 ? this.selection.get()[0] : null;
+    let index = current ? objects.findIndex((o) => o.id === current) : -1;
+    index = (index + dir + objects.length) % objects.length;
+    if (current === null && dir < 0) index = objects.length - 1;
+    this.selection.setIds([objects[index].id]);
+    this.refreshUI();
+  }
+
+  /** Cycle the top-level tools (select <-> pen) from the D-pad. */
+  private setPenTool(on: boolean): void {
+    this.engine.setPenTool(on);
+    this.ui.setTools(on);
+    if (on) this.selection.setIds([]);
+    this.refreshUI();
   }
 
   // -------- Project operations --------
@@ -1804,12 +2000,13 @@ async importProject(): Promise<void> {
     const fontSize = (obj.type === "text" ? obj.fontSize : obj.width * 0.07) * frame.zoom;
     const fontFamily = obj.type === "text" ? obj.fontFamily : undefined;
     let formatUsed = false;
-    // The toolbar renders 34px above the box; keep it within the viewport top.
-    const toolTop = Math.max(0, tl.y - 36);
+    // Hide the object's canvas rendering + selection chrome while the inline
+    // editor is open, so only one (aligned) editor box is ever visible.
+    this.engine.setEditingObject(obj.id);
 
     openTextEditor({
       left: tl.x,
-      top: toolTop,
+      top: tl.y,
       width: w,
       height: h,
       fontSize,
@@ -1821,6 +2018,7 @@ async importProject(): Promise<void> {
         formatUsed = true;
       },
       onCommit: (text) => {
+        this.engine.setEditingObject(null);
         if (text === obj.text && !formatUsed) {
           this.refreshUI();
           return;
@@ -1852,6 +2050,9 @@ async importProject(): Promise<void> {
         }
         this.commands.execute(setPropsCommand(this.project, changes));
         this.refreshUI();
+      },
+      onCancel: () => {
+        this.engine.setEditingObject(null);
       },
     });
   }
@@ -2737,7 +2938,40 @@ async importProject(): Promise<void> {
     const eraserMode = s.eraserMode === "stroke" ? "stroke" : "partial";
     const num = (v: number) => round(v);
     const checked = (v: boolean) => (v ? " checked" : "");
+    const presets = allBrushPresets(this.customBrushes);
+    const values: PenStyleValues = {
+      width: s.width,
+      opacity: s.opacity,
+      color: s.color,
+      smoothing: (smoothing === 0 || smoothing === 2 ? smoothing : 1) as 0 | 1 | 2,
+      stabilizer,
+      pressure: s.pressure,
+      brush: s.brush,
+    };
+    // Prefer the explicitly chosen preset while it still matches the live
+    // settings; otherwise fall back to whichever preset the settings equal.
+    const remembered =
+      this.activeBrushId && presets.some((p) => p.id === this.activeBrushId && settingsMatchPreset(p, values))
+        ? this.activeBrushId
+        : null;
+    const active = remembered ?? matchPresetId(presets, values);
+    const canDelete = active !== null && !isBuiltinPresetId(active);
+    const presetOptions =
+      `<option value=""${active === null ? " selected" : ""}>Custom</option>` +
+      presets
+        .map((p) => `<option value="${escapeAttr(p.id)}"${p.id === active ? " selected" : ""}>${escapeHtml(p.name)}</option>`)
+        .join("");
     return (
+      `<div class="inspector-row"><span class="inspector-label">Brush</span>` +
+        `<select class="inspector-input" data-pen="preset">${presetOptions}</select></div>` +
+      `<div class="inspector-buttons">` +
+        `<button class="inspector-btn" data-preset="save" type="button">Save brush</button>` +
+        `<button class="inspector-btn" data-preset="delete" type="button"${canDelete ? "" : " disabled"}>Delete</button>` +
+      `</div>` +
+      `<div class="inspector-row"><span class="inspector-label">Brush type</span>` +
+        `<select class="inspector-input" data-pen="brush" title="${escapeAttr(brushProfile(s.brush).description)}">` +
+          BRUSH_KINDS.map((k) => `<option value="${k}"${s.brush === k ? " selected" : ""}>${escapeHtml(brushProfile(k).label)}</option>`).join("") +
+        `</select></div>` +
       `<div class="inspector-row"><span class="inspector-label">Mode</span>` +
         `<select class="inspector-input" data-pen="mode">` +
           `<option value="pen"${mode === "pen" ? " selected" : ""}>Pen</option>` +
@@ -2950,51 +3184,87 @@ async importProject(): Promise<void> {
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
 
-    if (mod && key === "s" && !e.shiftKey) {
+    // Hidden desktop toggle: a secret chord (a bare letter plus Alt, no
+    // Ctrl/Cmd/Shift) switches the desktop app to its real tablet interface,
+    // exactly as the website renders it on a touch device. Desktop-only by
+    // design, so a plain browser keeps its own shortcuts untouched.
+    if (
+      isDesktopHost() &&
+      isSecretShortcut({
+        key: e.key,
+        altKey: e.altKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        repeat: e.repeat,
+      })
+    ) {
       e.preventDefault();
-      void this.saveProject();
+      e.stopPropagation();
+      this.toggleTabletUI();
       return;
     }
-    if (mod && key === "z") {
-      e.preventDefault();
-      if (e.shiftKey) this.redo();
-      else this.undo();
-      return;
-    }
-    if (mod && key === "y") {
-      e.preventDefault();
-      this.redo();
-      return;
-    }
-    if (mod && key === "k") {
-      e.preventDefault();
-      this.toggleCommandPalette();
-      return;
-    }
-    if ((key === "delete" || key === "backspace")) {
-      e.preventDefault();
-      this.deleteSelection();
-      return;
-    }
-    if (mod && key === "c") {
-      e.preventDefault();
-      this.copySelection();
-      return;
-    }
-    if (mod && key === "v") {
-      e.preventDefault();
-      this.pasteClipboard();
-      return;
-    }
-    if (mod && key === "d") {
-      e.preventDefault();
-      this.duplicateSelection();
-      return;
-    }
-    if (mod && key === "a") {
-      e.preventDefault();
-      this.engine.selectAll();
-      return;
+
+    // Central shortcut dispatch. Resolved from the physical key code with
+    // explicit modifier rules (see shared/input/shortcuts.ts) so it is immune to
+    // keyboard layout, AltGr and ordering bugs.
+    const action = shortcutIdFor(e);
+    if (action) {
+      switch (action) {
+        case "save":
+          e.preventDefault();
+          void this.saveProject();
+          return;
+        case "undo":
+          e.preventDefault();
+          this.undo();
+          return;
+        case "redo":
+        case "redo-alt":
+          e.preventDefault();
+          this.redo();
+          return;
+        case "command-palette":
+          e.preventDefault();
+          this.toggleCommandPalette();
+          return;
+        case "copy":
+          e.preventDefault();
+          this.copySelection();
+          return;
+        case "paste":
+          e.preventDefault();
+          this.pasteClipboard();
+          return;
+        case "duplicate":
+          e.preventDefault();
+          this.duplicateSelection();
+          return;
+        case "select-all":
+          e.preventDefault();
+          this.engine.selectAll();
+          return;
+        case "search":
+          e.preventDefault();
+          this.openSearch();
+          return;
+        case "group":
+          e.preventDefault();
+          this.groupSelection();
+          return;
+        case "ungroup":
+          e.preventDefault();
+          this.ungroupSelection();
+          return;
+        case "connect":
+          e.preventDefault();
+          this.connectSelection();
+          return;
+        case "delete":
+          e.preventDefault();
+          this.deleteSelection();
+          return;
+      }
     }
     // Pen-tool quick keys (only while the pen tool is active; they must never
     // steal typing — e.g. a lone "E" in a future search box).
@@ -3029,17 +3299,6 @@ async importProject(): Promise<void> {
         this.refreshUI();
         return;
       }
-    }
-    if (mod && key === "g") {
-      e.preventDefault();
-      if (e.shiftKey) this.ungroupSelection();
-      else this.groupSelection();
-      return;
-    }
-    if (mod && e.shiftKey && key === "c") {
-      e.preventDefault();
-      this.connectSelection();
-      return;
     }
     if (e.key === "]") {
       e.preventDefault();
@@ -3087,6 +3346,19 @@ async importProject(): Promise<void> {
       return;
     }
   };
+
+  /**
+   * Toggle the real tablet interface in place. This is the same `TabletUI` the
+   * website mounts on an iPad, attached on demand for the desktop app: the
+   * document, selection and viewport are never touched, and the switch is a
+   * synchronous DOM swap (no reload, no rebuild, no async work), so it is
+   * immediate.
+   */
+  private toggleTabletUI(): void {
+    if (!this.tabletUI) this.tabletUI = new TabletUI(this);
+    this.tabletUI.toggle();
+    this.setStatus(this.tabletUI.isAttached() ? "Tablet interface." : "Desktop interface.");
+  }
 
   private bindDragDrop(canvas: HTMLCanvasElement): void {
     const prevent = (e: DragEvent): void => {
@@ -3263,6 +3535,19 @@ async importProject(): Promise<void> {
     this.ui.btnPen.addEventListener("click", togglePen);
     this.ui.btnPenSidebar.addEventListener("click", togglePen);
     this.ui.btnSelect.addEventListener("click", enableSelect);
+    this.ui.btnHudSelect.addEventListener("click", enableSelect);
+
+    // HUD "add" tools: drop the pen tool first so the new object is selected
+    // and immediately editable, exactly like the sidebar add buttons.
+    const hudAdd = (action: () => void) => () => {
+      this.engine.setPenTool(false);
+      this.ui.setTools(false);
+      action();
+      this.refreshUI();
+    };
+    this.ui.btnHudText.addEventListener("click", hudAdd(() => this.addObjectAt("text", this.centerWorld())));
+    this.ui.btnHudNote.addEventListener("click", hudAdd(() => this.addObjectAt("note", this.centerWorld())));
+    this.ui.btnHudRect.addEventListener("click", hudAdd(() => this.addShapeAt("rectangle", this.centerWorld())));
 
     // Find modal sidebar button.
     this.searchUi.btn.addEventListener("click", () => this.openSearch());
@@ -3364,6 +3649,11 @@ async importProject(): Promise<void> {
     const applyPenControl = (t: HTMLInputElement): void => {
       const key = t.dataset["pen"];
       if (!key) return;
+      // Editing an individual style value detaches the brush picker from any
+      // preset (the mode/eraser keys do not change the brush style).
+      if (key !== "preset" && key !== "mode" && key !== "eraser" && key !== "eraser-mode" && key !== "eraser-size") {
+        this.activeBrushId = "";
+      }
       if (key === "size") this.engine.setPenSettings({ width: Number(t.value) });
       else if (key === "color") this.engine.setPenSettings({ color: t.value });
       else if (key === "opacity") this.engine.setPenSettings({ opacity: Number(t.value) });
@@ -3372,8 +3662,10 @@ async importProject(): Promise<void> {
         const v = t.value;
         this.engine.setPenSettings({ stabilizer: v === "mild" || v === "strong" ? v : "off" });
       } else if (key === "pressure") this.engine.setPenSettings({ pressure: t.checked });
+      else if (key === "brush") this.engine.setPenSettings({ brush: t.value as BrushKind });
       else if (key === "eraser-mode") this.engine.setPenSettings({ eraserMode: t.value === "stroke" ? "stroke" : "partial" });
       else if (key === "eraser-size") this.engine.setPenSettings({ eraserRadius: Number(t.value) });
+      else if (key === "preset") this.applyBrushPreset(t.value);
       else if (key === "mode") {
         const m = t.value;
         if (m === "pen" || m === "eraser" || m === "lasso") this.engine.setPenToolMode(m);
@@ -3430,6 +3722,62 @@ async importProject(): Promise<void> {
         else if (obj.type === "table" || obj.type === "chart") this.editDataObject(obj);
       }
     });
+    // Brush preset buttons (pen panel): save the live style as a named preset,
+    // or delete the currently-selected custom preset.
+    body.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest("[data-preset]") as HTMLElement | null;
+      if (!btn) return;
+      if (btn.dataset.preset === "save") void this.saveBrushPreset();
+      else if (btn.dataset.preset === "delete") this.deleteBrushPreset();
+    });
+  }
+
+  /** Apply a brush preset (built-in or custom) to the live pen tool. */
+  private applyBrushPreset(id: string): void {
+    const preset = allBrushPresets(this.customBrushes).find((p) => p.id === id);
+    if (!preset) return;
+    this.engine.setPenSettings(presetToPenSettings(preset));
+    this.activeBrushId = id;
+    this.refreshUI();
+  }
+
+  /** Prompt for a name and persist the current pen style as a custom preset. */
+  private async saveBrushPreset(): Promise<void> {
+    const live = this.engine.getPenSettings();
+    const entered = await this.ui.promptText("Save brush", "", "Brush name", "Save");
+    const name = (entered ?? "").trim().slice(0, 40);
+    if (!name) return;
+    // Re-saving under an existing name overwrites that brush instead of
+    // piling up duplicates.
+    const existing = this.customBrushes.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    const preset: BrushPreset = {
+      id: existing ? existing.id : `user:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      width: live.width,
+      opacity: live.opacity,
+      color: live.color,
+      smoothing: live.smoothing,
+      stabilizer: live.stabilizer,
+      pressure: live.pressure,
+      brush: live.brush,
+    };
+    this.customBrushes = upsertCustomPreset(this.customBrushes, preset);
+    saveCustomPresets(this.customBrushes, safeLocalStorage());
+    this.activeBrushId = preset.id;
+    this.setStatus(`Saved brush "${name}".`);
+    this.refreshUI();
+  }
+
+  /** Delete the custom preset currently chosen in the pen panel (built-ins are protected). */
+  private deleteBrushPreset(): void {
+    const select = this.ui.inspectorBodyEl.querySelector<HTMLSelectElement>('[data-pen="preset"]');
+    const id = select?.value ?? "";
+    if (!id || isBuiltinPresetId(id)) return;
+    this.customBrushes = removeCustomPreset(this.customBrushes, id);
+    saveCustomPresets(this.customBrushes, safeLocalStorage());
+    this.activeBrushId = "";
+    this.setStatus("Deleted brush preset.");
+    this.refreshUI();
   }
 
   private commitInspectorProp(key: string, el: HTMLInputElement | HTMLTextAreaElement): void {

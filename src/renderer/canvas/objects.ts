@@ -8,7 +8,8 @@ import {
 } from "../../shared/geometry/workspace.js";
 import { isStrokeOnly } from "../../shared/geometry/shapes.js";
 import { tableLayout } from "../../shared/geometry/tableLayout.js";
-import { isRtlLine } from "../../shared/geometry/ink.js";
+import { isRtlLine, strokeOutline } from "../../shared/geometry/ink.js";
+import { brushProfile, penBrushKind, type BrushKind } from "../../shared/input/brushes.js";
 import { parseMarkup, type MarkupLine, type MarkupRun } from "../../shared/text/markup.js";
 
 const STROKE = "rgba(91,124,250,0.5)";
@@ -537,21 +538,136 @@ function drawPen(
   pen: PenObject
 ): void {
   if (!pen.points || pen.points.length === 0) return;
+  drawBrushStroke(ctx, frame, pen.points, {
+    color: pen.color || "#e8eaed",
+    width: pen.strokeWidth || 3,
+    opacity: pen.opacity ?? 1,
+    brush: penBrushKind(pen),
+  });
+}
+
+/** Style for painting a freehand stroke with a specific brush character. */
+export interface BrushStrokeStyle {
+  color: string;
+  /** Stored width in world units (already includes the brush's width scale). */
+  width: number;
+  opacity: number;
+  brush: BrushKind;
+}
+
+/**
+ * Paint a freehand stroke with its brush's real character. This is the single
+ * entry point shared by committed pen objects and the live draft preview, so a
+ * stroke never changes appearance when it is committed.
+ *
+ * The differences are structural, not cosmetic: an angled nib sets its own
+ * per-vertex widths (computed upstream), a highlighter multiplies a wide band
+ * into the canvas, a marker/brush lay a soft halo under a crisp core, and a
+ * pencil scatters a deterministic grain over a thin ribbon.
+ */
+export function drawBrushStroke(
+  ctx: CanvasRenderingContext2D,
+  frame: ViewportFrame,
+  pts: readonly WorldPoint[],
+  style: BrushStrokeStyle
+): void {
+  const n = pts.length;
+  if (n === 0) return;
+  const profile = brushProfile(style.brush);
+  const uniform = Math.max(1, style.width * frame.zoom);
+  const cap: CanvasLineCap = profile.cap === "square" ? "square" : profile.cap === "butt" ? "butt" : "round";
+
   ctx.save();
-  ctx.strokeStyle = pen.color || "#e8eaed";
-  ctx.globalAlpha = pen.opacity ?? 1;
-  ctx.lineCap = "round";
+  ctx.strokeStyle = style.color;
+  ctx.fillStyle = style.color;
+  ctx.globalAlpha = style.opacity;
+  ctx.lineCap = cap;
   ctx.lineJoin = "round";
-  strokeWorldPath(ctx, pen.points, frame, Math.max(1, (pen.strokeWidth || 3) * frame.zoom));
+  if (profile.blend === "multiply") ctx.globalCompositeOperation = "multiply";
+
+  if (n < 2) {
+    // A single tap: paint one dot so a click leaves a mark for every brush.
+    if (style.brush === "calligraphy") return;
+    const s = worldToScreen(pts[0], frame);
+    const r = uniform / 2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, Math.max(0.5, r), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  if (profile.softness > 0) {
+    // Soft-edge media: a wider, faint pass under the solid core reads as a
+    // spread/bleed edge without a per-pixel blur.
+    ctx.globalAlpha = style.opacity * 0.4;
+    strokeWorldPath(ctx, pts, frame, uniform * (1 + profile.softness * 1.4));
+    ctx.globalAlpha = style.opacity;
+  }
+
+  // Calligraphy gets flat (butt) terminals from the ribbon itself: skip the
+  // round cap stamps so the nib's angled ends stay sharp.
+  strokeWorldPath(ctx, pts, frame, uniform, style.brush === "calligraphy" ? "none" : "round");
+
+  if (profile.grain > 0) {
+    ctx.globalAlpha = style.opacity;
+    drawGrain(ctx, frame, pts, uniform, profile.grain);
+  }
+
   ctx.restore();
+}
+
+/**
+ * Deterministic graphite grain: short faint specks scattered along the path,
+ * seeded from the vertex index so the pattern is identical on every repaint
+ * (transform/pan/zoom) and never shimmers. Capped in count so a very long
+ * stroke stays cheap.
+ */
+function drawGrain(
+  ctx: CanvasRenderingContext2D,
+  frame: ViewportFrame,
+  pts: readonly WorldPoint[],
+  screenWidth: number,
+  amount: number
+): void {
+  const spacing = Math.max(3, screenWidth * 0.7);
+  const jitter = screenWidth * 0.55;
+  let dots = 0;
+  const maxDots = 900;
+  ctx.beginPath();
+  let seed = 0x9e3779b1;
+  for (let i = 0; i < pts.length - 1 && dots < maxDots; i++) {
+    const a = worldToScreen(pts[i], frame);
+    const b = worldToScreen(pts[i + 1], frame);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-3) continue;
+    const nx = -dy / len;
+    const ny = dx / len;
+    for (let d = 0; d < len && dots < maxDots; d += spacing) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const t = d / len;
+      const off = (((seed >> 8) & 0xff) / 255 - 0.5) * 2 * jitter;
+      const x = a.x + dx * t + nx * off;
+      const y = a.y + dy * t + ny * off;
+      const r = 0.4 + (((seed >> 16) & 0xff) / 255) * amount * 1.1;
+      ctx.moveTo(x + r, y);
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      dots++;
+    }
+  }
+  ctx.globalAlpha = Math.min(0.5, 0.18 + amount * 0.3);
+  ctx.fill();
 }
 
 /** Stroke a polyline whose per-vertex `width` (world units) may vary. */
 export function strokeWorldPath(
   ctx: CanvasRenderingContext2D,
-  pts: WorldPoint[],
+  pts: readonly WorldPoint[],
   frame: ViewportFrame,
-  uniformScreenWidth: number
+  uniformScreenWidth: number,
+  caps: "round" | "none" = "round"
 ): void {
   const n = pts.length;
   if (n < 2) return;
@@ -574,20 +690,41 @@ export function strokeWorldPath(
     ctx.stroke();
     return;
   }
+  // Variable width: fill one continuous ribbon instead of stroking each segment
+  // separately. Per-segment strokes step their width at every sample, which
+  // shows as banding when pressure ramps quickly; a single filled outline (with
+  // round end caps) keeps the taper smooth. The outline is built in world units
+  // (falling back to the uniform width for any vertex without one) and scaled by
+  // the viewport, so it stays crisp at any zoom.
+  const outline = strokeOutline(pts, uniformScreenWidth / frame.zoom);
+  if (!outline) return;
+  const toScreen = (p: Point): Point => worldToScreen(p, frame);
+  ctx.beginPath();
+  const first = toScreen(outline.left[0]);
+  ctx.moveTo(first.x, first.y);
   for (let i = 1; i < n; i++) {
-    const prev = pts[i - 1];
-    const cur = pts[i];
-    if (!prev || !cur) continue;
-    const a = worldToScreen(prev, frame);
-    const b = worldToScreen(cur, frame);
-    const wa = prev.width === undefined ? uniformScreenWidth : Math.max(1, prev.width * frame.zoom);
-    const wb = cur.width === undefined ? uniformScreenWidth : Math.max(1, cur.width * frame.zoom);
-    ctx.lineWidth = (wa + wb) / 2;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+    const s = toScreen(outline.left[i]);
+    ctx.lineTo(s.x, s.y);
   }
+  for (let i = n - 1; i >= 0; i--) {
+    const s = toScreen(outline.right[i]);
+    ctx.lineTo(s.x, s.y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.fill();
+  if (caps === "none") return;
+  // Round caps at both ends (the flat polygon edge alone would look chopped).
+  const capStart = toScreen(pts[0]);
+  const capEnd = toScreen(pts[n - 1]);
+  const startR = Math.max(1, (pts[0].width ?? uniformScreenWidth / frame.zoom) * frame.zoom) / 2;
+  const endR = Math.max(1, (pts[n - 1].width ?? uniformScreenWidth / frame.zoom) * frame.zoom) / 2;
+  ctx.beginPath();
+  ctx.arc(capStart.x, capStart.y, startR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(capEnd.x, capEnd.y, endR, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawGroup(

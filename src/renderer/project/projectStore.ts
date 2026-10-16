@@ -22,6 +22,12 @@ export class ProjectStore {
   private doc: ProjectDocument;
   /** Cached ascending-zIndex order, invalidated on any document mutation. */
   private sortedCache: CanvasObject[] | null = null;
+  /**
+   * Monotonic counter bumped on every document mutation. The canvas engine uses
+   * it to fingerprint the static render layer, so it can skip repainting
+   * committed objects while nothing but transient ink is changing.
+   */
+  private revision = 0;
   readonly changed = new Emitter<void>();
   readonly replaced = new Emitter<void>();
 
@@ -353,8 +359,14 @@ export class ProjectStore {
 
   private touch(): void {
     this.doc.meta.updatedAt = new Date().toISOString();
+    this.revision += 1;
     this.sortedCache = null;
     this.changed.emit();
+  }
+
+  /** Fingerprint of the current document state (see {@link revision}). */
+  getRevision(): number {
+    return this.revision;
   }
 }
 

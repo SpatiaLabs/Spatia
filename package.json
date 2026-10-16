@@ -1,6 +1,6 @@
 {
   "name": "spatia",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Spatia — a local-first visual infinite workspace.",
   "author": "Spatia",
   "license": "MIT",
@@ -34,6 +34,9 @@
       "package.json"
     ],
     "asar": true,
+    "electronLanguages": [
+      "en-US"
+    ],
     "win": {
       "icon": "build/icon.ico",
       "target": [

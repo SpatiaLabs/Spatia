@@ -1,6 +1,6 @@
 {
   "name": "spatia-collab-server",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "license": "MIT",
   "description": "Spatia collaboration server (rooms, permissions, presence, ops + snapshots).",

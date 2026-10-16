@@ -3,7 +3,7 @@
   "short_name": "Spatia",
   "description": "Spatia is a free, local-first visual infinite canvas for organizing ideas, notes, files and projects — right in your browser, offline, no account needed.",
   "id": "spatia-web",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "start_url": "./#/web",
   "scope": "./",
   "display": "standalone",

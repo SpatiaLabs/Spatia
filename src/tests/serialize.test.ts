@@ -7,6 +7,7 @@ import {
   PROJECT_FORMAT_VERSION,
 } from "../shared/project/serialize.js";
 import type { AssetMeta, CanvasObject } from "../shared/types/object.js";
+import { penBrushKind, setPenBrush } from "../shared/input/brushes.js";
 
 function sampleObject(): CanvasObject {
   return {
@@ -751,4 +752,31 @@ test("object-level tags live in metadata and survive round trips", () => {
   const json = serialize(p.viewport, p.objects, p.project, p.assets);
   const file = deserialize(json);
   assert.deepEqual((file.objects[0] as unknown as Record<string, unknown>).metadata, { tags: ["focus", "vip"] });
+});
+
+test("a pen stroke's brush kind survives a JSON round trip via metadata", () => {
+  const pen: CanvasObject = {
+    type: "pen",
+    id: "obj_brush",
+    points: [{ x: 0, y: 0 }, { x: 10, y: 10 }],
+    color: "#e8eaed",
+    strokeWidth: 10,
+    x: 0,
+    y: 0,
+    width: 10,
+    height: 10,
+    rotation: 0,
+    zIndex: 1,
+    locked: false,
+    metadata: {},
+  };
+  setPenBrush(pen, "calligraphy");
+  const p = sampleProject();
+  p.objects = [pen];
+  const file = deserialize(serialize(p.viewport, p.objects, p.project, p.assets));
+  const round = file.objects[0] as Extract<CanvasObject, { type: "pen" }>;
+  assert.equal(penBrushKind(round), "calligraphy");
+  // Plain pen strokes keep their metadata empty (no gratuitous format churn).
+  const plain: CanvasObject = { ...pen, id: "obj_plain", metadata: {} };
+  assert.deepEqual(plain.metadata, {});
 });

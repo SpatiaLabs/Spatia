@@ -49,7 +49,12 @@ function buildToolbar(opts: TextEditorOptions, ta: HTMLTextAreaElement): HTMLDiv
   const bar = document.createElement("div");
   bar.className = "spatia-text-toolbar";
   bar.style.left = `${Math.max(0, opts.left)}px`;
-  bar.style.top = `${Math.max(0, opts.top)}px`;
+  // Float the toolbar just above the box; flip it below when the box is too
+  // close to the top of the viewport for it to fit (so it stays visible without
+  // ever shifting the editor off the object it is editing).
+  const flip = opts.top < 48;
+  bar.style.top = flip ? `${Math.max(0, opts.top + opts.height + 8)}px` : `${Math.max(0, opts.top)}px`;
+  if (!flip) bar.classList.add("spatia-text-toolbar--above");
   bar.style.width = `${Math.max(120, Math.min(300, opts.width))}px`;
 
   const btn = (html: string, title: string, fn: () => void): HTMLButtonElement => {
@@ -96,7 +101,9 @@ export function openTextEditor(opts: TextEditorOptions): void {
   ta.className = "spatia-text-editor";
   ta.value = opts.value;
   ta.style.left = `${Math.max(0, opts.left)}px`;
-  ta.style.top = opts.markup ? `${Math.max(0, opts.top + 34)}px` : `${Math.max(0, opts.top)}px`;
+  // The editor sits exactly on the object's bounds; the formatting toolbar is
+  // positioned independently (above/below) so it never offsets this box.
+  ta.style.top = `${Math.max(0, opts.top)}px`;
   ta.style.width = `${Math.max(40, opts.width)}px`;
   ta.style.height = `${Math.max(40, opts.height)}px`;
   ta.style.fontSize = `${Math.max(8, opts.fontSize)}px`;

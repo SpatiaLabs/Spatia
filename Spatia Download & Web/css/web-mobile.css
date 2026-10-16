@@ -90,6 +90,7 @@ html:not(.mb-active) #mb-splash {
 
 /* ---------- Hide desktop chrome the mobile app replaces ---------- */
 html.mb-active #web-host #hud,
+html.mb-active #web-host #btn-menu,
 html.mb-active #web-host #sidebar,
 html.mb-active #web-host #minimap,
 html.mb-active #web-host #statusbar,

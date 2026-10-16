@@ -27,7 +27,7 @@ import { InkController, type InkSettings, type PenToolMode } from "./inkControll
 import { resizeRect, rotateKnobWorld, type Handle } from "../../shared/geometry/selection.js";
 import { SpatialGrid } from "../../shared/geometry/spatialIndex.js";
 import type { InteractionHost } from "./interactionHost.js";
-import { connectionEndpoints, connectionHit, expandMembers, unionRect, snapMove, snapResize, edgeAnchor, pointToSegment, type SnapGuide } from "../../shared/geometry/workspace.js";
+import { connectionEndpoints, connectionHit, expandMembers, unionRect, snapMove, snapResize, edgeAnchor, pointToSegment, connectionBetween, connectionsTouching, remapConnection, type SnapGuide } from "../../shared/geometry/workspace.js";
 import { SHAPE_DEFAULTS, pointInShape } from "../../shared/geometry/shapes.js";
 
 const DEFAULT_SIZES: Record<"test-object" | "text" | "note" | "table" | "chart", { width: number; height: number }> = {
@@ -37,6 +37,13 @@ const DEFAULT_SIZES: Record<"test-object" | "text" | "note" | "table" | "chart",
   table: { width: 320, height: 220 },
   chart: { width: 360, height: 260 },
 };
+
+/**
+ * The flat colour painted under the infinite canvas grid. The grid itself is
+ * drawn by `drawGrid` on top of this fill; the colour matches the dark
+ * application theme.
+ */
+export const CANVAS_BACKGROUND = "#121417";
 
 const IMAGE_DEFAULT = { width: 240, height: 180 };
 const FILE_DEFAULT = { width: 160, height: 120 };
@@ -99,6 +106,19 @@ export class CanvasEngine implements InteractionHost {
    * if the display pipeline can't honour it the context falls back gracefully.
    */
   private ctx: CanvasRenderingContext2D | null = null;
+  /**
+   * Offscreen backing store for the "static" part of a frame: the flat canvas
+   * background and every committed object (plus selection chrome).
+   * It is only repainted when its fingerprint changes — pan, zoom, a document
+   * edit, a selection change or an image decode — so drawing a live stroke
+   * costs a single `drawImage` blit instead of re-issuing every vector on the
+   * canvas for each pointer move.
+   */
+  private staticCanvas: HTMLCanvasElement | null = null;
+  private staticCtx: CanvasRenderingContext2D | null = null;
+  private staticSig: string | null = null;
+  /** Bumped whenever a decoded image becomes available (or is dropped). */
+  private imageEpoch = 0;
   private resizeObserver: ResizeObserver;
   private images = new ImageCache();
   private spatial = new SpatialGrid();
@@ -118,6 +138,13 @@ export class CanvasEngine implements InteractionHost {
   private coarse = false;
   /** Object ids allowed while a group or frame is isolated; null means full workspace. */
   private isolationIds: ReadonlySet<string> | null = null;
+  /**
+   * Object id currently being edited by an inline DOM editor (text/note). While
+   * set, the object and its selection chrome are omitted from the canvas so the
+   * overlaid editor is the single source of truth — otherwise a duplicate,
+   * slightly offset outline/text would show through behind it.
+   */
+  private editingId: string | null = null;
 
   /** Set by the App to route undoable commands into the history stack. */
   private input: CanvasInput;
@@ -204,6 +231,17 @@ export class CanvasEngine implements InteractionHost {
 
   setSelection(ids: readonly string[]): void {
     this.selection.setIds(ids);
+  }
+
+  /**
+   * Mark (or clear) the object owned by an inline DOM editor. The engine hides
+   * that object and its selection chrome while it is being edited so the
+   * overlaid editor never double-draws an offset outline.
+   */
+  setEditingObject(id: string | null): void {
+    if (this.editingId === id) return;
+    this.editingId = id;
+    this.requestRender();
   }
 
   toggleSelection(id: string): void {
@@ -973,27 +1011,36 @@ export class CanvasEngine implements InteractionHost {
     const sourceInk = this.ink.inkSelectedObjects();
     const source: CanvasObject[] = [...sourceObjects, ...sourceInk];
     if (source.length === 0) return;
-    const dup: CanvasObject[] = source.map((o) => ({
-      ...o,
-      id: createObjectId(),
-      x: o.x + 20,
-      y: o.y + 20,
-      // Freehand strokes carry a points array that must not be shared between
-      // the original and the clone (a later move/restyle must stay independent).
-      ...(o.type === "pen" ? { points: o.points.map((p) => ({ ...p })) } : {}),
-    }));
+    const idMap = new Map<string, string>();
+    const dup: CanvasObject[] = source.map((o) => {
+      const id = createObjectId();
+      idMap.set(o.id, id);
+      return {
+        ...o,
+        id,
+        x: o.x + 20,
+        y: o.y + 20,
+        // Freehand strokes carry a points array that must not be shared between
+        // the original and the clone (a later move/restyle must stay independent).
+        ...(o.type === "pen" ? { points: o.points.map((p) => ({ ...p })) } : {}),
+      };
+    });
+    // A duplicated cluster keeps its internal branching graph: any connection
+    // selected alongside its endpoints is re-pointed at the cloned endpoints
+    // instead of the originals.
+    const remapped = dup.map((d) => (d.type === "connection" ? remapConnection(d, idMap) : d));
     const self = this;
     this.commitCommand({
-      label: dup.length > 1 ? `Duplicate ${dup.length} objects` : "Duplicate",
+      label: remapped.length > 1 ? `Duplicate ${remapped.length} objects` : "Duplicate",
       redo() {
-        for (const d of dup) self.project.addObject(d);
+        for (const d of remapped) self.project.addObject(d);
       },
       undo() {
-        for (const d of dup) self.project.removeObjects([d.id]);
+        for (const d of remapped) self.project.removeObjects([d.id]);
       },
     });
-    this.selection.setIds(dup.filter((d) => d.type !== "pen").map((d) => d.id));
-    this.ink.setInkSelection(dup.filter((d) => d.type === "pen").map((d) => d.id));
+    this.selection.setIds(remapped.filter((d) => d.type !== "pen").map((d) => d.id));
+    this.ink.setInkSelection(remapped.filter((d) => d.type === "pen").map((d) => d.id));
   }
 
   deleteSelection(): void {
@@ -1001,7 +1048,13 @@ export class CanvasEngine implements InteractionHost {
     const inkIds = this.ink.inkSelectedIds();
     const ids = [...objectIds, ...inkIds];
     if (ids.length === 0) return;
-    this.commitCommand(deleteObjectsCommand(this.project, ids));
+    // Removing a frame must not leave dangling edges behind: pull in every
+    // connection attached to a deleted object so the graph stays consistent.
+    const doomed = new Set(ids);
+    const linked = connectionsTouching(this.project.getObjects(), doomed);
+    for (const id of linked) doomed.add(id);
+    const commandIds = [...doomed];
+    this.commitCommand(deleteObjectsCommand(this.project, commandIds));
     this.selection.clear();
     this.ink.clearInkSelection();
     this.requestRender();
@@ -1031,6 +1084,16 @@ export class CanvasEngine implements InteractionHost {
     const fromObj = this.project.getObject(fromId);
     const toObj = this.project.getObject(toId);
     if (!fromObj || !toObj) return null;
+    if (fromId === toId) return null;
+    // Don't silently stack identical edges: dragging the same link twice just
+    // re-selects the one that already exists. Distinct edges (different
+    // targets) and branching/converging links are still fully allowed.
+    const existing = connectionBetween(this.project.getObjects(), fromId, toId);
+    if (existing) {
+      this.selection.setIds([existing]);
+      this.requestRender();
+      return existing;
+    }
     const endpoints = connectionEndpoints({ from: fromId, to: toId, x: fromObj.x, y: fromObj.y }, fromObj, toObj);
     const minX = Math.min(endpoints.start.x, endpoints.end.x) - 4;
     const minY = Math.min(endpoints.start.y, endpoints.end.y) - 4;
@@ -1193,7 +1256,11 @@ export class CanvasEngine implements InteractionHost {
     const dataUrl = await window.spatia.readAssetDataUrl(this.project.getMeta().id, assetId);
     if (!dataUrl) return null;
     try {
-      return await this.images.load(assetId, dataUrl);
+      const img = await this.images.load(assetId, dataUrl);
+      // A decoded bitmap changes what the static layer paints, even though the
+      // document itself did not mutate — bump the epoch so it repaints.
+      this.imageEpoch += 1;
+      return img;
     } catch {
       return null;
     }
@@ -1202,6 +1269,7 @@ export class CanvasEngine implements InteractionHost {
   /** Drop a cached image so the next load reflects a relinked binary. */
   invalidateImage(assetId: string): void {
     this.images.invalidate(assetId);
+    this.imageEpoch += 1;
   }
 
   async loadImagesFor(objects: readonly CanvasObject[]): Promise<void> {
@@ -1240,7 +1308,7 @@ export class CanvasEngine implements InteractionHost {
     canvas.height = Math.max(1, Math.round(bounds.height * s));
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    ctx.fillStyle = "#121417";
+    ctx.fillStyle = CANVAS_BACKGROUND;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     const frame: ViewportFrame = {
       cameraX: bounds.x,
@@ -1273,29 +1341,15 @@ export class CanvasEngine implements InteractionHost {
   render(): void {
     const ctx = this.canvasContext();
     if (!ctx) return;
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.clearRect(0, 0, this.width, this.height);
-    ctx.fillStyle = "#121417";
-    ctx.fillRect(0, 0, this.width, this.height);
 
-    drawGrid(ctx, this.frame);
-    const selected = new Set(this.selection.get());
-    const drawCtx: ObjectDrawContext = {
-      imageOf: (assetId) => this.images.get(assetId),
-      objLabel: (assetId) => this.project.getAsset(assetId)?.name ?? "File",
-      assetKindOf: (assetId) => this.project.getAsset(assetId)?.kind,
-      assetExtOf: (assetId) => this.project.getAsset(assetId)?.ext,
-      objectById: (id) => this.project.getObject(id),
-    };
-    const srcObjects = this.isolationIds === null
-      ? this.project.getObjectsSorted()
-      : this.project.getObjectsSorted().filter((obj) => this.isObjectVisible(obj.id));
-    // While an eraser sweep is live, drop the committed pens from the object
-    // pass — inkController.renderDraft repaints the post-erase ink in its place.
-    const objects = this.ink.eraserDraftActive()
-      ? srcObjects.filter((o) => o.type !== "pen")
-      : srcObjects;
-    drawObjects(ctx, this.frame, objects, selected, drawCtx, this.coarse);
+    // Paint (or reuse) the cached background + grid + committed objects, then
+    // blit it back in device pixels. Everything after this point is transient
+    // overlay that changes without touching the document, so a live pen stroke
+    // costs one `drawImage` instead of re-pathing every object per pointer move.
+    this.paintStaticLayer();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (this.staticCanvas) ctx.drawImage(this.staticCanvas, 0, 0);
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
     if (this.draftConn) {
       const fromObj = this.project.getObject(this.draftConn.from);
@@ -1364,6 +1418,88 @@ export class CanvasEngine implements InteractionHost {
     this.ink.renderInkSelection(ctx, this.frame);
     this.ink.renderLasso(ctx, this.frame);
     this.ink.renderEraserGuide(ctx);
+  }
+
+  /**
+   * Repaint the cached static layer only when something it depends on changed:
+   * the frame (pan/zoom/resize), the document (revision), the selection, the
+   * isolation scope, the coarse-handle mode, a live eraser draft, or a decoded
+   * image. While only the transient ink draft changes, the previous layer is
+   * reused as-is.
+   */
+  private paintStaticLayer(): void {
+    const sig = this.staticSignature();
+    if (sig === this.staticSig && this.staticCanvas && this.staticCtx) return;
+
+    if (!this.staticCanvas) {
+      this.staticCanvas = document.createElement("canvas");
+      this.staticCtx = this.staticCanvas.getContext("2d");
+    }
+    const sctx = this.staticCtx;
+    if (!sctx) return;
+
+    const deviceW = Math.max(1, Math.floor(this.width * this.dpr));
+    const deviceH = Math.max(1, Math.floor(this.height * this.dpr));
+    if (this.staticCanvas.width !== deviceW || this.staticCanvas.height !== deviceH) {
+      this.staticCanvas.width = deviceW;
+      this.staticCanvas.height = deviceH;
+    }
+
+    sctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    sctx.clearRect(0, 0, this.width, this.height);
+    // Background fill + the zoom-adaptive world grid. Both depend only on the
+    // frame, so they live in the cached static layer and cost nothing while a
+    // live stroke or overlay repaints on top.
+    sctx.fillStyle = CANVAS_BACKGROUND;
+    sctx.fillRect(0, 0, this.width, this.height);
+    drawGrid(sctx, this.frame);
+
+    let selected = new Set(this.selection.get());
+    const drawCtx: ObjectDrawContext = {
+      imageOf: (assetId) => this.images.get(assetId),
+      objLabel: (assetId) => this.project.getAsset(assetId)?.name ?? "File",
+      assetKindOf: (assetId) => this.project.getAsset(assetId)?.kind,
+      assetExtOf: (assetId) => this.project.getAsset(assetId)?.ext,
+      objectById: (id) => this.project.getObject(id),
+    };
+    const srcObjects = this.isolationIds === null
+      ? this.project.getObjectsSorted()
+      : this.project.getObjectsSorted().filter((obj) => this.isObjectVisible(obj.id));
+    // While an eraser sweep is live, drop the committed pens from the object
+    // pass — inkController.renderDraft repaints the post-erase ink in its place.
+    let objects = this.ink.eraserDraftActive()
+      ? srcObjects.filter((o) => o.type !== "pen")
+      : srcObjects;
+    // Hide the object currently owned by an inline DOM editor (and its selection
+    // chrome) so the editor overlay is the only thing drawn, with no duplicate
+    // or offset outline showing through behind it.
+    if (this.editingId !== null) {
+      objects = objects.filter((o) => o.id !== this.editingId);
+      if (selected.has(this.editingId)) {
+        selected = new Set(selected);
+        selected.delete(this.editingId);
+      }
+    }
+    drawObjects(sctx, this.frame, objects, selected, drawCtx, this.coarse);
+
+    this.staticSig = sig;
+  }
+
+  /** Cheap fingerprint of everything that affects the static layer's pixels. */
+  private staticSignature(): string {
+    const f = this.frame;
+    const iso = this.isolationIds === null ? "*" : [...this.isolationIds].sort().join(",");
+    return [
+      f.cameraX, f.cameraY, f.zoom, f.originWidth, f.originHeight,
+      this.width, this.height, this.dpr,
+      this.coarse ? 1 : 0,
+      this.ink.eraserDraftActive() ? 1 : 0,
+      this.project.getRevision(),
+      this.imageEpoch,
+      iso,
+      this.editingId ?? "",
+      this.selection.get().join(","),
+    ].join("|");
   }
 
   private requestRender(): void {
