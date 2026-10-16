@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform: Windows • Web • Tablet](https://img.shields.io/badge/platform-Windows%20%7C%20Web%20%7C%20Tablet-informational.svg)](https://github.com/SpatiaLabs/Spatia/releases)
-[![Version: 0.5.2](https://img.shields.io/badge/version-0.5.2-success.svg)](https://github.com/SpatiaLabs/Spatia/releases)
+[![Version: 0.5.3](https://img.shields.io/badge/version-0.5.3-success.svg)](https://github.com/SpatiaLabs/Spatia/releases)
 [![Web app: spatiaweb.surge.sh](https://img.shields.io/badge/web-spatiaweb.surge.sh-6f42c1.svg)](https://spatiaweb.surge.sh)
 
 **A local-first visual infinite workspace for notes, sketches, and documents.**
@@ -66,7 +66,7 @@ Try Spatia in your browser at **<https://spatiaweb.surge.sh>** — installable a
 
 Prebuilt Windows x64 installers are published on
 [GitHub Releases](https://github.com/SpatiaLabs/Spatia/releases). Download
-`Spatia-0.5.2-win-x64.msi` and run it to install Spatia.
+`Spatia-0.5.3-win-x64.msi` and run it to install Spatia.
 
 ### Build and run from source
 

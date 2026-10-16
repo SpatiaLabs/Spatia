@@ -261,8 +261,8 @@ app.whenReady().then(async () => {
     ok("Open Graph title + description present", /Infinite Canvas/.test(landing.ogTitle) && /local-first/.test(landing.ogDescription));
     ok("structured data present", landing.hasJsonLd);
     ok("structured data includes keywords", /"keywords"/.test(landing.ldText));
-    ok("structured data softwareVersion is 0.5.2", /"softwareVersion"\s*:\s*"0\.5\.2"/.test(landing.ldText));
-    ok("landing announces version 0.5.2", /0\.5\.2/.test(landing.text));
+    ok("structured data softwareVersion is 0.5.3", /"softwareVersion"\s*:\s*"0\.5\.3"/.test(landing.ldText));
+    ok("landing announces version 0.5.3", /0\.5\.3/.test(landing.text));
     ok("landing offers Windows + Web paths", landing.downloadLinks.length >= 1 && /Web.*Windows/.test(landing.text));
     ok("landing offers an FAQ", landing.faqCount >= 6);
     ok("og:image hosted on the website itself", landing.ogImage === "https://spatiaweb.surge.sh/assets/icon-512.png");
@@ -270,7 +270,7 @@ app.whenReady().then(async () => {
     ok("landing introduces no open-source claims", !/open[-\s]?source|MIT license/i.test(landing.text));
     ok("download CTAs point to the GitHub release MSI", landing.downloadLinks.length >= 1 && landing.downloadLinks.every((h) => {
       const u = new URL(h);
-      return u.host === "github.com" && u.pathname === "/SpatiaLabs/Spatia/releases/download/v0.5.2/Spatia-0.5.2-win-x64.msi";
+      return u.host === "github.com" && u.pathname === "/SpatiaLabs/Spatia/releases/download/v0.5.3/Spatia-0.5.3-win-x64.msi";
     }));
     ok("public site links the GitHub release for downloads", landing.hasGithub);
     ok("landing copy names the GitHub-hosted installer", /hosted on GitHub Releases/i.test(landing.text));
@@ -2107,7 +2107,7 @@ api.addCommand({
     await httpOk("PWA manifest served", "/manifest.webmanifest", (b) => {
       try {
         const j = JSON.parse(b.toString("utf-8"));
-        return j.name === "Spatia" && j.start_url.indexOf("#/web") !== -1 && j.display === "standalone" && j.version === "0.5.2";
+        return j.name === "Spatia" && j.start_url.indexOf("#/web") !== -1 && j.display === "standalone" && j.version === "0.5.3";
       } catch {
         return false;
       }
@@ -2122,13 +2122,13 @@ api.addCommand({
         /infinite canvas/i.test(t) &&
         !/not open source/i.test(t) &&
       /github\.com\/SpatiaLabs\/Spatia/.test(t) &&
-        t.indexOf("0.5.2") !== -1 &&
+        t.indexOf("0.5.3") !== -1 &&
         /Linux \(x64\) desktop app/.test(t) &&
         t.indexOf("#/wiki/getting-started") !== -1;
     });
     await httpOk("sitemap lists the production URL", "/sitemap.xml", (b) => b.toString("utf-8").indexOf("https://spatiaweb.surge.sh/") !== -1);
     const landingHtml = fs.readFileSync(path.join(BASE, "index.html"), "utf-8");
-    ok("landing downloads the MSI from the GitHub release", landingHtml.indexOf("https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.2/Spatia-0.5.2-win-x64.msi") !== -1);
+    ok("landing downloads the MSI from the GitHub release", landingHtml.indexOf("https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.3/Spatia-0.5.3-win-x64.msi") !== -1);
 
     const page = await execute(win, () => ({
       manifestHref: (document.querySelector('link[rel="manifest"]') || {}).href || "",

@@ -12,7 +12,7 @@ Spatia is a visual workspace, often described as an "infinite canvas" or spatial
 - Platforms: Windows 10 / 11 (x64) desktop app, Linux (x64) desktop app, plus a Web app / installable PWA that runs in any modern browser on desktop, phones, iPads and tablets.
 - Storage: local-first. Desktop projects are saved as files on your machine; the Web app stores projects in your browser. Nothing is uploaded to a Spatia cloud.
 - Offline: the desktop app works fully offline; the Web app works offline once loaded.
-- Current version: 0.5.2.
+- Current version: 0.5.3.
 - Source: Spatia is open source under the MIT License; the source code is available at https://github.com/SpatiaLabs/Spatia.
 - Native scope: there is no separate iOS or Android native app — phones, iPads and tablets use the Web version.
 
@@ -21,8 +21,10 @@ Spatia is a visual workspace, often described as an "infinite canvas" or spatial
 - Infinite canvas with zoom and pan, a minimap, focus, and isolation modes.
 - Objects: sticky notes, text, images, files, links, frames, seven built-in shapes, groups, and freehand pen strokes.
 - Rich text in notes and text: bold, italic, underline, inline code, links, headings, bullets and numbered lists — lightweight inline markup stored as plain text.
-- Connection lines and arrows that follow objects as they move or resize.
+- Connection lines and arrows that follow objects as they move or resize. Connections support branching: one object can fan out to many targets and many sources can converge into one.
 - Freehand pen with real-time ink, a stabilizer, stylus pressure support, and a partial or whole-stroke eraser.
+- Seven distinct brush types (Pen, Pencil, Ballpoint, Marker, Brush, Highlighter, Calligraphy) with per-brush width/opacity response, texture and caps; the Calligraphy nib varies width with stroke direction. Brush type is saved with the stroke and with presets.
+- A single layout-aware keyboard shortcut system (works the same on QWERTY, AZERTY and other layouts), plus full game-controller support (pan, zoom, drawing, selection, undo/redo and the command palette).
 - Eight starter templates: blank, brainstorming, project planning, mind map, study, notes, product planning, personal.
 - Search, tags, projects, folders, and version history with automatic snapshots.
 - Import Markdown, OPML, FreeMind (.mm), Excalidraw (.excalidraw), and Miro board JSON — files convert to native objects on the canvas.
@@ -62,4 +64,4 @@ Spatia is a visual workspace, often described as an "infinite canvas" or spatial
 - [Version history & data safety](https://spatiaweb.surge.sh/#/wiki/version-history)
 - [FAQ](https://spatiaweb.surge.sh/#/wiki/faq)
 - [Troubleshooting](https://spatiaweb.surge.sh/#/wiki/troubleshooting)
-- [What's new in 0.5.2](https://spatiaweb.surge.sh/#/wiki/whats-new)
+- [What's new in 0.5.3](https://spatiaweb.surge.sh/#/wiki/whats-new)

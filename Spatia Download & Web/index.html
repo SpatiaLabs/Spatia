@@ -56,7 +56,7 @@
         "applicationSubCategory": "Infinite Canvas",
         "operatingSystem": "Windows 10, Windows 11, Web browser",
         "browserRequirements": "Requires a modern browser (Chrome, Edge, Firefox, Safari)",
-        "softwareVersion": "0.5.2",
+        "softwareVersion": "0.5.3",
         "url": "https://spatiaweb.surge.sh/",
         "keywords": "infinite canvas, visual workspace, whiteboard, brainstorming, mind map, diagram, flow chart, sticky notes, notes, sketch, local-first, offline, PWA, Windows app",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -473,7 +473,7 @@
           </nav>
           <div class="header-actions">
             <a class="btn btn-ghost btn-sm" href="#/web">Try Web</a>
-<a class="btn btn-primary btn-sm" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.2/Spatia-0.5.2-win-x64.msi">Download</a>
+<a class="btn btn-primary btn-sm" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.3/Spatia-0.5.3-win-x64.msi">Download</a>
           </div>
         </header>
 
@@ -485,7 +485,7 @@
           </p>
           <p class="wiki-lede-links">
             Start with <a href="#/wiki/getting-started">Getting started</a> &middot;
-            see <a href="#/wiki/whats-new">What's new in 0.5.2</a> &middot;
+            see <a href="#/wiki/whats-new">What's new in 0.5.3</a> &middot;
             ask the <a href="#/wiki/faq">FAQ</a>
           </p>
           <div class="wiki-toolbar">
@@ -566,7 +566,7 @@
             <div class="wiki-toc-group">
               <h3 class="wiki-toc-title">News &amp; releases</h3>
               <ul>
-                <li><a href="#/wiki/whats-new" data-wiki-search="What's new changelog release notes news version 0.5.2 ink brush presets tablet menu">What's new in 0.5.2</a></li>
+                <li><a href="#/wiki/whats-new" data-wiki-search="What's new changelog release notes news version 0.5.3 brushes calligraphy gamepad controller shortcuts connections">What's new in 0.5.3</a></li>
               </ul>
             </div>
           </nav>
@@ -594,7 +594,7 @@
             <strong>Web app / installable PWA</strong> for any modern browser — on desktop, mobile
             phones, iPad and tablets alike. There is no separate iOS or Android app: phones, iPads
             and tablets all use the Web version.
-            Current version: <strong>0.5.2</strong>.
+            Current version: <strong>0.5.3</strong>.
           </p>
             </article>
 
@@ -603,7 +603,7 @@
               <h2>Getting started</h2>
               <h3>On Windows (desktop)</h3>
               <ol>
-                <li>Download <code>Spatia-0.5.2-win-x64.msi</code> with the <strong>Download</strong> button above — it is hosted on GitHub Releases.</li>
+                <li>Download <code>Spatia-0.5.3-win-x64.msi</code> with the <strong>Download</strong> button above — it is hosted on GitHub Releases.</li>
                 <li>Run the installer and follow the prompts — Spatia opens a fresh blank canvas with the tools panel on the left.</li>
               </ol>
               <h3>In the browser (Web app)</h3>
@@ -803,6 +803,14 @@
                 <li>Select a connection to change its color or toggle its arrowhead in the inspector.</li>
                 <li>Delete a connection with <kbd>Delete</kbd> — the objects it connected stay put.</li>
                 <li>Connections always attach to the facing edge of an object and travel with it.</li>
+                <li><strong>Branching is allowed:</strong> one object can be the source of many
+                  connections and the target of many others, and each edge is independent — ideal
+                  for flowcharts and mind maps.</li>
+                <li><strong>Duplicates are prevented:</strong> connecting the same pair twice
+                  selects the existing edge instead of adding a hidden double.</li>
+                <li><strong>Deleting tidy-ups:</strong> removing an object also removes the
+                  connections attached to it, and duplicating a set of objects copies the connections
+                  between them onto the copies.</li>
               </ul>
             </article>
 
@@ -881,6 +889,11 @@
                   frame rate as you draw — what you see is what you get, no waiting for the pen-up.</li>
                 <li><strong>Smoothing &amp; stabilizer.</strong> Clean up shaky lines, and optionally let
                   the stroke follow your stylus <strong>pressure</strong> to vary its width.</li>
+                <li><strong>Brush types.</strong> Choose from seven brushes in the Pen inspector —
+                  <em>Pen, Pencil, Ballpoint, Marker, Brush, Highlighter</em> and
+                  <em>Calligraphy</em>. Each has its own width/opacity response, texture and stroke
+                  caps, and the Calligraphy nib changes thickness with the direction of your stroke.
+                  The brush is saved with the stroke and with any preset.</li>
                 <li><strong>Style.</strong> Pick color, opacity and stroke width before drawing. With the
                   pen tool active, <kbd>=</kbd>/<kbd>+</kbd> and <kbd>-</kbd>/<kbd>_</kbd> change the width
                   on the fly.</li>
@@ -1004,6 +1017,29 @@
                 Shortcuts work in the desktop app and the Web app. While you're typing in a text editor,
                 canvas shortcuts are paused.
               </p>
+              <h3>Game controller</h3>
+              <p>
+                Any standard gamepad works out of the box — no setup. The pad is ignored whenever a
+                text field or dialog is open.
+              </p>
+              <table class="wiki-table">
+                <thead>
+                  <tr><th>Control</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Left stick</td><td>Pan the canvas</td></tr>
+                  <tr><td>Right stick</td><td>Pan (horizontal) / zoom (vertical)</td></tr>
+                  <tr><td><strong>A</strong></td><td>Open the selected object, or add a note</td></tr>
+                  <tr><td><strong>B</strong></td><td>Cancel / step back</td></tr>
+                  <tr><td><strong>X</strong></td><td>Delete selection</td></tr>
+                  <tr><td><strong>Y</strong></td><td>Duplicate selection</td></tr>
+                  <tr><td><strong>LB</strong> / <strong>RB</strong></td><td>Undo / redo</td></tr>
+                  <tr><td><strong>LT</strong> / <strong>RT</strong></td><td>Decrease / increase pen width</td></tr>
+                  <tr><td>D-pad</td><td>Up/down steps through objects; left/right toggles the pen tool</td></tr>
+                  <tr><td><strong>Back</strong> / <strong>Start</strong></td><td>Toggle sidebar / open the command palette</td></tr>
+                  <tr><td><strong>L3</strong> / <strong>R3</strong></td><td>Focus selection / reset view</td></tr>
+                </tbody>
+              </table>
             </article>
 
             <!-- Mobile & gestures -->
@@ -1191,9 +1227,74 @@
               </div>
             </article>
 
-            <!-- What's new in 0.5.2 -->
+            <!-- What's new in 0.5.3 -->
             <article class="wiki-section" id="wiki-whats-new">
-              <h2>What's new in 0.5.2</h2>
+              <h2>What's new in 0.5.3</h2>
+              <p>0.5.3 rounds out the drawing engine and the way you drive the app: seven
+                genuinely distinct brushes with a real calligraphy nib, one reliable shortcut
+                system, full game-controller support, and a connection graph that fans out and
+                converges like a proper diagram.</p>
+              <h3>Distinct brushes &amp; a calligraphy nib</h3>
+              <ul>
+                <li><strong>Seven brushes, seven looks.</strong> Pen, Pencil, Ballpoint, Marker,
+                  Brush, Highlighter and Calligraphy each respond differently to width and
+                  pressure and render with their own caps, opacity and texture — a pencil is
+                  grainy, a marker is soft and wide, a highlighter lays translucent color.</li>
+                <li><strong>A real calligraphy nib.</strong> The Calligraphy brush varies its
+                  stroke width with the direction of your hand: broad on a down-stroke, hair-thin
+                  across it, exactly like a chisel-tip pen. Turn the page and the thick/thin
+                  orientation follows your line.</li>
+                <li><strong>Brush type is part of a preset.</strong> The built-in presets now
+                  carry their brush, the Pen inspector has a <strong>Brush type</strong> selector,
+                  and the choice is saved in the file — reopen a project and every stroke keeps
+                  its brush.</li>
+              </ul>
+              <h3>Shortcuts that just work</h3>
+              <ul>
+                <li><strong>One reliable system.</strong> Every keyboard command now resolves
+                  through a single, layout-aware dispatcher that reads physical key positions, so
+                  <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> shortcuts behave the same on QWERTY, AZERTY and
+                  other layouts.</li>
+                <li><strong><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> now connects.</strong>
+                  The connect-selection shortcut previously collided with copy and never fired; it
+                  now reliably links the two selected objects.</li>
+                <li><strong>No AltGr surprises.</strong> On layouts where <kbd>AltGr</kbd> is
+                  reported as <kbd>Ctrl</kbd>+<kbd>Alt</kbd>, typing special characters no longer
+                  triggers canvas commands.</li>
+              </ul>
+              <h3>Game controller support</h3>
+              <p>Plug in any standard gamepad and the whole app is driveable from the couch:</p>
+              <ul>
+                <li><strong>Move &amp; zoom:</strong> the left stick pans, the right stick pans
+                  horizontally and zooms vertically.</li>
+                <li><strong>Core actions:</strong> <strong>A</strong> opens the selected object (or
+                  drops a note), <strong>B</strong> cancels, <strong>X</strong> deletes,
+                  <strong>Y</strong> duplicates, <strong>LB</strong>/<strong>RB</strong> undo and
+                  redo.</li>
+                <li><strong>Pen &amp; navigation:</strong> <strong>LT</strong>/<strong>RT</strong>
+                  change the pen width, the <strong>D-pad</strong> steps through objects and toggles
+                  the pen tool, <strong>Back</strong> toggles the sidebar, <strong>Start</strong>
+                  opens the command palette, <strong>L3</strong> focuses the selection and
+                  <strong>R3</strong> resets the view.</li>
+                <li><strong>Never in the way:</strong> the pad stays inert while a text field or
+                  dialog is open, so mouse, keyboard and stylus behave exactly as before.</li>
+              </ul>
+              <h3>Connections that branch</h3>
+              <ul>
+                <li><strong>Fan out and converge.</strong> A frame can connect to many targets and
+                  many sources can connect into one, each edge fully independent — build real
+                  flowcharts and mind maps.</li>
+                <li><strong>No accidental doubles.</strong> Dragging the same link twice selects the
+                  existing edge instead of stacking an invisible duplicate.</li>
+                <li><strong>Self-healing graph.</strong> Deleting a frame also removes the edges
+                  attached to it (no dangling lines), and duplicating a cluster re-points the copied
+                  edges at the copied frames.</li>
+              </ul>
+            </article>
+
+            <!-- What's new in 0.5.2 -->
+            <article class="wiki-section" id="wiki-whats-new-0-5-2">
+              <h2>What's new in 0.5.2 (previous release)</h2>
               <p>0.5.2 continues the drawing-engine overhaul: natural curve smoothing, a
                 brush-preset system, and a genuinely variable-width ink ribbon — plus a
                 tidied bottom-right menu button.</p>
@@ -1220,7 +1321,7 @@
 
             <!-- What's new in 0.5.1 -->
             <article class="wiki-section" id="wiki-whats-new-0-5-1">
-              <h2>What's new in 0.5.1 (previous release)</h2>
+              <h2>What's new in 0.5.1</h2>
               <p>0.5.1 adds rich text formatting, one-click sharing, and multi-format import — on top of
                 the collaboration, platform and performance improvements shipped earlier in this release
                 cycle.</p>
@@ -1455,7 +1556,7 @@
         </nav>
         <div class="header-actions">
           <a class="btn btn-ghost btn-sm" href="#/web">Try Web</a>
-          <a class="btn btn-primary btn-sm" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.2/Spatia-0.5.2-win-x64.msi">Download</a>
+          <a class="btn btn-primary btn-sm" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.3/Spatia-0.5.3-win-x64.msi">Download</a>
         </div>
       </header>
 
@@ -1463,7 +1564,7 @@
         <!-- Hero -->
         <section class="hero">
           <div class="hero-inner">
-            <span class="badge">Spatia 0.5.2 is here</span>
+            <span class="badge">Spatia 0.5.3 is here</span>
             <h1 class="hero-title">
               An infinite canvas<span class="hero-accent"> for the way you think.</span>
             </h1>
@@ -1474,7 +1575,7 @@
             </p>
             <div class="hero-actions">
               <a class="btn btn-primary btn-lg" href="#/web">Try Web</a>
-              <a class="btn btn-outline btn-lg" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.2/Spatia-0.5.2-win-x64.msi">
+              <a class="btn btn-outline btn-lg" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.3/Spatia-0.5.3-win-x64.msi">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
                 Download for Windows
               </a>
@@ -1486,7 +1587,7 @@
               <li>Free</li>
             </ul>
             <p class="hero-docs">New here? <a href="#/wiki/getting-started">Read the 60-second getting-started guide</a>.</p>
-            <p class="hero-meta">Windows 10 / 11 &middot; Web &middot; Version 0.5.2</p>
+            <p class="hero-meta">Windows 10 / 11 &middot; Web &middot; Version 0.5.3</p>
           </div>
           <figure class="window hero-window">
             <div class="window-bar">
@@ -1785,7 +1886,7 @@
             <div class="cta-card">
               <span class="cta-card-os">Windows</span>
               <p class="cta-card-detail">MSI installer &middot; Windows 10 / 11 &middot; x64</p>
-              <a class="btn btn-primary btn-lg" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.2/Spatia-0.5.2-win-x64.msi">
+              <a class="btn btn-primary btn-lg" href="https://github.com/SpatiaLabs/Spatia/releases/download/v0.5.3/Spatia-0.5.3-win-x64.msi">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M6 11l6 6 6-6"/><path d="M4 21h16"/></svg>
               Download for Windows
             </a>
@@ -1793,7 +1894,7 @@
           </div>
           <a class="btn btn-ghost btn-lg cta-web-link" href="#/web">…or just open it in your browser</a>
           <p class="cta-sub">Windows builds are hosted on GitHub Releases.</p>
-          <p class="hero-meta cta-meta">Windows 10 / 11 &middot; Web &middot; 0.5.2</p>
+          <p class="hero-meta cta-meta">Windows 10 / 11 &middot; Web &middot; 0.5.3</p>
         </section>
       </main>
 
