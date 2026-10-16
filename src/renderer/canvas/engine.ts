@@ -28,6 +28,7 @@ import { resizeRect, rotateKnobWorld, type Handle } from "../../shared/geometry/
 import { SpatialGrid } from "../../shared/geometry/spatialIndex.js";
 import type { InteractionHost } from "./interactionHost.js";
 import { connectionEndpoints, connectionHit, expandMembers, unionRect, snapMove, snapResize, edgeAnchor, pointToSegment, connectionBetween, connectionsTouching, remapConnection, type SnapGuide } from "../../shared/geometry/workspace.js";
+import { connRouteStyle, loadDefaultRouteStyle, routeBetweenCached, routePolyline, DEFAULT_ROUTE_STYLE } from "../../shared/geometry/connectionRouting.js";
 import { SHAPE_DEFAULTS, pointInShape } from "../../shared/geometry/shapes.js";
 
 const DEFAULT_SIZES: Record<"test-object" | "text" | "note" | "table" | "chart", { width: number; height: number }> = {
@@ -274,15 +275,38 @@ export class CanvasEngine implements InteractionHost {
     const candidates = this.spatial.queryPoint(wp)
       .map((id) => this.project.getObject(id))
       .filter((o): o is CanvasObject => o !== undefined && this.isObjectVisible(o.id));
+    // Connections are always tested as well: their stored AABB is a creation
+    // snapshot and goes stale once an endpoint frame moves, so the spatial grid
+    // alone would miss links that are visibly under the cursor.
+    for (const o of this.project.getObjects()) {
+      if (o.type === "connection" && this.isObjectVisible(o.id)) candidates.push(o);
+    }
     if (candidates.length === 0) return null;
     candidates.sort((a, b) => b.zIndex - a.zIndex);
+    const seen = new Set<string>();
     for (const obj of candidates) {
+      if (seen.has(obj.id)) continue;
+      seen.add(obj.id);
       if (obj.type === "connection") {
         const fromObj = this.project.getObject(obj.from);
         const toObj = this.project.getObject(obj.to);
-        const { start, end } = connectionEndpoints(obj, fromObj, toObj);
         const hitRadius = 12 / this.frame.zoom;
-        if (connectionHit(wp, start, end, hitRadius)) return obj.id;
+        let hit = false;
+        if (fromObj && toObj) {
+          const route = routeBetweenCached(
+            { x: fromObj.x, y: fromObj.y, width: fromObj.width, height: fromObj.height },
+            { x: toObj.x, y: toObj.y, width: toObj.width, height: toObj.height },
+            connRouteStyle(obj)
+          );
+          const poly = routePolyline(route);
+          for (let i = 1; i < poly.length && !hit; i++) {
+            if (pointToSegment(wp, poly[i - 1], poly[i]) <= hitRadius) hit = true;
+          }
+        } else {
+          const { start, end } = connectionEndpoints(obj, fromObj, toObj);
+          hit = connectionHit(wp, start, end, hitRadius);
+        }
+        if (hit) return obj.id;
         continue;
       }
       if (obj.type === "group") {
@@ -597,7 +621,7 @@ export class CanvasEngine implements InteractionHost {
       rotation: 0,
       zIndex: this.project.nextZIndex(),
       locked: false,
-      metadata: {},
+      metadata: connectionMeta(),
     };
     this.commitCommand(addObjectCommand(this.project, obj));
     return obj.id;
@@ -1116,7 +1140,7 @@ export class CanvasEngine implements InteractionHost {
       rotation: 0,
       zIndex: this.project.nextZIndex(),
       locked: false,
-      metadata: {},
+      metadata: connectionMeta(),
     };
     this.commitCommand(addObjectCommand(this.project, obj));
     return obj.id;
@@ -1604,6 +1628,16 @@ function normalizeAngle(a: number): number {
 
 function aabb(o: CanvasObject): Rect {
   return { x: o.x, y: o.y, width: o.width, height: o.height };
+}
+
+/**
+ * Metadata for a freshly created connection: stamp the current default route
+ * style, but leave it off when it matches the built-in default so ordinary
+ * documents stay lean (readers fall back to {@link DEFAULT_ROUTE_STYLE}).
+ */
+function connectionMeta(): Record<string, unknown> {
+  const route = loadDefaultRouteStyle();
+  return route === DEFAULT_ROUTE_STYLE ? {} : { route };
 }
 
 /** All eligible snap targets: every object not in `exclude`, minus decorative types. */

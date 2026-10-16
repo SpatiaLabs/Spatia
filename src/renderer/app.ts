@@ -38,6 +38,7 @@ import { deleteObjectsCommand } from "./command/commands.js";
 import { PluginManager, type PluginApiGateway, type PluginObjectView } from "./plugins/pluginManager.js";
 import { PluginsUI } from "./plugins/pluginsUI.js";
 import { SHAPE_KINDS, shapeLabel } from "../shared/geometry/shapes.js";
+import { connRouteStyle, isRouteStyle, saveDefaultRouteStyle, type RouteStyle } from "../shared/geometry/connectionRouting.js";
 import { exportBounds } from "../shared/export/bounds.js";
 import { buildMarkdown } from "../shared/export/markdown.js";
 import { buildPdfFromJpegs, type PdfPage } from "../shared/export/pdf.js";
@@ -351,6 +352,10 @@ export class App {
       { id: "add-comparison-table", category: "Objects", label: "Add Comparison Table", keywords: "compare matrix pros cons", enabled: () => true, run: () => this.addTableAt(this.centerWorld(), true) },
       { id: "add-chart", category: "Objects", label: "Add Chart", keywords: "graph data", enabled: () => true, run: () => this.addChartAt("bar", this.centerWorld()) },
       { id: "add-connection", category: "Objects", label: "Connect Selection", keywords: "link arrow between two", shortcut: "Ctrl+Shift+C", enabled: () => this.selection.size === 2, run: () => this.connectSelection() },
+      // -------- Connections --------
+      { id: "conn-style-curved", category: "Connections", label: "Connection Style: Curved", keywords: "route link smooth bezier curve", enabled: () => true, run: () => this.setConnectionRoute("curved") },
+      { id: "conn-style-elbow", category: "Connections", label: "Connection Style: Elbow", keywords: "route link orthogonal right angle step", enabled: () => true, run: () => this.setConnectionRoute("elbow") },
+      { id: "conn-style-bracket", category: "Connections", label: "Connection Style: Bracket", keywords: "route link rail hanger brace", enabled: () => true, run: () => this.setConnectionRoute("bracket") },
       { id: "add-pen", category: "Objects", label: "Add Pen", keywords: "freehand sketch draw", enabled: notPen, run: () => this.togglePenTool() },
       { id: "add-group", category: "Objects", label: "Add Group", keywords: "combine group selection", enabled: selAtLeast(2), run: () => this.groupSelection() },
       // -------- Shapes --------
@@ -2285,6 +2290,21 @@ async importProject(): Promise<void> {
     this.setStatus("Connected objects.");
   }
 
+  private setConnectionRoute(style: RouteStyle): void {
+    // Sticky default for new links, applied now to any selected connections.
+    saveDefaultRouteStyle(style);
+    const changes: PropChange[] = [];
+    for (const id of this.selection.get()) {
+      const o = this.project.getObject(id);
+      if (o && o.type === "connection" && connRouteStyle(o) !== style) {
+        changes.push({ id: o.id, key: "metadata", before: { ...o.metadata }, after: { ...o.metadata, route: style } });
+      }
+    }
+    if (changes.length) this.commands.execute(setPropsCommand(this.project, changes));
+    this.refreshUI();
+    this.setStatus(`Connection style: ${style[0].toUpperCase()}${style.slice(1)}`);
+  }
+
   private groupSelection(): void {
     if (this.selection.size < 2) return;
     const id = this.engine.groupSelection();
@@ -3092,6 +3112,27 @@ async importProject(): Promise<void> {
         `<div class="inspector-row"><span class="inspector-label">Stroke W</span>` +
           `<input class="inspector-input" data-prop="strokeWidth" type="number" min="0.5" step="0.5" value="${round(obj.strokeWidth || 3)}"></div>`
       );
+    } else if (obj.type === "connection") {
+      const conn = obj as Extract<CanvasObject, { type: "connection" }>;
+      const target = conn.to ? this.project.getObject(conn.to) : undefined;
+      const targetLabel = conn.to === "" ? "Free endpoint" : target ? target.type : "Missing";
+      const routeLabels: Record<RouteStyle, string> = { curved: "Curved", elbow: "Elbow", bracket: "Bracket" };
+      const current = connRouteStyle(conn);
+      rows.push(
+        `<div class="inspector-row"><span class="inspector-label">To</span><span>${escapeHtml(targetLabel)}</span></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Route</span>` +
+          `<select class="inspector-input" data-prop="route">` +
+          (["curved", "elbow", "bracket"] as RouteStyle[])
+            .map((s) => `<option value="${s}"${current === s ? " selected" : ""}>${routeLabels[s]}</option>`)
+            .join("") +
+          `</select></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Color</span>` +
+          `<input class="inspector-input share-color" data-prop="color" type="color" value="${escapeAttr(conn.color || "#91a3f0")}"></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Stroke W</span>` +
+          `<input class="inspector-input" data-prop="strokeWidth" type="number" min="0.5" step="0.5" value="${round(conn.strokeWidth || 2)}"></div>`,
+        `<div class="inspector-row"><span class="inspector-label">Arrowhead</span>` +
+          `<input class="inspector-input" data-prop="arrowhead" type="checkbox"${conn.arrowhead ? " checked" : ""}></div>`
+      );
     } else if (obj.type === "shape") {
       const shape = obj as Extract<CanvasObject, { type: "shape" }>;
       rows.push(
@@ -3121,11 +3162,13 @@ async importProject(): Promise<void> {
           `</select></div>`
       );
     }
-    rows.push(numField("X", "x", obj.x, 1));
-    rows.push(numField("Y", "y", obj.y, 1));
-    rows.push(numField("Width", "width", obj.width, 1));
-    rows.push(numField("Height", "height", obj.height, 1));
-    rows.push(numField("Rotation", "rotation", obj.rotation, 0.1));
+    if (obj.type !== "connection") {
+      rows.push(numField("X", "x", obj.x, 1));
+      rows.push(numField("Y", "y", obj.y, 1));
+      rows.push(numField("Width", "width", obj.width, 1));
+      rows.push(numField("Height", "height", obj.height, 1));
+      rows.push(numField("Rotation", "rotation", obj.rotation, 0.1));
+    }
     rows.push(
       `<div class="inspector-row"><span class="inspector-label">Z</span>` +
         `<input class="inspector-input" data-prop="zIndex" type="number" value="${obj.zIndex}"></div>`
@@ -3803,6 +3846,21 @@ async importProject(): Promise<void> {
       this.refreshUI();
       return;
     }
+    if (key === "route" && obj.type === "connection") {
+      const value = el.value;
+      if (!isRouteStyle(value)) return;
+      if (value !== connRouteStyle(obj)) {
+        this.commands.execute(
+          setPropsCommand(this.project, [
+            { id: obj.id, key: "metadata", before: { ...obj.metadata }, after: { ...obj.metadata, route: value } },
+          ])
+        );
+      }
+      // Remember the choice so new connections adopt it (sticky style).
+      saveDefaultRouteStyle(value);
+      this.refreshUI();
+      return;
+    }
     // Pen stroke width edit: scale any per-vertex (pressure-sensitive) widths
     // by the same ratio so the whole stroke thickens/thins consistently, not
     // just the width-less fallback segments.
@@ -3823,7 +3881,7 @@ async importProject(): Promise<void> {
     }
     const current = (obj as unknown as Record<string, unknown>)[key];
     let next: unknown;
-    if (key === "locked" || key === "comparison" || key === "bold" || key === "italic") {
+    if (key === "locked" || key === "comparison" || key === "bold" || key === "italic" || key === "arrowhead") {
       next = (el as HTMLInputElement).checked;
     } else if (key === "chart-kind") {
       const kind = el.value;

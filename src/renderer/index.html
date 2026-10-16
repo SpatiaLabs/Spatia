@@ -71,67 +71,73 @@
             <button id="sidebar-close" class="sidebar-close" type="button" title="Close panel" aria-label="Close panel">&times;</button>
           </div>
           <div class="sidebar-body">
-            <div class="sidebar-section">
-              <span class="sidebar-label">File</span>
-              <button id="btn-new" class="btn sidebar-btn" title="New project">New</button>
-              <button id="btn-open" class="btn sidebar-btn" title="Open project">Open</button>
-              <button id="btn-import" class="btn sidebar-btn" title="Import a .spatia folder">Import</button>
-              <button id="btn-save" class="btn sidebar-btn" title="Save project">Save</button>
-              <button id="btn-save-as" class="btn sidebar-btn" title="Save project as">Save As</button>
-              <button id="btn-templates" class="btn sidebar-btn" title="Start from a template">Templates…</button>
-              <button id="btn-export" class="btn sidebar-btn" title="Export as PNG, PDF, Markdown or .spatia">Export…</button>
-              <button id="btn-projects" class="btn sidebar-btn" title="Browse your project library">Projects…</button>
-              <button id="btn-versions" class="btn sidebar-btn" title="Browse past versions and snapshots">Versions…</button>
-              <button id="btn-plugins" class="btn sidebar-btn" title="Manage plugins">Plugins…</button>
-              <button id="btn-settings" class="btn sidebar-btn" title="App settings">Settings…</button>
+            <div class="menu-group">
+              <span class="menu-group-label">Project</span>
+              <button id="btn-new" class="btn sidebar-btn" title="New project"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h7l6 6v12H6z"/><path d="M13 3v6h6"/><path d="M12 12v6M9 15h6"/></svg></span><span class="menu-name">New</span></button>
+              <button id="btn-open" class="btn sidebar-btn" title="Open project"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="menu-name">Open</span></button>
+              <button id="btn-import" class="btn sidebar-btn" title="Import a .spatia folder"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 20h16"/></svg></span><span class="menu-name">Import</span></button>
+              <button id="btn-save" class="btn sidebar-btn" title="Save project"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h8V3"/><path d="M8 21v-7h8v7"/></svg></span><span class="menu-name">Save</span><span class="menu-kbd">Ctrl+S</span></button>
+              <button id="btn-save-as" class="btn sidebar-btn" title="Save project as"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg></span><span class="menu-name">Save As</span></button>
+              <button id="btn-export" class="btn sidebar-btn" title="Export as PNG, PDF, Markdown or .spatia"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21V9"/><path d="M8 13l4-4 4 4"/><path d="M4 4h16"/></svg></span><span class="menu-name">Export</span></button>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Recent</span>
+            <div class="menu-group">
+              <span class="menu-group-label">Browse</span>
+              <button id="btn-templates" class="btn sidebar-btn" title="Start from a template"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M9 10v10"/></svg></span><span class="menu-name">Templates</span></button>
+              <button id="btn-projects" class="btn sidebar-btn" title="Browse your project library"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></span><span class="menu-name">Projects</span></button>
+              <button id="btn-versions" class="btn sidebar-btn" title="Browse past versions and snapshots"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0-9-9"/><path d="M3 8v4h4"/><path d="M12 8v4l3 2"/></svg></span><span class="menu-name">Versions</span></button>
+            </div>
+            <div class="menu-group">
+              <span class="menu-group-label">Recent</span>
               <div id="recent-list" class="recent-list"><span class="recent-empty">No recent projects</span></div>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Edit</span>
-              <button id="btn-undo" class="btn sidebar-btn" title="Undo (Ctrl+Z)" disabled>Undo</button>
-              <button id="btn-redo" class="btn sidebar-btn" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
+            <div class="menu-group">
+              <span class="menu-group-label">Edit</span>
+              <button id="btn-undo" class="btn sidebar-btn" title="Undo (Ctrl+Z)" disabled><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg></span><span class="menu-name">Undo</span><span class="menu-kbd">Ctrl+Z</span></button>
+              <button id="btn-redo" class="btn sidebar-btn" title="Redo (Ctrl+Shift+Z)" disabled><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h4"/></svg></span><span class="menu-name">Redo</span><span class="menu-kbd">Ctrl+Shift+Z</span></button>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Tools</span>
-              <button id="btn-select" class="btn sidebar-btn" title="Select / move objects">Select</button>
-              <button id="btn-pen-sidebar" class="btn sidebar-btn" title="Pen tool (draw freely)">Pen</button>
-              <button id="btn-search" class="btn sidebar-btn" title="Find objects (Ctrl+F or /)">Search</button>
+            <div class="menu-group">
+              <span class="menu-group-label">Tools</span>
+              <button id="btn-select" class="btn sidebar-btn" title="Select / move objects"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 3l6 16 2.2-6.4L20 10z"/></svg></span><span class="menu-name">Select</span></button>
+              <button id="btn-pen-sidebar" class="btn sidebar-btn" title="Pen tool (draw freely)"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20l4-1L18 9l-3-3L5 16z"/><path d="M14 6l4 4"/></svg></span><span class="menu-name">Pen</span></button>
+              <button id="btn-search" class="btn sidebar-btn" title="Find objects (Ctrl+F or /)"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span><span class="menu-name">Search</span><span class="menu-kbd">Ctrl+F</span></button>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Media</span>
-              <button id="btn-assets" class="btn sidebar-btn" title="Browse the project's imported assets, files and their thumbnails">Assets</button>
+            <div class="menu-group">
+              <span class="menu-group-label">Insert</span>
+              <button id="btn-add-text" class="btn sidebar-btn" title="Add a text object"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 6h14"/><path d="M12 6v13"/><path d="M9 19h6"/></svg></span><span class="menu-name">Text</span></button>
+              <button id="btn-add-note" class="btn sidebar-btn" title="Add a sticky note"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v10l-5 5H5z"/><path d="M14 19v-5h5"/></svg></span><span class="menu-name">Note</span></button>
+              <button id="btn-add-image" class="btn sidebar-btn" title="Add an image object"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5L5 21"/></svg></span><span class="menu-name">Image</span></button>
+              <button id="btn-add-file" class="btn sidebar-btn" title="Add a file object"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg></span><span class="menu-name">File</span></button>
+              <button id="btn-add-url" class="btn sidebar-btn" title="Add a link / bookmark"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg></span><span class="menu-name">Link</span></button>
+              <button id="btn-add-test" class="btn sidebar-btn" title="Add a test object"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3h6"/><path d="M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/></svg></span><span class="menu-name">Test</span></button>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Collaborate</span>
-              <button id="btn-share" class="btn sidebar-btn" title="Share this project, manage members and permissions">Share…</button>
+            <div class="menu-group">
+              <span class="menu-group-label">Data</span>
+              <button id="btn-add-table" class="btn sidebar-btn" title="Add a data table"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M9 5v14"/></svg></span><span class="menu-name">Table</span></button>
+              <button id="btn-add-comparison" class="btn sidebar-btn" title="Add a comparison table"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/></svg></span><span class="menu-name">Comparison</span></button>
+              <button id="btn-add-chart" class="btn sidebar-btn" title="Add a bar chart"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg></span><span class="menu-name">Chart</span></button>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Add</span>
-              <button id="btn-add-test" class="btn sidebar-btn" title="Add a test object">Test</button>
-              <button id="btn-add-text" class="btn sidebar-btn" title="Add a text object">Text</button>
-              <button id="btn-add-note" class="btn sidebar-btn" title="Add a sticky note">Note</button>
-              <button id="btn-add-image" class="btn sidebar-btn" title="Add an image object">Image</button>
-              <button id="btn-add-file" class="btn sidebar-btn" title="Add a file object">File</button>
-              <button id="btn-add-url" class="btn sidebar-btn" title="Add a link / bookmark">Link</button>
+            <div class="menu-group">
+              <span class="menu-group-label">Shapes</span>
+              <button id="btn-add-shape-rectangle" class="btn sidebar-btn" title="Add a rectangle"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1.5"/></svg></span><span class="menu-name">Rectangle</span></button>
+              <button id="btn-add-shape-rounded-rectangle" class="btn sidebar-btn" title="Add a rounded rectangle"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="5"/></svg></span><span class="menu-name">Rounded</span></button>
+              <button id="btn-add-shape-ellipse" class="btn sidebar-btn" title="Add an ellipse"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8" ry="6.5"/></svg></span><span class="menu-name">Ellipse</span></button>
+              <button id="btn-add-shape-diamond" class="btn sidebar-btn" title="Add a diamond"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l9 9-9 9-9-9z"/></svg></span><span class="menu-name">Diamond</span></button>
+              <button id="btn-add-shape-triangle" class="btn sidebar-btn" title="Add a triangle"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/></svg></span><span class="menu-name">Triangle</span></button>
+              <button id="btn-add-shape-line" class="btn sidebar-btn" title="Add a line"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19L19 5"/></svg></span><span class="menu-name">Line</span></button>
+              <button id="btn-add-shape-arrow" class="btn sidebar-btn" title="Add an arrow"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19L19 5"/><path d="M13 5h6v6"/></svg></span><span class="menu-name">Arrow</span></button>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Data</span>
-              <button id="btn-add-table" class="btn sidebar-btn" title="Add a data table">Table</button>
-              <button id="btn-add-comparison" class="btn sidebar-btn" title="Add a comparison table">Comparison</button>
-              <button id="btn-add-chart" class="btn sidebar-btn" title="Add a bar chart">Chart</button>
+            <div class="menu-group">
+              <span class="menu-group-label">Media</span>
+              <button id="btn-assets" class="btn sidebar-btn" title="Browse the project's imported assets, files and their thumbnails"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="14" height="10" rx="2"/><path d="M7 20h14V10"/><path d="M6 12l3-3 4 4"/></svg></span><span class="menu-name">Assets</span></button>
             </div>
-            <div class="sidebar-section">
-              <span class="sidebar-label">Shapes</span>
-              <button id="btn-add-shape-rectangle" class="btn sidebar-btn" title="Add a rectangle">Rectangle</button>
-              <button id="btn-add-shape-rounded-rectangle" class="btn sidebar-btn" title="Add a rounded rectangle">Rounded</button>
-              <button id="btn-add-shape-ellipse" class="btn sidebar-btn" title="Add an ellipse">Ellipse</button>
-              <button id="btn-add-shape-diamond" class="btn sidebar-btn" title="Add a diamond">Diamond</button>
-              <button id="btn-add-shape-triangle" class="btn sidebar-btn" title="Add a triangle">Triangle</button>
-              <button id="btn-add-shape-line" class="btn sidebar-btn" title="Add a line">Line</button>
-              <button id="btn-add-shape-arrow" class="btn sidebar-btn" title="Add an arrow">Arrow</button>
+            <div class="menu-group">
+              <span class="menu-group-label">Collaborate</span>
+              <button id="btn-share" class="btn sidebar-btn" title="Share this project, manage members and permissions"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="18" cy="6" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.8l7.6-3.6M8.2 13.2l7.6 3.6"/></svg></span><span class="menu-name">Share</span></button>
+            </div>
+            <div class="menu-group">
+              <span class="menu-group-label">Application</span>
+              <button id="btn-plugins" class="btn sidebar-btn" title="Manage plugins"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5"/><path d="M12 21v-9"/></svg></span><span class="menu-name">Plugins</span></button>
+              <button id="btn-settings" class="btn sidebar-btn" title="App settings"><span class="menu-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/></svg></span><span class="menu-name">Settings</span></button>
             </div>
           </div>
         </aside>

@@ -33,7 +33,7 @@ function sampleProject() {
     { type: "group", id: "obj_g", x: 0, y: 0, width: 300, height: 200, rotation: 0, zIndex: 0, locked: true, metadata: {}, memberIds: ["obj_t", "obj_n"], name: "Pair" },
     { type: "frame", id: "obj_f", x: 0, y: 0, width: 400, height: 300, rotation: 0, zIndex: 0, locked: false, metadata: {}, name: "Slide", color: "#2a6df5", frameShape: "rounded" },
     { type: "shape", id: "obj_s", x: 0, y: 0, width: 160, height: 100, rotation: 0, zIndex: 0, locked: false, metadata: {}, kind: "diamond", fill: "#5c6ff0", stroke: "#28359b", strokeWidth: 2 },
-    { type: "connection", id: "obj_c", x: 0, y: 0, width: 100, height: 50, rotation: 0, zIndex: 0, locked: false, metadata: {}, from: "obj_t", to: "", endX: 500, endY: 300, color: "#91a3f0", strokeWidth: 2, arrowhead: true, edgeFrom: "auto", edgeTo: "auto" },
+    { type: "connection", id: "obj_c", x: 0, y: 0, width: 100, height: 50, rotation: 0, zIndex: 0, locked: false, metadata: { route: "elbow" }, from: "obj_t", to: "", endX: 500, endY: 300, color: "#91a3f0", strokeWidth: 2, arrowhead: true, edgeFrom: "auto", edgeTo: "auto" },
     { type: "table", id: "obj_tb", x: 0, y: 0, width: 200, height: 120, rotation: 0, zIndex: 0, locked: false, metadata: {}, data: { columns: ["Item", "Value"], rows: [["A", "1"], ["B", "2"]] }, comparison: true },
     { type: "chart", id: "obj_ch", x: 0, y: 0, width: 200, height: 120, rotation: 0, zIndex: 0, locked: false, metadata: {}, kind: "pie", title: "Split", data: { columns: ["Label", "Value"], rows: [["X", "3"], ["Y", "4"]] } },
   ];
@@ -120,6 +120,9 @@ test("Project -> SSON -> Project round trip preserves the full model", () => {
   assert.deepEqual(chart.data, { columns: ["Label", "Value"], rows: [["X", "3"], ["Y", "4"]] });
   const text = reparsed.objects.find((o) => o.type === "text") as { text: string };
   assert.equal(text.text, "Spatia حاكم");
+  // A connection's chosen route style survives the SSON round trip via metadata.
+  const conn = reparsed.objects.find((o) => o.type === "connection") as { metadata: Record<string, unknown> };
+  assert.equal(conn.metadata.route, "elbow");
 });
 
 test("Legacy JSON projects are detected and still open through the SSON path", () => {

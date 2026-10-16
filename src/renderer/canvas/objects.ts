@@ -6,6 +6,12 @@ import {
   connectionEndpoints,
   groupBounds,
 } from "../../shared/geometry/workspace.js";
+import {
+  connRouteStyle,
+  routeBetweenCached,
+  routeEndAngle,
+  type ConnRoute,
+} from "../../shared/geometry/connectionRouting.js";
 import { isStrokeOnly } from "../../shared/geometry/shapes.js";
 import { tableLayout } from "../../shared/geometry/tableLayout.js";
 import { isRtlLine, strokeOutline } from "../../shared/geometry/ink.js";
@@ -47,13 +53,24 @@ export function drawObjects(
   coarse = false
 ): void {
   for (const obj of objects) {
-    if (!isRectVisible({ x: obj.x, y: obj.y, width: obj.width, height: obj.height }, frame)) {
+    // Connections are never culled: their stored AABB is only a creation-time
+    // snapshot of the endpoints, so as frames move it goes stale and would
+    // wrongly hide a link that is still on screen.
+    if (obj.type !== "connection" && !isRectVisible({ x: obj.x, y: obj.y, width: obj.width, height: obj.height }, frame)) {
       continue;
     }
     drawObject(ctx, frame, obj, drawCtx);
   }
   if (selected.size > 0) {
-    drawSelection(ctx, frame, objects, selected, drawCtx, coarse);
+    // A selected connection highlights its actual path (with endpoint dots)
+    // instead of the resize box that suits rectangular objects.
+    const rectangular = new Set<string>();
+    for (const id of selected) {
+      const o = drawCtx.objectById(id);
+      if (o && o.type === "connection") drawConnectionSelection(ctx, frame, o, drawCtx, coarse);
+      else rectangular.add(id);
+    }
+    if (rectangular.size > 0) drawSelection(ctx, frame, objects, rectangular, drawCtx, coarse);
   }
 }
 
@@ -485,33 +502,132 @@ function drawConnection(
 ): void {
   const fromObj = drawCtx.objectById(conn.from);
   const toObj = drawCtx.objectById(conn.to);
-  const { start, end } = connectionEndpoints(conn, fromObj, toObj);
-  const sp = worldToScreen(start, frame);
-  const ep = worldToScreen(end, frame);
   const color = conn.color || "#91a3f0";
 
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = Math.max(1, (conn.strokeWidth || 2) * frame.zoom);
-  ctx.setLineDash([6, 4]);
   ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(sp.x, sp.y);
-  ctx.lineTo(ep.x, ep.y);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  ctx.lineJoin = "round";
+  ctx.setLineDash([6, 4]);
 
-  if (conn.arrowhead) {
-    const angle = Math.atan2(ep.y - sp.y, ep.x - sp.x);
-    const arrowLen = Math.max(10, 12 * frame.zoom);
-    const arrowAngle = Math.PI / 6;
-    ctx.fillStyle = color;
+  if (fromObj && toObj) {
+    const route = routeBetweenCached(objRect(fromObj), objRect(toObj), connRouteStyle(conn));
+    strokeRoute(ctx, frame, route);
+    if (conn.arrowhead) drawArrowhead(ctx, frame, route.end, routeEndAngle(route), color);
+  } else {
+    // Free endpoint (to === "") or a missing/deleted endpoint: fall back to a
+    // direct segment to the stored world position.
+    const { start, end } = connectionEndpoints(conn, fromObj, toObj);
+    const sp = worldToScreen(start, frame);
+    const ep = worldToScreen(end, frame);
     ctx.beginPath();
-    ctx.moveTo(ep.x, ep.y);
-    ctx.lineTo(ep.x - arrowLen * Math.cos(angle - arrowAngle), ep.y - arrowLen * Math.sin(angle - arrowAngle));
-    ctx.lineTo(ep.x - arrowLen * Math.cos(angle + arrowAngle), ep.y - arrowLen * Math.sin(angle + arrowAngle));
-    ctx.closePath();
+    ctx.moveTo(sp.x, sp.y);
+    ctx.lineTo(ep.x, ep.y);
+    ctx.stroke();
+    if (conn.arrowhead) drawArrowhead(ctx, frame, end, Math.atan2(ep.y - sp.y, ep.x - sp.x), color);
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function objRect(o: { x: number; y: number; width: number; height: number }): Rect {
+  return { x: o.x, y: o.y, width: o.width, height: o.height };
+}
+
+/** Trace a resolved route into the current path (screen space), rounding
+ * orthogonal corners. The caller sets stroke style and calls `stroke()`. */
+function strokeRoute(ctx: CanvasRenderingContext2D, frame: ViewportFrame, route: ConnRoute): void {
+  const pts = route.points.map((p) => worldToScreen(p, frame));
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  if (route.kind === "cubic") {
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.bezierCurveTo(pts[1].x, pts[1].y, pts[2].x, pts[2].y, pts[3].x, pts[3].y);
+    return;
+  }
+  const radius = Math.min(16, Math.max(3, 9 * frame.zoom));
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1];
+    const p = pts[i];
+    const next = pts[i + 1];
+    const d1 = Math.hypot(p.x - prev.x, p.y - prev.y);
+    const d2 = Math.hypot(next.x - p.x, next.y - p.y);
+    const r = Math.min(radius, d1 / 2, d2 / 2);
+    if (r < 0.5) {
+      ctx.lineTo(p.x, p.y);
+      continue;
+    }
+    ctx.lineTo(p.x + ((prev.x - p.x) / d1) * r, p.y + ((prev.y - p.y) / d1) * r);
+    ctx.quadraticCurveTo(p.x, p.y, p.x + ((next.x - p.x) / d2) * r, p.y + ((next.y - p.y) / d2) * r);
+  }
+  const last = pts[pts.length - 1];
+  ctx.lineTo(last.x, last.y);
+}
+
+function drawArrowhead(
+  ctx: CanvasRenderingContext2D,
+  frame: ViewportFrame,
+  tip: Point,
+  angle: number,
+  color: string
+): void {
+  const ep = worldToScreen(tip, frame);
+  const arrowLen = Math.max(10, 12 * frame.zoom);
+  const arrowAngle = Math.PI / 6;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(ep.x, ep.y);
+  ctx.lineTo(ep.x - arrowLen * Math.cos(angle - arrowAngle), ep.y - arrowLen * Math.sin(angle - arrowAngle));
+  ctx.lineTo(ep.x - arrowLen * Math.cos(angle + arrowAngle), ep.y - arrowLen * Math.sin(angle + arrowAngle));
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Highlight a selected connection along its real route, with endpoint dots. */
+function drawConnectionSelection(
+  ctx: CanvasRenderingContext2D,
+  frame: ViewportFrame,
+  conn: Extract<CanvasObject, { type: "connection" }>,
+  drawCtx: ObjectDrawContext,
+  coarse: boolean
+): void {
+  const fromObj = drawCtx.objectById(conn.from);
+  const toObj = drawCtx.objectById(conn.to);
+  let start: Point;
+  let end: Point;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(91,124,250,0.38)";
+  ctx.lineWidth = Math.max(3, 6 * frame.zoom);
+  if (fromObj && toObj) {
+    const route = routeBetweenCached(objRect(fromObj), objRect(toObj), connRouteStyle(conn));
+    strokeRoute(ctx, frame, route);
+    start = route.start;
+    end = route.end;
+  } else {
+    const endpoints = connectionEndpoints(conn, fromObj, toObj);
+    start = endpoints.start;
+    end = endpoints.end;
+    const sp = worldToScreen(start, frame);
+    const ep = worldToScreen(end, frame);
+    ctx.beginPath();
+    ctx.moveTo(sp.x, sp.y);
+    ctx.lineTo(ep.x, ep.y);
+  }
+  ctx.stroke();
+  const r = coarse ? 6 : 4;
+  for (const p of [start, end]) {
+    const sp = worldToScreen(p, frame);
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = HANDLE;
     ctx.fill();
+    ctx.strokeStyle = "#0f1113";
+    ctx.lineWidth = 1;
+    ctx.stroke();
   }
   ctx.restore();
 }

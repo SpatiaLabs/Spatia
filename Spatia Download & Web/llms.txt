@@ -21,7 +21,8 @@ Spatia is a visual workspace, often described as an "infinite canvas" or spatial
 - Infinite canvas with zoom and pan, a minimap, focus, and isolation modes.
 - Objects: sticky notes, text, images, files, links, frames, seven built-in shapes, groups, and freehand pen strokes.
 - Rich text in notes and text: bold, italic, underline, inline code, links, headings, bullets and numbered lists — lightweight inline markup stored as plain text.
-- Connection lines and arrows that follow objects as they move or resize. Connections support branching: one object can fan out to many targets and many sources can converge into one.
+- Connection lines and arrows that follow objects as they move or resize, with three routing styles — Curved (default), Elbow (orthogonal) and Bracket. Connections support branching: one object can fan out to many targets and many sources can converge into one, and the chosen route style is saved with the file.
+- A grouped tools panel (Menu / sidebar) organized into clear sections with consistent icons and inline keyboard-shortcut hints; fully keyboard accessible and identical on desktop and web.
 - Freehand pen with real-time ink, a stabilizer, stylus pressure support, and a partial or whole-stroke eraser.
 - Seven distinct brush types (Pen, Pencil, Ballpoint, Marker, Brush, Highlighter, Calligraphy) with per-brush width/opacity response, texture and caps; the Calligraphy nib varies width with stroke direction. Brush type is saved with the stroke and with presets.
 - A single layout-aware keyboard shortcut system (works the same on QWERTY, AZERTY and other layouts), plus full game-controller support (pan, zoom, drawing, selection, undo/redo and the command palette).
