@@ -8,10 +8,13 @@ import {
   isRouteStyle,
   routeBetween,
   routeBetweenCached,
+  routeBounds,
   routeEndAngle,
   routePolyline,
   type ConnRoute,
 } from "../shared/geometry/connectionRouting.js";
+import { connectionBounds } from "../shared/geometry/workspace.js";
+import { createFrame, isRectVisible } from "../shared/geometry/viewport.js";
 import type { Point, Rect } from "../shared/geometry/viewport.js";
 
 function rect(x: number, y: number, width = 100, height = 100): Rect {
@@ -114,4 +117,73 @@ test("route style metadata parses with a safe default", () => {
   assert.equal(connRouteStyle({ metadata: { route: "nonsense" } }), DEFAULT_ROUTE_STYLE);
   assert.ok(isRouteStyle("elbow"));
   assert.ok(!isRouteStyle("dotted"));
+});
+
+test("routeBounds encloses the route and its padding", () => {
+  const a = rect(0, 0);
+  const b = rect(400, 0);
+  const route = routeBetween(a, b, "bracket");
+  const pad = 10;
+  const bounds = routeBounds(route, pad);
+  for (const p of routePolyline(route, 16)) {
+    assert.ok(p.x >= bounds.x && p.x <= bounds.x + bounds.width, "point within x bounds");
+    assert.ok(p.y >= bounds.y && p.y <= bounds.y + bounds.height, "point within y bounds");
+  }
+  // Bracket rail drops below both frames, so the bounds must reach past them.
+  assert.ok(bounds.y + bounds.height >= 100 + 26, "bounds include the rail");
+});
+
+test("connectionBounds follows moved endpoints (regression: stale AABB hides links)", () => {
+  const a = rect(0, 0, 100, 100);
+  const bNear = rect(150, 0, 100, 100);
+  const bFar = rect(3000, 0, 100, 100);
+  // Snapshot captured by createConnection while the endpoints were adjacent.
+  const snapshot: Rect = { x: 96, y: 46, width: 58, height: 8 };
+  const conn = { from: "a", to: "b", x: snapshot.x, y: snapshot.y, strokeWidth: 2 };
+
+  // Camera parked near the far endpoint's new location.
+  const frame = createFrame({ x: 2600, y: -200, zoom: 1 }, 800, 600);
+  assert.equal(isRectVisible(snapshot, frame), false, "the stale snapshot would be culled");
+
+  const live = connectionBounds(conn, a, bFar);
+  assert.equal(isRectVisible(live, frame), true, "live route bounds stay on screen");
+
+  // Geometry is derived, so distinct endpoint positions give distinct bounds.
+  const liveNear = connectionBounds(conn, a, bNear);
+  assert.notDeepEqual(live, liveNear);
+});
+
+test("connectionBounds uses the free endpoint when a target is absent", () => {
+  const a = rect(0, 0, 100, 100);
+  const conn = { from: "a", to: "", x: 100, y: 50, endX: 500, endY: 50, strokeWidth: 2 };
+  const bounds = connectionBounds(conn, a, undefined);
+  assert.ok(bounds.x <= 100 && bounds.x + bounds.width >= 500, "spans source to free end");
+});
+
+test("routeBounds encloses a curved (cubic) route", () => {
+  const from = rect(0, 0);
+  const to = rect(400, 200);
+  const route = routeBetween(from, to, "curved");
+  assert.equal(route.kind, "cubic");
+  const bounds = routeBounds(route, 24);
+  for (const p of routePolyline(route, 32)) {
+    assert.ok(p.x >= bounds.x && p.x <= bounds.x + bounds.width, "point within x bounds");
+    assert.ok(p.y >= bounds.y && p.y <= bounds.y + bounds.height, "point within y bounds");
+  }
+});
+
+test("connectionBounds honors an explicit side (side-aware bounds)", () => {
+  const a = rect(0, 0, 100, 100);
+  const b = rect(300, 0, 100, 100);
+  // Auto routing exits A on its right edge; pinning the top edge must move the
+  // derived bounds (and therefore the culling rect + spatial index entry).
+  const auto = connectionBounds({ from: "a", to: "b", x: 0, y: 0, strokeWidth: 2 }, a, b);
+  const pinned = connectionBounds(
+    { from: "a", to: "b", x: 0, y: 0, strokeWidth: 2, metadata: { fromSide: "top" } },
+    a,
+    b
+  );
+  assert.notDeepEqual(auto, pinned);
+  // The top-anchored route starts at A's top edge, above the auto route's start.
+  assert.ok(pinned.y < auto.y, "pinned top side reaches higher than auto");
 });

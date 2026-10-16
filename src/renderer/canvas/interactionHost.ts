@@ -4,6 +4,7 @@ import type { ObjectKind } from "../../shared/types/object.js";
 import type { Command } from "../command/commandManager.js";
 import type { PenToolMode, InkSettings } from "./inkController.js";
 import type { PenObject } from "../../shared/types/object.js";
+import type { Side } from "../../shared/geometry/connectionRouting.js";
 
 /**
  * Contract between the pointer state machine (CanvasInput) and the canvas
@@ -59,12 +60,30 @@ export interface InteractionHost {
   createObject(kind: ObjectKind, worldCenter: Point): string | null;
   commitCommand(cmd: Command): void;
 
-  // Connection gesture (Ctrl + drag between two objects)
-  beginConnection(fromId: string, screen: Point): void;
+  // Connection gesture (Ctrl + drag between two objects, or drag from a hover
+  // edge handle). `fromSide` pins the source attachment side when grabbed.
+  beginConnection(fromId: string, screen: Point, fromSide?: Side | null): void;
   connectionDragTo(screen: Point): void;
   /** Create a connection from the gesture's source to the object under the
    *  pointer (if valid), returning the new connection id or null. */
   finishConnection(screen: Point): string | null;
+  /** Drop an in-progress connection draft without creating anything. */
+  cancelConnectionDraft(): void;
+
+  // Hover edge handles (Obsidian-style drag-to-connect)
+  /** Update hover state: show edge handles on the object under the pointer. */
+  hoverAt(screen: Point): void;
+  /** Hide the hover edge handles (pointer left the canvas). */
+  clearHover(): void;
+  /** Edge handle of the object under the pointer, if any. */
+  hitConnectHandle(screen: Point): { id: string; side: Side } | null;
+
+  // Reconnection: drag an endpoint dot of a selected connection onto a new target.
+  hitConnectionEndpoint(screen: Point): { id: string; end: "from" | "to" } | null;
+  beginReconnect(id: string, end: "from" | "to", screen: Point): void;
+  reconnectDragTo(screen: Point): void;
+  finishReconnect(screen: Point): void;
+  cancelReconnect(): void;
 
   // Pen tool (freehand drawing). Separate from connections.
   isPenTool(): boolean;

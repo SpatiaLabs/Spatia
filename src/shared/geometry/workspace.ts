@@ -1,5 +1,6 @@
 import type { Point, Rect } from "./viewport.js";
 import type { CanvasObject, GroupObject } from "../types/object.js";
+import { connRouteStyle, connFromSide, connToSide, routeBetweenCached, routeBounds } from "./connectionRouting.js";
 
 /**
  * Pure workspace geometry for Phase 3 features: connections (edge-to-edge
@@ -114,6 +115,46 @@ export function pointToSegment(p: Point, a: Point, b: Point): number {
   const cx = a.x + t * abx;
   const cy = a.y + t * aby;
   return Math.hypot(p.x - cx, p.y - cy);
+}
+
+/**
+ * Live world-space AABB of a connection, derived from its endpoints' current
+ * geometry (the resolved route, which may bow outside the endpoint boxes) rather
+ * than the creation-time snapshot stored on the object. This is the single
+ * source of truth for culling, the spatial index and marquee selection, so a
+ * connection can never be hidden by stale bounds after an endpoint moves.
+ */
+export function connectionBounds(
+  conn: {
+    from: string;
+    to: string;
+    x: number;
+    y: number;
+    endX?: number;
+    endY?: number;
+    strokeWidth?: number;
+    metadata?: Record<string, unknown>;
+  },
+  fromObj: { x: number; y: number; width: number; height: number } | undefined,
+  toObj: { x: number; y: number; width: number; height: number } | undefined
+): Rect {
+  const pad = 8 + (conn.strokeWidth ?? 2);
+  if (fromObj && toObj) {
+    const route = routeBetweenCached(
+      objectRect(fromObj),
+      objectRect(toObj),
+      connRouteStyle(conn),
+      connFromSide(conn),
+      connToSide(conn)
+    );
+    return routeBounds(route, pad);
+  }
+  const { start, end } = connectionEndpoints(conn, fromObj, toObj);
+  const minX = Math.min(start.x, end.x) - pad;
+  const minY = Math.min(start.y, end.y) - pad;
+  const maxX = Math.max(start.x, end.x) + pad;
+  const maxY = Math.max(start.y, end.y) + pad;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 /** Whether a connection is selectable at the given clarity radius (world units). */

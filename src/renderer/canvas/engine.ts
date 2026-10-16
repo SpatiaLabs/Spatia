@@ -27,8 +27,8 @@ import { InkController, type InkSettings, type PenToolMode } from "./inkControll
 import { resizeRect, rotateKnobWorld, type Handle } from "../../shared/geometry/selection.js";
 import { SpatialGrid } from "../../shared/geometry/spatialIndex.js";
 import type { InteractionHost } from "./interactionHost.js";
-import { connectionEndpoints, connectionHit, expandMembers, unionRect, snapMove, snapResize, edgeAnchor, pointToSegment, connectionBetween, connectionsTouching, remapConnection, type SnapGuide } from "../../shared/geometry/workspace.js";
-import { connRouteStyle, loadDefaultRouteStyle, routeBetweenCached, routePolyline, DEFAULT_ROUTE_STYLE } from "../../shared/geometry/connectionRouting.js";
+import { connectionBounds, connectionEndpoints, connectionHit, expandMembers, unionRect, snapMove, snapResize, edgeAnchor, pointToSegment, connectionBetween, connectionsTouching, remapConnection, type SnapGuide } from "../../shared/geometry/workspace.js";
+import { anchorOnSide, chooseSides, connFromSide, connRouteStyle, connToSide, loadDefaultRouteStyle, routeBetweenCached, routePolyline, DEFAULT_ROUTE_STYLE, SIDES, type ConnRoute, type Side } from "../../shared/geometry/connectionRouting.js";
 import { SHAPE_DEFAULTS, pointInShape } from "../../shared/geometry/shapes.js";
 
 const DEFAULT_SIZES: Record<"test-object" | "text" | "note" | "table" | "chart", { width: number; height: number }> = {
@@ -130,7 +130,23 @@ export class CanvasEngine implements InteractionHost {
   private rotateState: RotateState | null = null;
   private marqueeRect: Rect | null = null;
   private guides: SnapGuide[] = [];
-  private draftConn: { from: string; end: Point; valid: boolean } | null = null;
+  private draftConn: {
+    from: string;
+    end: Point;
+    valid: boolean;
+    /** Explicit side grabbed on the source (hover handle), or null for auto. */
+    fromSide: Side | null;
+    /** Id of the object currently under the pointer (the prospective target). */
+    targetId: string | null;
+    /** Side chosen for the target when hovering a valid target, else null. */
+    toSide: Side | null;
+  } | null = null;
+  /** Object whose edge connection-handles are shown, plus the handle under the pointer. */
+  private hover: { id: string; side: Side | null } | null = null;
+  /** In-progress re-binding of a selected connection's endpoint. */
+  private reconnect: { id: string; end: "from" | "to" } | null = null;
+  private reconnectPoint: Point | null = null;
+  private reconnectTargetId: string | null = null;
   private ink: InkController;
   private penActive = false;
   private penToolMode: PenToolMode = "pen";
@@ -275,12 +291,6 @@ export class CanvasEngine implements InteractionHost {
     const candidates = this.spatial.queryPoint(wp)
       .map((id) => this.project.getObject(id))
       .filter((o): o is CanvasObject => o !== undefined && this.isObjectVisible(o.id));
-    // Connections are always tested as well: their stored AABB is a creation
-    // snapshot and goes stale once an endpoint frame moves, so the spatial grid
-    // alone would miss links that are visibly under the cursor.
-    for (const o of this.project.getObjects()) {
-      if (o.type === "connection" && this.isObjectVisible(o.id)) candidates.push(o);
-    }
     if (candidates.length === 0) return null;
     candidates.sort((a, b) => b.zIndex - a.zIndex);
     const seen = new Set<string>();
@@ -296,7 +306,9 @@ export class CanvasEngine implements InteractionHost {
           const route = routeBetweenCached(
             { x: fromObj.x, y: fromObj.y, width: fromObj.width, height: fromObj.height },
             { x: toObj.x, y: toObj.y, width: toObj.width, height: toObj.height },
-            connRouteStyle(obj)
+            connRouteStyle(obj),
+            connFromSide(obj),
+            connToSide(obj)
           );
           const poly = routePolyline(route);
           for (let i = 1; i < poly.length && !hit; i++) {
@@ -365,14 +377,30 @@ export class CanvasEngine implements InteractionHost {
     return Math.abs(screen.x - p.x) <= 28 && Math.abs(screen.y - p.y) <= 28;
   }
 
-  // Connection gesture (Ctrl + drag)
-  beginConnection(fromId: string, screen: Point): void {
-    const fromObj = this.project.getObject(fromId);
-    if (!fromObj || fromObj.type === "connection") {
+  // Connection gesture. Two entry points: the keyboard draft (hold Ctrl while
+  // hovering an object) and the Obsidian-style drag from a hover edge handle.
+
+  /** True when an object can be an endpoint (not a connection/pen stroke). */
+  private isConnectable(id: string | null): boolean {
+    if (!id) return false;
+    const o = this.project.getObject(id);
+    return !!o && o.type !== "connection" && o.type !== "pen";
+  }
+
+  beginConnection(fromId: string, screen: Point, fromSide: Side | null = null): void {
+    if (!this.isConnectable(fromId)) {
       this.draftConn = null;
       return;
     }
-    this.draftConn = { from: fromId, end: screenToWorld(screen, this.frame), valid: false };
+    this.hover = null;
+    this.draftConn = {
+      from: fromId,
+      end: screenToWorld(screen, this.frame),
+      valid: false,
+      fromSide,
+      targetId: null,
+      toSide: null,
+    };
     this.updateDraftValidity(screen);
     this.requestRender();
   }
@@ -387,38 +415,243 @@ export class CanvasEngine implements InteractionHost {
   private updateDraftValidity(screen: Point): void {
     if (!this.draftConn) return;
     const target = this.hitTest(screen);
-    const valid =
-      !!this.project.getObject(this.draftConn.from) &&
-      !!target &&
-      target !== this.draftConn.from &&
-      this.project.getObject(target)?.type !== "connection";
+    const valid = this.isConnectable(target) && target !== this.draftConn.from;
     this.draftConn.valid = valid;
+    this.draftConn.targetId = valid ? target : null;
+    this.draftConn.toSide = null;
+    if (valid && target) {
+      const from = this.project.getObject(this.draftConn.from);
+      const to = this.project.getObject(target);
+      if (from && to) {
+        // When the source side is fixed (dragged from a handle) pick the target
+        // side that best faces it; otherwise use the facing pair.
+        const auto = chooseSides(aabb(from), aabb(to));
+        this.draftConn.toSide = auto.to;
+        if (!this.draftConn.fromSide) this.draftConn.fromSide = auto.from;
+      }
+    }
   }
 
   finishConnection(screen: Point): string | null {
     if (!this.draftConn) return null;
-    const fromId = this.draftConn.from;
+    const draft = this.draftConn;
     this.draftConn = null;
     this.requestRender();
-    const fromObj = this.project.getObject(fromId);
+    const fromObj = this.project.getObject(draft.from);
     if (!fromObj) return null;
     const target = this.hitTest(screen);
     // Releasing over the source is a self-connection -> cancel.
-    if (target === fromId) return null;
+    if (target === draft.from) return null;
     // Valid object target (not another connection) -> create A -> B.
-    const toObj = target ? this.project.getObject(target) : undefined;
-    if (target && toObj && toObj.type !== "connection") {
-      return this.createConnection(fromId, target);
+    if (this.isConnectable(target)) {
+      const toObj = this.project.getObject(target as string);
+      const auto = toObj ? chooseSides(aabb(fromObj), aabb(toObj)) : { from: "right" as Side, to: "left" as Side };
+      return this.createConnection(draft.from, target as string, {
+        fromSide: draft.fromSide ?? auto.from,
+        toSide: target === draft.targetId && draft.toSide ? draft.toSide : auto.to,
+      });
     }
     // Otherwise (empty space, or a connection which cannot be a target) keep a
     // free endpoint at the current world position instead of cancelling.
-    return this.createFreeConnection(fromId, screenToWorld(screen, this.frame));
+    return this.createFreeConnection(draft.from, screenToWorld(screen, this.frame), draft.fromSide);
   }
 
   /** Drop an in-progress connection draft without creating anything. */
   cancelConnectionDraft(): void {
     if (this.draftConn) {
       this.draftConn = null;
+      this.requestRender();
+    }
+  }
+
+  // --- Hover edge handles (Obsidian-style drag-to-connect) -------------------
+
+  /**
+   * Update hover state from the pointer. Shows the four edge handles on a
+   * connectable object under the cursor and records which handle is under the
+   * pointer so input can start a drag-to-connect from it.
+   */
+  hoverAt(screen: Point): void {
+    if (this.draftConn || this.reconnect) return;
+    const hit = this.hitTest(screen);
+    if (!this.isConnectable(hit)) {
+      if (this.hover) {
+        this.hover = null;
+        this.requestRender();
+      }
+      return;
+    }
+    const obj = this.project.getObject(hit as string);
+    if (!obj) return;
+    const side = this.handleUnderPointer(obj, screen);
+    const next = { id: obj.id, side };
+    if (!this.hover || this.hover.id !== next.id || this.hover.side !== next.side) {
+      this.hover = next;
+      this.requestRender();
+    }
+  }
+
+  /** Clear the hover handle state (pointer left the canvas / a gesture began). */
+  clearHover(): void {
+    if (this.hover) {
+      this.hover = null;
+      this.requestRender();
+    }
+  }
+
+  /** The world-space center of a given side of an object's AABB. */
+  private sideHandleWorld(o: CanvasObject, side: Side): Point {
+    const b = aabb(o);
+    switch (side) {
+      case "top":
+        return { x: b.x + b.width / 2, y: b.y };
+      case "bottom":
+        return { x: b.x + b.width / 2, y: b.y + b.height };
+      case "left":
+        return { x: b.x, y: b.y + b.height / 2 };
+      case "right":
+        return { x: b.x + b.width, y: b.y + b.height / 2 };
+    }
+  }
+
+  /** Which (if any) edge handle of `o` sits under the pointer. */
+  private handleUnderPointer(o: CanvasObject, screen: Point): Side | null {
+    const radius = this.coarse ? 18 : 11;
+    let best: Side | null = null;
+    let bestD = Infinity;
+    for (const side of SIDES) {
+      const p = worldToScreen(this.sideHandleWorld(o, side), this.frame);
+      const d = Math.hypot(p.x - screen.x, p.y - screen.y);
+      if (d <= radius && d < bestD) {
+        bestD = d;
+        best = side;
+      }
+    }
+    return best;
+  }
+
+  /** Connection handle of the hovered object under the pointer, if any. */
+  hitConnectHandle(screen: Point): { id: string; side: Side } | null {
+    const hit = this.hitTest(screen);
+    if (!this.isConnectable(hit)) return null;
+    const obj = this.project.getObject(hit as string);
+    if (!obj) return null;
+    const side = this.handleUnderPointer(obj, screen);
+    return side ? { id: obj.id, side } : null;
+  }
+
+  /** Grab an endpoint dot of a selected connection to re-bind it. */
+  hitConnectionEndpoint(screen: Point): { id: string; end: "from" | "to" } | null {
+    const radius = this.coarse ? 20 : 12;
+    for (const id of this.selection.get()) {
+      const conn = this.project.getObject(id);
+      if (!conn || conn.type !== "connection") continue;
+      const points = this.connectionEndpointPoints(conn);
+      if (!points) continue;
+      const f = worldToScreen(points.start, this.frame);
+      const t = worldToScreen(points.end, this.frame);
+      if (Math.hypot(f.x - screen.x, f.y - screen.y) <= radius) return { id, end: "from" };
+      if (Math.hypot(t.x - screen.x, t.y - screen.y) <= radius) return { id, end: "to" };
+    }
+    return null;
+  }
+
+  beginReconnect(id: string, end: "from" | "to", screen: Point): void {
+    const conn = this.project.getObject(id);
+    if (!conn || conn.type !== "connection") return;
+    const otherId = end === "from" ? conn.to : conn.from;
+    // Re-bind from the fixed endpoint; the moving end follows the pointer.
+    if (!this.isConnectable(otherId) && otherId !== "") return;
+    this.reconnect = { id, end };
+    this.selection.setIds([id]);
+    this.updateReconnectTarget(screen);
+    this.requestRender();
+  }
+
+  /** Resolved world-space endpoints of a connection (route ends, or fallback). */
+  private connectionEndpointPoints(
+    conn: Extract<CanvasObject, { type: "connection" }>
+  ): { start: Point; end: Point } | null {
+    const fromObj = this.project.getObject(conn.from);
+    const toObj = conn.to ? this.project.getObject(conn.to) : undefined;
+    if (fromObj && toObj) {
+      const route = routeBetweenCached(
+        aabb(fromObj),
+        aabb(toObj),
+        connRouteStyle(conn),
+        connFromSide(conn),
+        connToSide(conn)
+      );
+      return { start: route.start, end: route.end };
+    }
+    return connectionEndpoints(conn, fromObj, toObj);
+  }
+
+  private updateReconnectTarget(screen: Point): void {
+    if (!this.reconnect) return;
+    this.reconnectPoint = screenToWorld(screen, this.frame);
+    const target = this.hitTest(screen);
+    this.reconnectTargetId = this.isConnectable(target) ? target : null;
+    this.requestRender();
+  }
+
+  reconnectDragTo(screen: Point): void {
+    if (!this.reconnect) return;
+    this.updateReconnectTarget(screen);
+  }
+
+  finishReconnect(screen: Point): void {
+    if (!this.reconnect) return;
+    const { id, end } = this.reconnect;
+    this.reconnect = null;
+    this.reconnectPoint = null;
+    this.reconnectTargetId = null;
+    const conn = this.project.getObject(id);
+    if (!conn || conn.type !== "connection") {
+      this.requestRender();
+      return;
+    }
+    const target = this.hitTest(screen);
+    if (!this.isConnectable(target)) {
+      this.requestRender();
+      return;
+    }
+    const nextFrom = end === "from" ? (target as string) : conn.from;
+    const nextTo = end === "to" ? (target as string) : conn.to;
+    if (nextFrom === nextTo || nextFrom === "" || nextTo === "") {
+      this.requestRender();
+      return;
+    }
+    const fromObj = this.project.getObject(nextFrom);
+    const toObj = this.project.getObject(nextTo);
+    const auto = fromObj && toObj ? chooseSides(aabb(fromObj), aabb(toObj)) : { from: "right" as Side, to: "left" as Side };
+    // Re-pin only the endpoint that moved; leave the other end's anchor (or its
+    // auto state) exactly as it was.
+    const metadata = { ...conn.metadata };
+    if (end === "from") {
+      delete metadata.fromSide;
+      if (fromObj && toObj) metadata.fromSide = auto.from;
+    } else {
+      delete metadata.toSide;
+      if (fromObj && toObj) metadata.toSide = auto.to;
+    }
+    const before = { from: conn.from, to: conn.to, metadata: conn.metadata };
+    const after = { from: nextFrom, to: nextTo, metadata };
+    const apply = (vals: { from: string; to: string; metadata: Record<string, unknown> }): void => {
+      this.project.setObjectProp(id, "from", vals.from);
+      this.project.setObjectProp(id, "to", vals.to);
+      this.project.setObjectProp(id, "metadata", vals.metadata);
+    };
+    this.commitCommand({ label: "Reconnect edge", redo: () => apply(after), undo: () => apply(before) });
+    this.requestRender();
+  }
+
+  /** Abandon an in-progress reconnect without changing the connection. */
+  cancelReconnect(): void {
+    if (this.reconnect) {
+      this.reconnect = null;
+      this.reconnectPoint = null;
+      this.reconnectTargetId = null;
       this.requestRender();
     }
   }
@@ -594,14 +827,15 @@ export class CanvasEngine implements InteractionHost {
   }
 
   /** Create a free-endpoint connection from `fromId` ending at `end` (world). */
-  createFreeConnection(fromId: string, end: Point): string | null {
+  createFreeConnection(fromId: string, end: Point, fromSide: Side | null = null): string | null {
     const fromObj = this.project.getObject(fromId);
     if (!fromObj || fromObj.type === "connection") return null;
-    const start = edgeAnchor(aabb(fromObj), end);
-    const minX = Math.min(start.x, end.x) - 4;
-    const minY = Math.min(start.y, end.y) - 4;
-    const maxX = Math.max(start.x, end.x) + 4;
-    const maxY = Math.max(start.y, end.y) + 4;
+    const metadata = connectionMeta({ fromSide });
+    const snap = connectionBounds(
+      { from: fromId, to: "", x: fromObj.x, y: fromObj.y, endX: end.x, endY: end.y, strokeWidth: 2, metadata },
+      fromObj,
+      undefined
+    );
     const obj: CanvasObject = {
       type: "connection",
       id: createObjectId(),
@@ -614,14 +848,14 @@ export class CanvasEngine implements InteractionHost {
       strokeWidth: 2,
       edgeFrom: "auto",
       edgeTo: "auto",
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
+      x: snap.x,
+      y: snap.y,
+      width: snap.width,
+      height: snap.height,
       rotation: 0,
       zIndex: this.project.nextZIndex(),
       locked: false,
-      metadata: connectionMeta(),
+      metadata,
     };
     this.commitCommand(addObjectCommand(this.project, obj));
     return obj.id;
@@ -973,7 +1207,10 @@ export class CanvasEngine implements InteractionHost {
       const o = this.project.getObject(id);
       if (!o || !this.isObjectVisible(o.id)) continue;
       if (o.type === "pen") continue;
-      if (rectsIntersect(aabb(o), rect)) ids.push(o.id);
+      const b = o.type === "connection"
+        ? connectionBounds(o, this.project.getObject(o.from), this.project.getObject(o.to))
+        : aabb(o);
+      if (rectsIntersect(b, rect)) ids.push(o.id);
     }
     if (additive) this.selection.add(ids);
     else this.selection.setIds(ids);
@@ -1104,7 +1341,11 @@ export class CanvasEngine implements InteractionHost {
 
   // -------- Phase 3 object creation --------
 
-  createConnection(fromId: string, toId: string): string | null {
+  createConnection(
+    fromId: string,
+    toId: string,
+    sides?: { fromSide?: Side | null; toSide?: Side | null }
+  ): string | null {
     const fromObj = this.project.getObject(fromId);
     const toObj = this.project.getObject(toId);
     if (!fromObj || !toObj) return null;
@@ -1118,11 +1359,12 @@ export class CanvasEngine implements InteractionHost {
       this.requestRender();
       return existing;
     }
-    const endpoints = connectionEndpoints({ from: fromId, to: toId, x: fromObj.x, y: fromObj.y }, fromObj, toObj);
-    const minX = Math.min(endpoints.start.x, endpoints.end.x) - 4;
-    const minY = Math.min(endpoints.start.y, endpoints.end.y) - 4;
-    const maxX = Math.max(endpoints.start.x, endpoints.end.x) + 4;
-    const maxY = Math.max(endpoints.start.y, endpoints.end.y) + 4;
+    const metadata = connectionMeta({ fromSide: sides?.fromSide ?? null, toSide: sides?.toSide ?? null });
+    const snap = connectionBounds(
+      { from: fromId, to: toId, x: fromObj.x, y: fromObj.y, strokeWidth: 2, metadata },
+      fromObj,
+      toObj
+    );
     const obj: CanvasObject = {
       type: "connection",
       id: createObjectId(),
@@ -1133,14 +1375,14 @@ export class CanvasEngine implements InteractionHost {
       strokeWidth: 2,
       edgeFrom: "auto",
       edgeTo: "auto",
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
+      x: snap.x,
+      y: snap.y,
+      width: snap.width,
+      height: snap.height,
       rotation: 0,
       zIndex: this.project.nextZIndex(),
       locked: false,
-      metadata: connectionMeta(),
+      metadata,
     };
     this.commitCommand(addObjectCommand(this.project, obj));
     return obj.id;
@@ -1362,6 +1604,148 @@ export class CanvasEngine implements InteractionHost {
     return { dataUrl, width: canvas.width, height: canvas.height };
   }
 
+  /**
+   * Transient connection chrome drawn on the live layer (never cached): target
+   * feedback, the drag-to-connect preview route, the reconnect preview, and the
+   * hover edge handles that start a connection.
+   */
+  private drawConnectOverlay(ctx: CanvasRenderingContext2D): void {
+    const zoom = this.frame.zoom;
+
+    const targetId = this.draftConn?.targetId ?? this.reconnectTargetId;
+    if (targetId) {
+      const o = this.project.getObject(targetId);
+      if (o && this.isObjectVisible(o.id)) {
+        const tl = worldToScreen({ x: o.x, y: o.y }, this.frame);
+        ctx.save();
+        ctx.strokeStyle = "#3ddc84";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(tl.x - 2, tl.y - 2, o.width * zoom + 4, o.height * zoom + 4);
+        ctx.restore();
+      }
+    }
+
+    if (this.draftConn) {
+      const fromObj = this.project.getObject(this.draftConn.from);
+      const toObj = this.draftConn.targetId ? this.project.getObject(this.draftConn.targetId) : undefined;
+      if (fromObj && this.draftConn.valid && toObj) {
+        const route = routeBetweenCached(
+          aabb(fromObj),
+          aabb(toObj),
+          loadDefaultRouteStyle(),
+          this.draftConn.fromSide,
+          this.draftConn.toSide
+        );
+        this.strokePreviewRoute(ctx, route, "#3ddc84");
+      } else if (fromObj) {
+        const start = this.draftConn.fromSide
+          ? anchorOnSide(aabb(fromObj), this.draftConn.fromSide, this.draftConn.end)
+          : edgeAnchor(aabb(fromObj), this.draftConn.end);
+        this.strokePreviewLine(ctx, start, this.draftConn.end, "rgba(145,163,240,0.9)");
+      }
+      if (fromObj && this.draftConn.fromSide) {
+        const hp = worldToScreen(anchorOnSide(aabb(fromObj), this.draftConn.fromSide, this.draftConn.end), this.frame);
+        this.drawHandleDot(ctx, hp.x, hp.y, true);
+      }
+    }
+
+    if (this.reconnect && this.reconnectPoint) {
+      const conn = this.project.getObject(this.reconnect.id);
+      if (conn && conn.type === "connection") {
+        const pts = this.connectionEndpointPoints(conn);
+        if (pts) {
+          const fixed = this.reconnect.end === "from" ? pts.end : pts.start;
+          this.strokePreviewLine(ctx, fixed, this.reconnectPoint, "#3ddc84");
+        }
+      }
+    }
+
+    if (this.hover && this.draftConn === null && this.reconnect === null) {
+      const o = this.project.getObject(this.hover.id);
+      if (o && this.isObjectVisible(o.id)) this.drawEdgeHandles(ctx, o, this.hover.side);
+    }
+  }
+
+  /** Four edge handles around an object; the one under the pointer is enlarged. */
+  private drawEdgeHandles(ctx: CanvasRenderingContext2D, o: CanvasObject, activeSide: Side | null): void {
+    const b = aabb(o);
+    ctx.save();
+    ctx.strokeStyle = "rgba(91,124,250,0.6)";
+    ctx.lineWidth = 1.5;
+    const tl = worldToScreen({ x: b.x, y: b.y }, this.frame);
+    ctx.strokeRect(tl.x, tl.y, b.width * this.frame.zoom, b.height * this.frame.zoom);
+    ctx.restore();
+    for (const side of SIDES) {
+      const p = worldToScreen(this.sideHandleWorld(o, side), this.frame);
+      this.drawHandleDot(ctx, p.x, p.y, side === activeSide);
+    }
+  }
+
+  private drawHandleDot(ctx: CanvasRenderingContext2D, x: number, y: number, active: boolean): void {
+    const r = active ? 7 : 5;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = active ? "#3ddc84" : "#f4f6fb";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = active ? "#2bb673" : "#5b7cfa";
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private strokePreviewLine(ctx: CanvasRenderingContext2D, a: Point, b: Point, color: string): void {
+    const sp = worldToScreen(a, this.frame);
+    const ep = worldToScreen(b, this.frame);
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1, 2 * this.frame.zoom);
+    ctx.setLineDash([6, 4]);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(sp.x, sp.y);
+    ctx.lineTo(ep.x, ep.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    this.drawPreviewArrow(ctx, sp, ep, color);
+    ctx.restore();
+  }
+
+  private strokePreviewRoute(ctx: CanvasRenderingContext2D, route: ConnRoute, color: string): void {
+    const pts = route.points.map((p) => worldToScreen(p, this.frame));
+    if (pts.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1, 2 * this.frame.zoom);
+    ctx.setLineDash([6, 4]);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    if (route.kind === "cubic") {
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.bezierCurveTo(pts[1].x, pts[1].y, pts[2].x, pts[2].y, pts[3].x, pts[3].y);
+    } else {
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    this.drawPreviewArrow(ctx, pts[pts.length - 2], pts[pts.length - 1], color);
+    ctx.restore();
+  }
+
+  private drawPreviewArrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, color: string): void {
+    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+    const arrowLen = Math.max(10, 12 * this.frame.zoom);
+    const arrowAngle = Math.PI / 6;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(to.x, to.y);
+    ctx.lineTo(to.x - arrowLen * Math.cos(angle - arrowAngle), to.y - arrowLen * Math.sin(angle - arrowAngle));
+    ctx.lineTo(to.x - arrowLen * Math.cos(angle + arrowAngle), to.y - arrowLen * Math.sin(angle + arrowAngle));
+    ctx.closePath();
+    ctx.fill();
+  }
+
   render(): void {
     const ctx = this.canvasContext();
     if (!ctx) return;
@@ -1375,36 +1759,7 @@ export class CanvasEngine implements InteractionHost {
     if (this.staticCanvas) ctx.drawImage(this.staticCanvas, 0, 0);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-    if (this.draftConn) {
-      const fromObj = this.project.getObject(this.draftConn.from);
-      if (fromObj) {
-        const start = edgeAnchor(aabb(fromObj), this.draftConn.end);
-        const sp = worldToScreen(start, this.frame);
-        const ep = worldToScreen(this.draftConn.end, this.frame);
-        const lineColor = this.draftConn.valid ? "#3ddc84" : "rgba(145,163,240,0.9)";
-        ctx.save();
-        ctx.strokeStyle = lineColor;
-        ctx.lineWidth = Math.max(1, 2 * this.frame.zoom);
-        ctx.setLineDash([6, 4]);
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(sp.x, sp.y);
-        ctx.lineTo(ep.x, ep.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        const angle = Math.atan2(ep.y - sp.y, ep.x - sp.x);
-        const arrowLen = Math.max(10, 12 * this.frame.zoom);
-        const arrowAngle = Math.PI / 6;
-        ctx.fillStyle = lineColor;
-        ctx.beginPath();
-        ctx.moveTo(ep.x, ep.y);
-        ctx.lineTo(ep.x - arrowLen * Math.cos(angle - arrowAngle), ep.y - arrowLen * Math.sin(angle - arrowAngle));
-        ctx.lineTo(ep.x - arrowLen * Math.cos(angle + arrowAngle), ep.y - arrowLen * Math.sin(angle + arrowAngle));
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
-    }
+    this.drawConnectOverlay(ctx);
 
     this.ink.renderDraft(ctx, this.frame);
 
@@ -1593,7 +1948,12 @@ export class CanvasEngine implements InteractionHost {
   /** Rebuild the spatial index from current document objects (on any change). */
   private refreshIndex(): void {
     this.spatial.rebuild(
-      this.project.getObjects().map((o) => ({ id: o.id, rect: { x: o.x, y: o.y, width: o.width, height: o.height } }))
+      this.project.getObjects().map((o) => ({
+        id: o.id,
+        rect: o.type === "connection"
+          ? connectionBounds(o, this.project.getObject(o.from), this.project.getObject(o.to))
+          : { x: o.x, y: o.y, width: o.width, height: o.height },
+      }))
     );
   }
 }
@@ -1635,9 +1995,12 @@ function aabb(o: CanvasObject): Rect {
  * style, but leave it off when it matches the built-in default so ordinary
  * documents stay lean (readers fall back to {@link DEFAULT_ROUTE_STYLE}).
  */
-function connectionMeta(): Record<string, unknown> {
+function connectionMeta(sides?: { fromSide?: Side | null; toSide?: Side | null }): Record<string, unknown> {
   const route = loadDefaultRouteStyle();
-  return route === DEFAULT_ROUTE_STYLE ? {} : { route };
+  const meta: Record<string, unknown> = route === DEFAULT_ROUTE_STYLE ? {} : { route };
+  if (sides?.fromSide) meta.fromSide = sides.fromSide;
+  if (sides?.toSide) meta.toSide = sides.toSide;
+  return meta;
 }
 
 /** All eligible snap targets: every object not in `exclude`, minus decorative types. */

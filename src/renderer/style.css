@@ -1,4 +1,7 @@
 :root {
+  /* Dark native UI (form controls, scrollbars) so OS widgets match the theme
+   * instead of rendering as light bars over the dark surfaces. */
+  color-scheme: dark;
   --color-bg: #121417;
   --color-bg-elevated: #1a1d21;
   --color-bg-hover: #23272d;
@@ -164,6 +167,9 @@ body {
   overflow-y: auto;
   min-height: 0;
   scrollbar-width: thin;
+  /* `scrollbar-width` disables `::-webkit-scrollbar` styling, so the thin
+   * scrollbar needs its own color or it renders as a light bar here. */
+  scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
 }
 
 .menu-group,

@@ -3,11 +3,14 @@ import type { ViewportFrame, Point, Rect } from "../../shared/geometry/viewport.
 import { worldToScreen, isRectVisible, screenToWorld } from "../../shared/geometry/viewport.js";
 import { selectionBounds, HANDLES, handleWorld, rotateKnobWorld } from "../../shared/geometry/selection.js";
 import {
+  connectionBounds,
   connectionEndpoints,
   groupBounds,
 } from "../../shared/geometry/workspace.js";
 import {
+  connFromSide,
   connRouteStyle,
+  connToSide,
   routeBetweenCached,
   routeEndAngle,
   type ConnRoute,
@@ -53,10 +56,13 @@ export function drawObjects(
   coarse = false
 ): void {
   for (const obj of objects) {
-    // Connections are never culled: their stored AABB is only a creation-time
-    // snapshot of the endpoints, so as frames move it goes stale and would
-    // wrongly hide a link that is still on screen.
-    if (obj.type !== "connection" && !isRectVisible({ x: obj.x, y: obj.y, width: obj.width, height: obj.height }, frame)) {
+    // Cull against live bounds. For connections that means the resolved route
+    // (recomputed from the endpoints), so a link is never hidden by the stale
+    // creation-time AABB once an endpoint is moved or resized.
+    const rect = obj.type === "connection"
+      ? connectionBounds(obj, drawCtx.objectById(obj.from), drawCtx.objectById(obj.to))
+      : { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
+    if (!isRectVisible(rect, frame)) {
       continue;
     }
     drawObject(ctx, frame, obj, drawCtx);
@@ -512,7 +518,7 @@ function drawConnection(
   ctx.setLineDash([6, 4]);
 
   if (fromObj && toObj) {
-    const route = routeBetweenCached(objRect(fromObj), objRect(toObj), connRouteStyle(conn));
+    const route = routeBetweenCached(objRect(fromObj), objRect(toObj), connRouteStyle(conn), connFromSide(conn), connToSide(conn));
     strokeRoute(ctx, frame, route);
     if (conn.arrowhead) drawArrowhead(ctx, frame, route.end, routeEndAngle(route), color);
   } else {
@@ -603,7 +609,7 @@ function drawConnectionSelection(
   ctx.strokeStyle = "rgba(91,124,250,0.38)";
   ctx.lineWidth = Math.max(3, 6 * frame.zoom);
   if (fromObj && toObj) {
-    const route = routeBetweenCached(objRect(fromObj), objRect(toObj), connRouteStyle(conn));
+    const route = routeBetweenCached(objRect(fromObj), objRect(toObj), connRouteStyle(conn), connFromSide(conn), connToSide(conn));
     strokeRoute(ctx, frame, route);
     start = route.start;
     end = route.end;

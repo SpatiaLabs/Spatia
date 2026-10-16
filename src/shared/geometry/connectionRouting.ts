@@ -17,9 +17,31 @@ export type RouteStyle = "curved" | "elbow" | "bracket";
 
 export const DEFAULT_ROUTE_STYLE: RouteStyle = "curved";
 export const ROUTE_STYLES: readonly RouteStyle[] = ["curved", "elbow", "bracket"];
+/** The four attachment sides, in a stable order (used for handle layout). */
+export const SIDES: readonly Side[] = ["top", "right", "bottom", "left"];
 
 export function isRouteStyle(value: unknown): value is RouteStyle {
   return value === "curved" || value === "elbow" || value === "bracket";
+}
+
+export function isSide(value: unknown): value is Side {
+  return value === "top" || value === "right" || value === "bottom" || value === "left";
+}
+
+/**
+ * An explicit attachment side stored on a connection (a "binding anchor").
+ * Stored off `metadata.fromSide`/`metadata.toSide`; absent means "auto", i.e.
+ * the side is chosen to face the other endpoint, so ordinary documents stay
+ * clean and older files keep working unchanged.
+ */
+export function connFromSide(conn: { metadata?: Record<string, unknown> | undefined }): Side | null {
+  const v = conn.metadata?.fromSide;
+  return isSide(v) ? v : null;
+}
+
+export function connToSide(conn: { metadata?: Record<string, unknown> | undefined }): Side | null {
+  const v = conn.metadata?.toSide;
+  return isSide(v) ? v : null;
 }
 
 /** Read the route style off a connection's metadata, falling back to default. */
@@ -236,11 +258,19 @@ function bracketRoute(from: Rect, to: Rect): ConnRoute {
 /**
  * Compute the route for a connection between two rects using the given style.
  * Automatic side selection is shared by the elbow/curved styles; bracket uses a
- * common facing side so its rail spans the frames.
+ * common facing side so its rail spans the frames. An explicit `fromSide`/
+ * `toSide` (from a grabbed hover handle) overrides auto selection for that end.
  */
-export function routeBetween(from: Rect, to: Rect, style: RouteStyle): ConnRoute {
+export function routeBetween(
+  from: Rect,
+  to: Rect,
+  style: RouteStyle,
+  fromSide?: Side | null,
+  toSide?: Side | null
+): ConnRoute {
   if (style === "bracket") return bracketRoute(from, to);
-  const sides = chooseSides(from, to);
+  const auto = chooseSides(from, to);
+  const sides = { from: fromSide ?? auto.from, to: toSide ?? auto.to };
   const ac = rectCenter(from);
   const bc = rectCenter(to);
   const start = anchorOnSide(from, sides.from, bc);
@@ -255,8 +285,8 @@ export function routeBetween(from: Rect, to: Rect, style: RouteStyle): ConnRoute
 const cache = new Map<string, ConnRoute>();
 const CACHE_MAX = 600;
 
-function keyOf(from: Rect, to: Rect, style: RouteStyle): string {
-  return `${style}|${from.x},${from.y},${from.width},${from.height}|${to.x},${to.y},${to.width},${to.height}`;
+function keyOf(from: Rect, to: Rect, style: RouteStyle, fromSide: Side | null, toSide: Side | null): string {
+  return `${style}|${fromSide ?? "a"}|${toSide ?? "a"}|${from.x},${from.y},${from.width},${from.height}|${to.x},${to.y},${to.width},${to.height}`;
 }
 
 /**
@@ -264,11 +294,17 @@ function keyOf(from: Rect, to: Rect, style: RouteStyle): string {
  * connection on every static-layer rebuild; memoizing by the endpoint rects
  * keeps a drag/resize from recomputing unchanged links each frame.
  */
-export function routeBetweenCached(from: Rect, to: Rect, style: RouteStyle): ConnRoute {
-  const key = keyOf(from, to, style);
+export function routeBetweenCached(
+  from: Rect,
+  to: Rect,
+  style: RouteStyle,
+  fromSide: Side | null = null,
+  toSide: Side | null = null
+): ConnRoute {
+  const key = keyOf(from, to, style, fromSide, toSide);
   const hit = cache.get(key);
   if (hit) return hit;
-  const route = routeBetween(from, to, style);
+  const route = routeBetween(from, to, style, fromSide, toSide);
   if (cache.size >= CACHE_MAX) {
     const first = cache.keys().next();
     if (!first.done) cache.delete(first.value);
@@ -290,6 +326,27 @@ export function routePolyline(route: ConnRoute, samples = 24): Point[] {
     out.push({ x, y });
   }
   return out;
+}
+
+/**
+ * World-space AABB of a resolved route (sampled for cubic routes), optionally
+ * inflated by `pad`. Used to derive a connection's live bounds so culling, the
+ * spatial index and marquee selection track the endpoints instead of a
+ * creation-time snapshot that goes stale as objects move.
+ */
+export function routeBounds(route: ConnRoute, pad = 0): Rect {
+  const pts = routePolyline(route, 16);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x: minX - pad, y: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 };
 }
 
 /** Direction (radians) the route points as it reaches its end. */

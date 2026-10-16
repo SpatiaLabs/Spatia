@@ -12,7 +12,7 @@ import { isEditableEventTarget } from "../ui/editTarget.js";
  * point + fixed grab offset), never by accumulating per-event deltas.
  */
 
-type Mode = "none" | "pending" | "move" | "resize" | "marquee" | "pan" | "connect" | "pen" | "rotate" | "inkmove" | "lasso";
+type Mode = "none" | "pending" | "move" | "resize" | "marquee" | "pan" | "connect" | "pen" | "rotate" | "inkmove" | "lasso" | "reconnect";
 
 const WHEEL_FACTOR_PER_NOTCH = 1.1;
 const DRAG_THRESHOLD = 3;
@@ -32,6 +32,8 @@ export class CanvasInput {
   private activePointerId: number | null = null;
   private ctrlHeld = false;
   private pos = { x: 0, y: 0 };
+  /** True while a pointer-drag connection gesture (from an edge handle). */
+  private connectDrag = false;
 
   constructor(private host: InteractionHost) {}
 
@@ -239,6 +241,30 @@ if (e.key === CONTROL_KEY) {
       return;
     }
 
+    // Reconnection: grab an endpoint dot on a selected connection and drag it
+    // onto a new target (Obsidian-style re-bind).
+    const endpoint = this.host.hitConnectionEndpoint(p);
+    if (endpoint) {
+      this.mode = "reconnect";
+      this.host.beginReconnect(endpoint.id, endpoint.end, p);
+      this.host.setMarquee(null);
+      this.host.setInteractionCursor("copy");
+      this.captureActivePointer(e);
+      return;
+    }
+
+    // Drag-to-connect: grab an edge handle that appears when hovering an object.
+    const connectHandle = this.host.hitConnectHandle(p);
+    if (connectHandle) {
+      this.mode = "connect";
+      this.connectDrag = true;
+      this.host.beginConnection(connectHandle.id, p, connectHandle.side);
+      this.host.setMarquee(null);
+      this.host.setInteractionCursor("copy");
+      this.captureActivePointer(e);
+      return;
+    }
+
     const hit = this.host.hitTest(p);
 
     // Freehand strokes are first-class ink: a click selects them through the
@@ -297,6 +323,12 @@ if (e.key === CONTROL_KEY) {
       this.host.setEraserPreview(p);
     }
 
+    // Idle hover: reveal the Obsidian-style edge handles on the object under
+    // the pointer so a connection can be dragged out directly.
+    if (this.mode === "none" && !this.host.isPenTool()) {
+      this.host.hoverAt(p);
+    }
+
     switch (this.mode) {
       case "pan":
         this.host.applyPan(p.x - prev.x, p.y - prev.y);
@@ -312,6 +344,9 @@ if (e.key === CONTROL_KEY) {
         break;
       case "connect":
         this.host.connectionDragTo(p);
+        break;
+      case "reconnect":
+        this.host.reconnectDragTo(p);
         break;
       case "pen":
         this.host.penStrokeTo(p, this.penPressure(e));
@@ -353,12 +388,27 @@ if (e.key === CONTROL_KEY) {
   /** The cursor left the canvas — drop the eraser guide (no more hover data). */
   private onPointerLeave = (): void => {
     this.host.setEraserPreview(null);
+    this.host.clearHover();
   };
 
   private onPointerUp = (e: PointerEvent): void => {
-    // A connection draft is keyboard-driven (Ctrl keyup finishes it); a pointer
-    // release must not cancel or finish it.
-    if (this.mode === "connect") return;
+    // A pointer-driven connection drag finishes on release; the keyboard-driven
+    // Ctrl draft is instead finished by the Ctrl keyup.
+    if (this.mode === "connect") {
+      if (this.connectDrag) {
+        this.host.finishConnection(this.localPoint(e));
+        this.host.clearHover();
+        this.connectDrag = false;
+        this.endActiveInteraction();
+      }
+      return;
+    }
+    if (this.mode === "reconnect") {
+      this.host.finishReconnect(this.localPoint(e));
+      this.host.clearHover();
+      this.endActiveInteraction();
+      return;
+    }
     const el = this.host.canvas();
     if (typeof el.releasePointerCapture === "function") {
       try {
@@ -406,8 +456,13 @@ if (e.key === CONTROL_KEY) {
       if (this.mode === "inkmove") this.host.endInkDrag();
       if (this.mode === "lasso") this.host.endLasso();
       if (this.mode === "marquee") this.onPointerUpMarqueeSettle();
+      // A pointer-driven connection drag that ends without an explicit finish
+      // (blur, lost capture) must drop its draft rather than leave it hanging.
+      if (this.mode === "connect" && this.connectDrag) this.host.cancelConnectionDraft();
+      if (this.mode === "reconnect") this.host.cancelReconnect();
     }
     this.mode = "none";
+    this.connectDrag = false;
     this.dragArmed = false;
     this.inkDragArmed = false;
     this.activePointerId = null;
